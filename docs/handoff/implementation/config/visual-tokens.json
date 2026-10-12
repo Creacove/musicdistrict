@@ -1,0 +1,53 @@
+{
+  "status": "Design starting point; not a final brand lock",
+  "typography": {
+    "ui_family": "Inter or Plus Jakarta Sans (one family to ship, subset WOFF2)",
+    "headline": "same family; use weight and spacing rather than brush lettering for functional UI",
+    "ui_min_body_css_px": 14,
+    "ui_typical_body_css_px": 15,
+    "tap_target_min_css_px": 44
+  },
+  "colors": {
+    "ink": "#121B26",
+    "surface": "#1B2733",
+    "surface_soft": "#243240",
+    "paper": "#F5F1E9",
+    "text_on_dark": "#F4F6F7",
+    "text_muted": "#BAC4CC",
+    "positive_action": "#2F9D77",
+    "accent_muted_magenta": "#B65C84",
+    "accent_slate_lilac": "#877BA6",
+    "amber": "#CE9C53",
+    "danger": "#CF645E",
+    "focus_outline": "#F2D37C"
+  },
+  "geometry": {
+    "base_space_css_px": 8,
+    "radius_card_css_px": 14,
+    "radius_chip_css_px": 999,
+    "mobile_bottom_nav_items_max": 5,
+    "overlay_priority": "one primary sheet/modal at once",
+    "game_world_visible_fraction_exploration_min": 0.62
+  },
+  "quality_modes": {
+    "save_data": {
+      "resolution_scale": 0.65,
+      "max_dpr": 1,
+      "shadow": "baked",
+      "distant_avatars": "impostor",
+      "effects": "off"
+    },
+    "balanced": {
+      "resolution_scale": 0.85,
+      "max_dpr": 1.5,
+      "shadow": "hero-only",
+      "effects": "minimal"
+    },
+    "high": {
+      "resolution_scale": 1,
+      "max_dpr": 2,
+      "shadow": "limited",
+      "effects": "subtle"
+    }
+  }
+}

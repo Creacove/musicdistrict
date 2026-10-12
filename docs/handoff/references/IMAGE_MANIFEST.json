@@ -1,0 +1,410 @@
+{
+  "note": "All files are packaged locally. NO chat links. Reference images are NOT in-game 3D assets. Master GDD and chapters own gameplay rules.",
+  "images": [
+    {
+      "id": "V01",
+      "name": "World / Music Square mobile",
+      "filename": "01_world_music_square_mobile.webp",
+      "category": "social_world",
+      "intended_use": "World exploration, HUD, Desk entry chip",
+      "caveat": "Portrait concept; over-stylized density, counts fictional",
+      "priority": "exploration",
+      "path": "references/screens/01_world_music_square_mobile.webp",
+      "dimensions": [
+        941,
+        1672
+      ],
+      "bytes": 230432
+    },
+    {
+      "id": "V02",
+      "name": "World / Music Square desktop",
+      "filename": "02_world_music_square_desktop.webp",
+      "category": "social_world",
+      "intended_use": "Desktop viewport and side guidance",
+      "caveat": "Concept; layout density too high for general exploration",
+      "priority": "exploration",
+      "path": "references/screens/02_world_music_square_desktop.webp",
+      "dimensions": [
+        1586,
+        992
+      ],
+      "bytes": 284222
+    },
+    {
+      "id": "V03",
+      "name": "City Studio / context help",
+      "filename": "03_city_studio_context_help.webp",
+      "category": "producer",
+      "intended_use": "Beat station and Desk contextual actions",
+      "caveat": "Concept; simplify glow and UI overlap",
+      "priority": "exploration",
+      "path": "references/screens/03_city_studio_context_help.webp",
+      "dimensions": [
+        941,
+        1672
+      ],
+      "bytes": 219274
+    },
+    {
+      "id": "V04",
+      "name": "Desk / Today mobile",
+      "filename": "04_desk_today_mobile.webp",
+      "category": "desk",
+      "intended_use": "One touch entry and suggested next moves",
+      "caveat": "Concept; cut expensive studio sessions for zero-money path",
+      "priority": "exploration",
+      "path": "references/screens/04_desk_today_mobile.webp",
+      "dimensions": [
+        941,
+        1672
+      ],
+      "bytes": 205118
+    },
+    {
+      "id": "V05",
+      "name": "Desk / artist phone Q&A",
+      "filename": "05_desk_artist_phone_q_a.webp",
+      "category": "desk",
+      "intended_use": "Conversational guidance and option cards",
+      "caveat": "Concept; in-game release is NOT guaranteed real distribution",
+      "priority": "exploration",
+      "path": "references/screens/05_desk_artist_phone_q_a.webp",
+      "dimensions": [
+        941,
+        1672
+      ],
+      "bytes": 211390
+    },
+    {
+      "id": "V06",
+      "name": "Venue / interior setup and Desk",
+      "filename": "06_venue_interior_setup_and_desk.webp",
+      "category": "venue",
+      "intended_use": "Stage objects, physical inspection and decision prompts",
+      "caveat": "Concept; proposal of floating robot is OPTIONAL, not canonical",
+      "priority": "exploration",
+      "path": "references/screens/06_venue_interior_setup_and_desk.webp",
+      "dimensions": [
+        941,
+        1672
+      ],
+      "bytes": 261608
+    },
+    {
+      "id": "V07",
+      "name": "Venue / equipment shop",
+      "filename": "07_venue_equipment_shop.webp",
+      "category": "venue",
+      "intended_use": "Stage Supply NPC, buying/previewing and stats",
+      "caveat": "Concept; fictional prices can be wildly above economy",
+      "priority": "exploration",
+      "path": "references/screens/07_venue_equipment_shop.webp",
+      "dimensions": [
+        941,
+        1672
+      ],
+      "bytes": 286614
+    },
+    {
+      "id": "V08",
+      "name": "Venue / lease marketplace",
+      "filename": "08_venue_lease_marketplace.webp",
+      "category": "venue",
+      "intended_use": "Venue catalogue and comparison",
+      "caveat": "Concept; price points conflict with v1 small-venue test fixtures",
+      "priority": "exploration",
+      "path": "references/screens/08_venue_lease_marketplace.webp",
+      "dimensions": [
+        941,
+        1672
+      ],
+      "bytes": 261260
+    },
+    {
+      "id": "V09",
+      "name": "Venue / detail preview",
+      "filename": "09_venue_detail_preview.webp",
+      "category": "venue",
+      "intended_use": "Interior image, capacity, gear and booking path",
+      "caveat": "Concept; large capacity cannot be sold as tested v1 live session",
+      "priority": "exploration",
+      "path": "references/screens/09_venue_detail_preview.webp",
+      "dimensions": [
+        941,
+        1672
+      ],
+      "bytes": 302656
+    },
+    {
+      "id": "V10",
+      "name": "Artist / release counter",
+      "filename": "10_artist_release_counter.webp",
+      "category": "artist",
+      "intended_use": "Artwork, Friday release state and contextual actions",
+      "caveat": "Concept; no unsupported listener forecasts",
+      "priority": "exploration",
+      "path": "references/screens/10_artist_release_counter.webp",
+      "dimensions": [
+        941,
+        1672
+      ],
+      "bytes": 216120
+    },
+    {
+      "id": "V11",
+      "name": "City Studio / artistic exploration",
+      "filename": "11_city_studio_artistic_exploration.webp",
+      "category": "producer",
+      "intended_use": "Studio interior look and social activity",
+      "caveat": "Environmental concept; not a 3D model",
+      "priority": "exploration",
+      "path": "references/screens/11_city_studio_artistic_exploration.webp",
+      "dimensions": [
+        941,
+        1672
+      ],
+      "bytes": 312078
+    },
+    {
+      "id": "V12",
+      "name": "City Studio / environment",
+      "filename": "12_city_studio_environment.webp",
+      "category": "producer",
+      "intended_use": "Starter studio and recording booth style",
+      "caveat": "Environmental concept; not a 3D model",
+      "priority": "exploration",
+      "path": "references/screens/12_city_studio_environment.webp",
+      "dimensions": [
+        1672,
+        941
+      ],
+      "bytes": 373814
+    },
+    {
+      "id": "V13",
+      "name": "Label / Desk contract decision",
+      "filename": "13_label_desk_contract_decision.webp",
+      "category": "label",
+      "intended_use": "Desk compares options next to roster/contract screens",
+      "caveat": "Concept; >3 active signed roster violates master",
+      "priority": "exploration",
+      "path": "references/screens/13_label_desk_contract_decision.webp",
+      "dimensions": [
+        1586,
+        992
+      ],
+      "bytes": 268176
+    },
+    {
+      "id": "V14",
+      "name": "Label / A&R space",
+      "filename": "14_label_a_r_space.webp",
+      "category": "label",
+      "intended_use": "Roster and deal negotiation spatial context",
+      "caveat": "Concept; fictional stream and revenue metrics",
+      "priority": "exploration",
+      "path": "references/screens/14_label_a_r_space.webp",
+      "dimensions": [
+        1586,
+        992
+      ],
+      "bytes": 272488
+    },
+    {
+      "id": "V15",
+      "name": "Promoter / Desk choices",
+      "filename": "15_promoter_desk_choices.webp",
+      "category": "promoter",
+      "intended_use": "Campaign locations and Desk explains trade-offs",
+      "caveat": "Concept; no fabricated reach, ROI or paid messaging",
+      "priority": "exploration",
+      "path": "references/screens/15_promoter_desk_choices.webp",
+      "dimensions": [
+        941,
+        1672
+      ],
+      "bytes": 335572
+    },
+    {
+      "id": "V16",
+      "name": "Promoter / district map",
+      "filename": "16_promoter_district_map.webp",
+      "category": "promoter",
+      "intended_use": "District promotion inventory and campaigns",
+      "caveat": "Concept; verify pins and quotas server-side",
+      "priority": "exploration",
+      "path": "references/screens/16_promoter_district_map.webp",
+      "dimensions": [
+        941,
+        1672
+      ],
+      "bytes": 288342
+    },
+    {
+      "id": "V17",
+      "name": "Fan / listening lounge",
+      "filename": "17_fan_listening_lounge.webp",
+      "category": "fan",
+      "intended_use": "Personal player while sharing an active room",
+      "caveat": "Concept; room playback permissions and streams distinct",
+      "priority": "exploration",
+      "path": "references/screens/17_fan_listening_lounge.webp",
+      "dimensions": [
+        941,
+        1672
+      ],
+      "bytes": 239670
+    },
+    {
+      "id": "V18",
+      "name": "Fan / charts hall",
+      "filename": "18_fan_charts_hall.webp",
+      "category": "fan",
+      "intended_use": "Chart installation and song previews",
+      "caveat": "Concept; chart data genuine and scaled to population",
+      "priority": "exploration",
+      "path": "references/screens/18_fan_charts_hall.webp",
+      "dimensions": [
+        941,
+        1672
+      ],
+      "bytes": 264936
+    },
+    {
+      "id": "V19",
+      "name": "Release Hall / environment",
+      "filename": "19_release_hall_environment.webp",
+      "category": "fan",
+      "intended_use": "Album artwork gallery and physical discovery",
+      "caveat": "Environment only",
+      "priority": "exploration",
+      "path": "references/screens/19_release_hall_environment.webp",
+      "dimensions": [
+        1672,
+        941
+      ],
+      "bytes": 459812
+    },
+    {
+      "id": "V20",
+      "name": "Release Hall / gallery",
+      "filename": "20_release_hall_gallery.webp",
+      "category": "fan",
+      "intended_use": "More environmental alternatives",
+      "caveat": "Environment only",
+      "priority": "exploration",
+      "path": "references/screens/20_release_hall_gallery.webp",
+      "dimensions": [
+        941,
+        1672
+      ],
+      "bytes": 346758
+    },
+    {
+      "id": "V21",
+      "name": "Concert / The Basement",
+      "filename": "21_concert_the_basement.webp",
+      "category": "events",
+      "intended_use": "Intimate concert venue mood and stage",
+      "caveat": "Environmental concept; event seat caps server authoritative",
+      "priority": "exploration",
+      "path": "references/screens/21_concert_the_basement.webp",
+      "dimensions": [
+        1672,
+        941
+      ],
+      "bytes": 333516
+    },
+    {
+      "id": "V22",
+      "name": "Concert / audience",
+      "filename": "22_concert_audience.webp",
+      "category": "events",
+      "intended_use": "Live-performance and fan interactions",
+      "caveat": "Concept; screenshots not 3D models",
+      "priority": "exploration",
+      "path": "references/screens/22_concert_audience.webp",
+      "dimensions": [
+        941,
+        1672
+      ],
+      "bytes": 327190
+    },
+    {
+      "id": "V23",
+      "name": "Major event / Destiny Awards",
+      "filename": "23_major_event_destiny_awards.webp",
+      "category": "events",
+      "intended_use": "Award-show venue and player memories",
+      "caveat": "Prestige destination; V1 concurrent crowd capacity unproven",
+      "priority": "exploration",
+      "path": "references/screens/23_major_event_destiny_awards.webp",
+      "dimensions": [
+        941,
+        1672
+      ],
+      "bytes": 334964
+    },
+    {
+      "id": "V24",
+      "name": "Music Square / aspirational key art",
+      "filename": "24_music_square_aspirational_key_art.webp",
+      "category": "visual",
+      "intended_use": "Atmosphere and character silhouettes",
+      "caveat": "Key art only, excessive scene complexity",
+      "priority": "exploration",
+      "path": "references/screens/24_music_square_aspirational_key_art.webp",
+      "dimensions": [
+        1672,
+        941
+      ],
+      "bytes": 468040
+    },
+    {
+      "id": "V25",
+      "name": "Music Square / aspirational alt",
+      "filename": "25_music_square_aspirational_alt.webp",
+      "category": "visual",
+      "intended_use": "Atmosphere alternative",
+      "caveat": "Key art only, lighting must be baked",
+      "priority": "exploration",
+      "path": "references/screens/25_music_square_aspirational_alt.webp",
+      "dimensions": [
+        941,
+        1672
+      ],
+      "bytes": 310118
+    },
+    {
+      "id": "V26",
+      "name": "FINAL DIRECTION \u2014 Music Square + Desk Bot Today/Navigation",
+      "filename": "26_FINAL_music_square_desk_today.webp",
+      "category": "final_direction",
+      "intended_use": "Current preferred low-cost, high-polish game world, Desk panel, navigation, sunlit atmosphere",
+      "caveat": "Visual guidance only; numbers, slogans, font, mascot and duplicate suggestions need authored UX validation",
+      "priority": "final_direction",
+      "path": "references/screens/26_FINAL_music_square_desk_today.webp",
+      "dimensions": [
+        941,
+        1672
+      ],
+      "bytes": 219268
+    },
+    {
+      "id": "V27",
+      "name": "FINAL DIRECTION \u2014 Palm Room / venue leasing with Desk",
+      "filename": "27_FINAL_palm_room_venue_leasing.webp",
+      "category": "final_direction",
+      "intended_use": "Current preferred venue lighting, material, furniture, lease/detail card, Desk contextual hint",
+      "caveat": "Visual guidance only; sample capacity/rent, staff representation and checklists are not binding gameplay data",
+      "priority": "final_direction",
+      "path": "references/screens/27_FINAL_palm_room_venue_leasing.webp",
+      "dimensions": [
+        941,
+        1672
+      ],
+      "bytes": 221330
+    }
+  ]
+}

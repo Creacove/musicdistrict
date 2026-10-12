@@ -1,0 +1,355 @@
+{
+  "file_count_excluding_inventory": 70,
+  "files": [
+    {
+      "path": "AGENTS.md",
+      "size_bytes": 5165,
+      "sha256": "dcbe421393d7ecdc1d8e13f3e2208dc58d005371e5aa61a5b5ad77dd458312aa"
+    },
+    {
+      "path": "START_HERE.md",
+      "size_bytes": 4577,
+      "sha256": "5a32570d4c09ad682dbaf45512aed4829924c71d5b5c85ad118e66e6014d4214"
+    },
+    {
+      "path": "chapters/00_Architecture/THE_SCENE_HPATH_Architecture_Amendment_v0.2.docx",
+      "size_bytes": 23884,
+      "sha256": "a2ea4a031631191a88624c4d59d9f830d013dfd3995ebf2806d9c95600043a6a"
+    },
+    {
+      "path": "chapters/00_Architecture/THE_SCENE_HPATH_Architecture_Amendment_v0.2.md",
+      "size_bytes": 20700,
+      "sha256": "de6207c4783d7404035c6433e34e61905689eba2512999f8fd93f45e0049f4ef"
+    },
+    {
+      "path": "chapters/01_Venue_Operator/THE_SCENE_Venue_Operator_Foundation_v0.3.docx",
+      "size_bytes": 63920,
+      "sha256": "0782a3a6920bc08200120966537943e79c7ea6828a2acbb6976176e16f7c3055"
+    },
+    {
+      "path": "chapters/01_Venue_Operator/THE_SCENE_Venue_Operator_Foundation_v0.3.md",
+      "size_bytes": 47054,
+      "sha256": "3f4907029b9a1e1b2ef6f6355e7746c4c213090d6eaa74f4c530521b3d8565b5"
+    },
+    {
+      "path": "chapters/02_Artist/THE_SCENE_Artist_Career_Foundation_v0.4.docx",
+      "size_bytes": 84621,
+      "sha256": "ea7b61a1ad584820e1c10cf71e730fa0635e1e40d5955af3110b6344c9971e9d"
+    },
+    {
+      "path": "chapters/02_Artist/THE_SCENE_Artist_Career_Foundation_v0.4.md",
+      "size_bytes": 87965,
+      "sha256": "4257579f16309d3382e142d3be264ea1b2648210dac8303c39899434dd07135f"
+    },
+    {
+      "path": "chapters/03_Record_Label/THE_SCENE_Record_Label_Career_Spec_v1.0.docx",
+      "size_bytes": 85176,
+      "sha256": "19ea490b4da0e69a825003e0c8324329d68ef383ed6ea37bbb1d759fcd658ac2"
+    },
+    {
+      "path": "chapters/03_Record_Label/THE_SCENE_Record_Label_Career_Spec_v1.0.md",
+      "size_bytes": 83647,
+      "sha256": "0d0b2cd6a1ef07c2873fd7ff5dc7fb83bba24396d3e6ff50bbfa565173657183"
+    },
+    {
+      "path": "chapters/04_Promoter/THE_SCENE_Promoter_Career_and_Agency_Spec_v1.0.docx",
+      "size_bytes": 48294,
+      "sha256": "a397a0c6541db76e084b5c9e51993e18540eb33ee8904adb60916d3aa23362eb"
+    },
+    {
+      "path": "chapters/04_Promoter/THE_SCENE_Promoter_Career_and_Agency_Spec_v1.0.md",
+      "size_bytes": 64539,
+      "sha256": "b15083ff6bc7a03c08b4de334456e64e6cc4e4d872222b32f31148b6cba24213"
+    },
+    {
+      "path": "chapters/05_Fan_and_Social/THE_SCENE_Fan_and_Social_Experience_Spec_v1.0.docx",
+      "size_bytes": 77962,
+      "sha256": "00d24ed8922632cab8043b5e6b395e65aa7f416ed9e2c01ec0cd94b626388a02"
+    },
+    {
+      "path": "chapters/05_Fan_and_Social/THE_SCENE_Fan_and_Social_Experience_Spec_v1.0.md",
+      "size_bytes": 90612,
+      "sha256": "8b7e488c1d3a7103a7d6ccd7827bc4b1ebcc0010e7207d8e637cb9b3dfdb9a85"
+    },
+    {
+      "path": "chapters/06_Concerts_and_Events/THE_SCENE_Concerts_and_Shared_Events_Spec_v1.0.docx",
+      "size_bytes": 79778,
+      "sha256": "31955104818bda30cebba2bded4cfe17b42b06e3a6a0a418b6fe1d1bbf94e0d6"
+    },
+    {
+      "path": "chapters/06_Concerts_and_Events/THE_SCENE_Concerts_and_Shared_Events_Spec_v1.0.md",
+      "size_bytes": 96107,
+      "sha256": "8db2551c6ed05725ef910d55dcccf51aa7ded004f22d8110df4a99d58a80ce82"
+    },
+    {
+      "path": "chapters/07_Music_Discovery_and_Charts/THE_SCENE_Music_Discovery_and_Charts_Spec_v1.0.docx",
+      "size_bytes": 85653,
+      "sha256": "eb425da3232e856bdcec8ae34948d682c4661202a9017197845765328f3e9f20"
+    },
+    {
+      "path": "chapters/07_Music_Discovery_and_Charts/THE_SCENE_Music_Discovery_and_Charts_Spec_v1.0.md",
+      "size_bytes": 107193,
+      "sha256": "aa6bbf22f0b5cd9a8330b20f9c0ee981574e73905061bbb836d8620385873ce7"
+    },
+    {
+      "path": "chapters/08_Economy_and_Contracts/THE_SCENE_Economy_and_Contracts_Spec_v1.0.docx",
+      "size_bytes": 74736,
+      "sha256": "2a5a8a01228d52f6c42dafdfe2e283be21f4ab289bc12d0c8c2e74938839ef41"
+    },
+    {
+      "path": "chapters/08_Economy_and_Contracts/THE_SCENE_Economy_and_Contracts_Spec_v1.0.md",
+      "size_bytes": 86858,
+      "sha256": "f0e0ac32ab67ac57398ace0199c20badf9855c2c3bb6a6cd5748ec1d35a3e20f"
+    },
+    {
+      "path": "chapters/09_World_NPCs_and_Operations/THE_SCENE_World_NPCs_and_Operations_Spec_v1.0.docx",
+      "size_bytes": 83158,
+      "sha256": "9792543c9013b1eed587a87ab0c15a123e3e0b5e2173ffbdb27f4a4c6ec521ca"
+    },
+    {
+      "path": "chapters/09_World_NPCs_and_Operations/THE_SCENE_World_NPCs_and_Operations_Spec_v1.0.md",
+      "size_bytes": 94381,
+      "sha256": "aa4cd572838947b89f707006c9255fdc70d25440dd30d4fc00085beb1e856d0d"
+    },
+    {
+      "path": "chapters/10_Desk_Bot/THE_SCENE_Desk_Bot_Player_Intelligence_and_Navigation_Spec_v1.0.docx",
+      "size_bytes": 80665,
+      "sha256": "640167b713ae234a27aeb8ffb775226718e3f9d678d8cb0d8ff9c70d97c0ffe2"
+    },
+    {
+      "path": "chapters/10_Desk_Bot/THE_SCENE_Desk_Bot_Player_Intelligence_and_Navigation_Spec_v1.0.md",
+      "size_bytes": 87337,
+      "sha256": "da12135202e73f04e74976d85c4ff5b6f76468b270ec12468b8278a21da8f658"
+    },
+    {
+      "path": "implementation/ASSET_AND_ANIMATION_PRODUCTION_BRIEF.md",
+      "size_bytes": 4999,
+      "sha256": "7df88c2fe9e92b548b30814a26b3072533c191fb77ad4e9fdf441204585783fc"
+    },
+    {
+      "path": "implementation/FINAL_FOUNDER_HANDOFF_REVIEW.md",
+      "size_bytes": 7089,
+      "sha256": "5de84a7e6ecf6fab68e97be3b4bdc328d622ee86858147a8996dafd3d0f07fe6"
+    },
+    {
+      "path": "implementation/PERFORMANCE_MEDIA_BUDGET.md",
+      "size_bytes": 13199,
+      "sha256": "1e9d67633e5774f1bf687b271c09e6f418ecdfcb3bcc8b449bc00097eddbabb3"
+    },
+    {
+      "path": "implementation/QUALITY_GATES.md",
+      "size_bytes": 4168,
+      "sha256": "030750c4647b1b77c95b0f934dd7ea643e8e0cf8e130d82f2ae5d6ae204d1ced"
+    },
+    {
+      "path": "implementation/REFERENCE_IMAGE_TRUTH.md",
+      "size_bytes": 4428,
+      "sha256": "860e791f543f058e3c9402edac667f0131ff6fe8dced1eaef5d9e6ca20b7734c"
+    },
+    {
+      "path": "implementation/REFERENCE_LOOKUP.md",
+      "size_bytes": 5835,
+      "sha256": "4e2aec661b092c9ea892ae120a3d1ce16a9196c80e746aa03b663f6068457239"
+    },
+    {
+      "path": "implementation/SCREEN_STATES_AND_JOURNEYS.md",
+      "size_bytes": 7773,
+      "sha256": "acb54b6ea1ee8e9cccd0e78841ff30925e197479317842254df760e42e5d2b87"
+    },
+    {
+      "path": "implementation/THE_SCENE_Visual_UX_and_Performance_Playbook_v1.0.docx",
+      "size_bytes": 1533977,
+      "sha256": "8908d03187b3481c8c86e15a33ff70aaf7f2e02c8123791eb97cec8e733bc064"
+    },
+    {
+      "path": "implementation/VISUAL_DESIGN_SYSTEM.md",
+      "size_bytes": 8147,
+      "sha256": "78d286a83156e321072430c219dca82e57ef6347fbb8ccaa83f9ea61f5b475d5"
+    },
+    {
+      "path": "implementation/check_asset_budget.py",
+      "size_bytes": 1513,
+      "sha256": "226d45749cd7d7b52b5f9ed5300334b2104d140e4d9a250d619543a0bdb96948"
+    },
+    {
+      "path": "implementation/config/performance-budgets.json",
+      "size_bytes": 944,
+      "sha256": "9492ba472c510cdea29d744c89884251d09a2e05ccc3a6ab5088c4e9b7505bb8"
+    },
+    {
+      "path": "implementation/config/visual-tokens.json",
+      "size_bytes": 1446,
+      "sha256": "a069567aa02bb660938b26b987df7bbb44c7efa1e5912c737aaf5ebb92f98d2b"
+    },
+    {
+      "path": "master/THE_SCENE_Master_Game_Design_Document_v1.0.docx",
+      "size_bytes": 103555,
+      "sha256": "378417816b2fd43e12a77257d6911a7bdfc5493b0316f5a0416cb19f408a3cd6"
+    },
+    {
+      "path": "master/THE_SCENE_Master_Game_Design_Document_v1.0.md",
+      "size_bytes": 134974,
+      "sha256": "920c3706f7e7f0fb11a97fc0d2e994f0e6eb6006639a66fffe3966435d8cb1a8"
+    },
+    {
+      "path": "references/CONTACT_SHEET.jpg",
+      "size_bytes": 634924,
+      "sha256": "6205f595d8bd33c76d73c0c8cd6cf8d56c094486327ea5241a451a97be30cc81"
+    },
+    {
+      "path": "references/IMAGE_MANIFEST.json",
+      "size_bytes": 13181,
+      "sha256": "69e6373a03738da27be59765680daa653cc6894a979278e4d3685cdf11da545e"
+    },
+    {
+      "path": "references/screens/01_world_music_square_mobile.webp",
+      "size_bytes": 230432,
+      "sha256": "0f79d1682389c71055cba90c976920757554d8fc066b3144999a6e8227e6cadb"
+    },
+    {
+      "path": "references/screens/02_world_music_square_desktop.webp",
+      "size_bytes": 284222,
+      "sha256": "6715e9ad4a50e07b349353291d564d963060d8ca34c22e15d729891d17e706f8"
+    },
+    {
+      "path": "references/screens/03_city_studio_context_help.webp",
+      "size_bytes": 219274,
+      "sha256": "262779edc72d00d4b655b7ce372ec77de7f2bf4b5579ece942af90d8cf90ffb9"
+    },
+    {
+      "path": "references/screens/04_desk_today_mobile.webp",
+      "size_bytes": 205118,
+      "sha256": "2a7d3f1f5a9891d2318c26789403f91b376deedaf0dcb4b4fee27c2e48a8888b"
+    },
+    {
+      "path": "references/screens/05_desk_artist_phone_q_a.webp",
+      "size_bytes": 211390,
+      "sha256": "ed4665ee14c58db5e7cc7c919f97a94d710cdfb824a8d9a2357dc977e837fc8f"
+    },
+    {
+      "path": "references/screens/06_venue_interior_setup_and_desk.webp",
+      "size_bytes": 261608,
+      "sha256": "5e745904575117d7b0bd5469c94b73403d04e5ff1a3079b0281e056f4ecd34cf"
+    },
+    {
+      "path": "references/screens/07_venue_equipment_shop.webp",
+      "size_bytes": 286614,
+      "sha256": "9c05a363c499499aba7f47f533c001be012b36772fe9dce5cdf26f1994bd8520"
+    },
+    {
+      "path": "references/screens/08_venue_lease_marketplace.webp",
+      "size_bytes": 261260,
+      "sha256": "ae9c16e5b35ea06affab72baaba0815c2e59d7a0a7126eda42f95753acf40486"
+    },
+    {
+      "path": "references/screens/09_venue_detail_preview.webp",
+      "size_bytes": 302656,
+      "sha256": "b9fe8699752dd91c393509a612159a7df283c6cb19a238ccc212cd3da85c1dda"
+    },
+    {
+      "path": "references/screens/10_artist_release_counter.webp",
+      "size_bytes": 216120,
+      "sha256": "e2157ddaf94f9f7c041ec06b3f9bd024787d2227d4ed605bee82310b95e6dac4"
+    },
+    {
+      "path": "references/screens/11_city_studio_artistic_exploration.webp",
+      "size_bytes": 312078,
+      "sha256": "10aa660b05adf3e893f558185d4399d9f3e5b37b46d5ae8517405e668e3fb9e2"
+    },
+    {
+      "path": "references/screens/12_city_studio_environment.webp",
+      "size_bytes": 373814,
+      "sha256": "dcc9b6433a1f78c790d1d19563a3bb1ece7251256fd6091bc0dc349ea75b77ee"
+    },
+    {
+      "path": "references/screens/13_label_desk_contract_decision.webp",
+      "size_bytes": 268176,
+      "sha256": "842ec79a578bfcb76846114eb09c74fb83f00e9f09ad2cdf76d1b35c40bd7658"
+    },
+    {
+      "path": "references/screens/14_label_a_r_space.webp",
+      "size_bytes": 272488,
+      "sha256": "4d82de6471759342e91dc6b74b9693aa913a35efc00d14e0037c0223370f0406"
+    },
+    {
+      "path": "references/screens/15_promoter_desk_choices.webp",
+      "size_bytes": 335572,
+      "sha256": "809ef3578a16b18b7418e22563f7e20d9a29a4f1ffd066e97713ba915389ad08"
+    },
+    {
+      "path": "references/screens/16_promoter_district_map.webp",
+      "size_bytes": 288342,
+      "sha256": "f86f88639761166f98a587f3ca293c2d8a7f2073d9ebf99c35a1647bbf425d21"
+    },
+    {
+      "path": "references/screens/17_fan_listening_lounge.webp",
+      "size_bytes": 239670,
+      "sha256": "e078ca28b94dbf0c6e2ada107cc7ec3207fcb825faa0511447de937d1ac61b43"
+    },
+    {
+      "path": "references/screens/18_fan_charts_hall.webp",
+      "size_bytes": 264936,
+      "sha256": "0be350323723cc8cd3cb180c51333859e5538034115943878905b3d986f0468c"
+    },
+    {
+      "path": "references/screens/19_release_hall_environment.webp",
+      "size_bytes": 459812,
+      "sha256": "0c99a0f57eb1d6b3a0f3a5edf3b2a98608fcf8b5050f245a471f54e425cd69b8"
+    },
+    {
+      "path": "references/screens/20_release_hall_gallery.webp",
+      "size_bytes": 346758,
+      "sha256": "2ce013847425578cf67ed523c072b0eb2c2ecb584a383f4f47e32d85b375a782"
+    },
+    {
+      "path": "references/screens/21_concert_the_basement.webp",
+      "size_bytes": 333516,
+      "sha256": "beaeab748a63bfd1f8ed14b8cf1267e1a24ff8643338be9f4483faba7cadcc52"
+    },
+    {
+      "path": "references/screens/22_concert_audience.webp",
+      "size_bytes": 327190,
+      "sha256": "33576bf268a47086758980d331cde1d91b0ef5f224da31ce22417f502812e80f"
+    },
+    {
+      "path": "references/screens/23_major_event_destiny_awards.webp",
+      "size_bytes": 334964,
+      "sha256": "d482e081fdd5756c43de2845baf188e10e7f1d8fcf9a89c3eb3b3e3dd8468caa"
+    },
+    {
+      "path": "references/screens/24_music_square_aspirational_key_art.webp",
+      "size_bytes": 468040,
+      "sha256": "e4773ba57b7713c2e194a4f22b12a426a78d28655455de3a7485c047060ef534"
+    },
+    {
+      "path": "references/screens/25_music_square_aspirational_alt.webp",
+      "size_bytes": 310118,
+      "sha256": "49f13eb5676144666147babca03e08ea2d3f6d5fb9d946cff6d00752cb2b5989"
+    },
+    {
+      "path": "references/screens/26_FINAL_music_square_desk_today.webp",
+      "size_bytes": 219268,
+      "sha256": "b1c296fc2efbc8b119b5add7eee2f928c029098fcd8bc9f9c9114adc04b2e5fd"
+    },
+    {
+      "path": "references/screens/27_FINAL_palm_room_venue_leasing.webp",
+      "size_bytes": 221330,
+      "sha256": "3044086fe732e02b461f0fac56ad56499c0460c2bde5161f50a5e8c04f7c3ac0"
+    },
+    {
+      "path": "supplements/THE_SCENE_HPATH_Player_Interaction_Matrix_v0.1.docx",
+      "size_bytes": 63140,
+      "sha256": "bbd70042ee75c577d4da210b8ea952950db3d67669d47d92d86ebe7815eb03c0"
+    },
+    {
+      "path": "supplements/THE_SCENE_HPATH_Player_Interaction_Matrix_v0.1.md",
+      "size_bytes": 54196,
+      "sha256": "50f4a1b2d0e7a0da08aca519c61b0f107b40158489bd9681f55ee66910a1b663"
+    },
+    {
+      "path": "supplements/THE_SCENE_Stage_2_Seven_Day_Career_Simulation_v0.2.md",
+      "size_bytes": 28155,
+      "sha256": "40d9c058ee778eb04433d7a64d66ca09bfd2bf18781fed35e0e2bb3a4d87f650"
+    }
+  ]
+}

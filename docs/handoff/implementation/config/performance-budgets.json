@@ -1,0 +1,25 @@
+{
+  "status": "Engineering alpha targets; tune after device measurements; no fake guarantee",
+  "mobile_first_controllable_world_p75_seconds": 12,
+  "first_enter_world_transfer_kib_target": 5000,
+  "first_enter_world_transfer_kib_hard_review": 8000,
+  "initial_js_css_transfer_kib_target": 550,
+  "initial_scene_models_textures_transfer_kib_target": 3300,
+  "album_art_thumbnail_target_kib": 28,
+  "album_art_large_target_kib": 115,
+  "ad_thumbnail_target_kib": 50,
+  "avatar_thumbnail_target_kib": 30,
+  "song_audio_preload": "none prior to explicit user request; metadata only where justified",
+  "song_audio_normal_kbps": 96,
+  "song_audio_data_saver_kbps": 64,
+  "minimum_entry_device_fps_target": 30,
+  "room_player_capacity_initial_test_range": [
+    20,
+    50
+  ],
+  "visible_avatar_movement_update_hz_test_range": [
+    5,
+    10
+  ],
+  "policy": "Measure p50/p75/p95 by device/network/locale; do not ship if slow-device gates fail."
+}
