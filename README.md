@@ -30,7 +30,7 @@ The local guest save uses SQLite under ignored `app/data/`. Beat and sleeve draf
 cd app
 npm test
 npm run build
-npm run preview -- --host 127.0.0.1
+npm start
 ```
 
-The preview server serves the built game with the local guest API and presence service. See [M0 progress](M0_PROGRESS.md) for evidence and open quality gates.
+The built-game server starts at `http://127.0.0.1:4173/` with the guest API and presence service. Set `PORT` and `HOST` for a host that runs Node.js and provides persistent storage for `app/data/`. See [M0 progress](M0_PROGRESS.md) for evidence and open quality gates.
