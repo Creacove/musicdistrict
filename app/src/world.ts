@@ -128,12 +128,27 @@ function microphone(parent: THREE.Group, x: number, z: number) {
 export function makeSquare() {
   const root = new THREE.Group()
   root.name = 'Music Square'
-  tileFloor(root, 43, 40, '#897f70', '#70675d')
+  tileFloor(root, 43, 40, '#a18f7b', '#756b60')
+  // Layered street edge gives the small playable square a surrounding city.
+  const sand = mat('#a88b71'), pale = mat('#c5a488'), brick = mat('#805b4c'), windowGlass = mat('#d6ad78', .1, '#493320')
+  for (const [x, z, w, h, face] of [[-19, -22, 7, 14, sand], [-10, -25, 8, 17, pale], [4, -24, 9, 13, brick], [17, -23, 7, 16, sand], [-23, -6, 4, 12, pale], [23, -4, 4, 14, brick]] as const) {
+    box(root, w, h, 2.3, face, x, h / 2, z)
+    box(root, w + .4, .36, 2.7, charcoal, x, h, z)
+    for (let floor = 1; floor < h - 1; floor += 2.8) for (let col = -w / 2 + 1; col < w / 2; col += 2.3) {
+      box(root, 1.05, 1.45, .08, charcoal, x + col, floor + .6, z + 1.18)
+      box(root, .85, 1.25, .09, windowGlass, x + col, floor + .6, z + 1.24)
+    }
+  }
+  for (const [x, z] of [[-16, -17], [7, -17], [20, -17]]) {
+    box(root, .22, 6, .22, brass, x, 3, z)
+    box(root, 1.3, .3, 1.3, charcoal, x, 6.1, z)
+  }
   // Civic arcade and covered live stage.
   box(root, 28, 7.7, 3.3, cream, -3, 3.85, -18)
   box(root, 30, .55, 5.4, charcoal, -3, 4.25, -15.8)
   box(root, 12.9, 1.65, .18, black, -5.5, 5.9, -13.02)
   sign(root, ['♪  MUSIC SQUARE'], 12.4, 1.4, -5.5, 5.9, -12.89, { size: 94 })
+  sign(root, ['MUSIC  ·  PEOPLE  ·  OPPORTUNITY'], 11.7, .44, -5.5, 4.92, -12.86, { bg: '#1c1a1d', ink: '#d9bd91', size: 61 })
   for (let i = 0; i < 7; i++) {
     const x = -15 + i * 3.6
     box(root, 2.55, 2.7, .08, charcoal, x, 1.65, -16.32)
