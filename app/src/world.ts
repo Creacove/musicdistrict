@@ -50,6 +50,53 @@ function sign(parent: THREE.Group, lines: string[], width: number, height: numbe
   return mesh
 }
 
+function squareMural(parent: THREE.Group) {
+  const canvas = document.createElement('canvas')
+  canvas.width = 1024
+  canvas.height = 360
+  const c = canvas.getContext('2d')!
+  const wash = c.createLinearGradient(0, 0, 1024, 360)
+  wash.addColorStop(0, '#33243b')
+  wash.addColorStop(.55, '#71405a')
+  wash.addColorStop(1, '#c46652')
+  c.fillStyle = wash
+  c.fillRect(0, 0, 1024, 360)
+  // Original painted skyline and rhythmic blocks, not a concept image texture.
+  for (let i = 0; i < 22; i++) {
+    const x = i * 49 - 10
+    const h = 46 + (i * 37 % 125)
+    c.fillStyle = i % 3 === 0 ? '#db8a5f' : '#a75666'
+    c.fillRect(x, 360 - h, 43, h)
+    c.fillStyle = '#f2ad70'
+    for (let y = 360 - h + 14; y < 340; y += 24) for (let wx = x + 8; wx < x + 42; wx += 15) c.fillRect(wx, y, 5, 7)
+  }
+  c.save()
+  c.translate(790, 145)
+  c.rotate(-.13)
+  c.fillStyle = '#f5b66c'
+  c.font = '900 170px Arial'
+  c.fillText('♪', 0, 0)
+  c.restore()
+  c.textAlign = 'left'
+  c.shadowColor = '#211622'
+  c.shadowBlur = 13
+  c.fillStyle = '#ffe2a0'
+  c.font = '900 82px Arial'
+  c.fillText('GOOD MUSIC', 46, 116)
+  c.fillStyle = '#ffffff'
+  c.font = '900 76px Arial'
+  c.fillText('BRIGHTER LAGOS', 46, 208)
+  c.shadowBlur = 0
+  c.fillStyle = '#ffc996'
+  c.font = '700 25px Arial'
+  c.fillText('THE SCENE  •  MUSIC SQUARE', 50, 268)
+  const texture = new THREE.CanvasTexture(canvas)
+  texture.colorSpace = THREE.SRGBColorSpace
+  const mural = new THREE.Mesh(new THREE.PlaneGeometry(11.4, 3.45), new THREE.MeshBasicMaterial({ map: texture }))
+  mural.position.set(-5.5, 2.55, -12.7)
+  parent.add(mural)
+}
+
 function tileFloor(parent: THREE.Group, width: number, depth: number, color: string, grout: string) {
   const canvas = document.createElement('canvas')
   canvas.width = canvas.height = 512
@@ -125,6 +172,31 @@ function microphone(parent: THREE.Group, x: number, z: number) {
   cylinder(parent, .3, .3, .04, black, x, .73, z)
 }
 
+// Cheap, authored festoon lighting gives the square its evening street identity.
+// Bulbs share materials and geometry; only the existing street lamps cast light.
+function festoon(parent: THREE.Group, from: [number, number, number], to: [number, number, number], count = 15) {
+  const points: THREE.Vector3[] = []
+  const bulbGeometry = new THREE.SphereGeometry(.095, 6, 4)
+  const bulbMaterial = new THREE.MeshBasicMaterial({ color: '#ffe0a0' })
+  for (let i = 0; i <= count; i++) {
+    const t = i / count
+    const sag = Math.sin(t * Math.PI) * .75
+    const point = new THREE.Vector3(
+      THREE.MathUtils.lerp(from[0], to[0], t),
+      THREE.MathUtils.lerp(from[1], to[1], t) - sag,
+      THREE.MathUtils.lerp(from[2], to[2], t),
+    )
+    points.push(point)
+    if (i > 0 && i < count) {
+      const bulb = new THREE.Mesh(bulbGeometry, bulbMaterial)
+      bulb.position.copy(point)
+      parent.add(bulb)
+    }
+  }
+  const cable = new THREE.Line(new THREE.BufferGeometry().setFromPoints(points), new THREE.LineBasicMaterial({ color: '#28242a' }))
+  parent.add(cable)
+}
+
 export function makeSquare() {
   const root = new THREE.Group()
   root.name = 'Music Square'
@@ -143,6 +215,19 @@ export function makeSquare() {
     box(root, .22, 6, .22, brass, x, 3, z)
     box(root, 1.3, .3, 1.3, charcoal, x, 6.1, z)
   }
+  // Balconies, shaded storefronts and hanging lights break up the flat blockout.
+  for (const [x, z, w] of [[-19, -22, 7], [-10, -25, 8], [4, -24, 9], [17, -23, 7]] as const) {
+    for (const y of [3.4, 6.2, 9]) {
+      box(root, w - .7, .16, 1.25, cream, x, y, z + 1.8)
+      box(root, w - .8, .65, .08, charcoal, x, y + .38, z + 2.4)
+      for (let rail = -w / 2 + .7; rail < w / 2; rail += .8) {
+        box(root, .055, .58, .055, brass, x + rail, y + .37, z + 2.4)
+      }
+    }
+  }
+  festoon(root, [-20, 6.2, 4], [20, 6.2, 3])
+  festoon(root, [-18, 6.4, -3], [19, 6.1, -4])
+  festoon(root, [-17, 6.3, 11], [18, 6.1, 10])
   // Civic arcade and covered live stage.
   box(root, 28, 7.7, 3.3, cream, -3, 3.85, -18)
   box(root, 30, .55, 5.4, charcoal, -3, 4.25, -15.8)
@@ -157,7 +242,17 @@ export function makeSquare() {
   box(root, 13, .75, 4.7, charcoal, -5.5, .37, -10.5)
   box(root, 13.4, .15, .18, brass, -5.5, .8, -8.1)
   box(root, 11.6, 3.4, .18, mat('#3d263a'), -5.5, 2.55, -12.84)
-  sign(root, ['GOOD MUSIC', 'BRIGHTER LAGOS'], 5.5, 2.2, -5.5, 2.8, -12.7, { bg: '#503044', ink: '#f0c98d', size: 72 })
+  squareMural(root)
+  // The lighting rig gives the open mic a recognizable performance silhouette.
+  for (const x of [-11.9, .9]) box(root, .16, 3.8, .16, charcoal, x, 2.7, -8.05)
+  box(root, 13.1, .16, .16, charcoal, -5.5, 4.58, -8.05)
+  for (const x of [-10, -7.8, -5.5, -3.2, -1]) {
+    cylinder(root, .19, .13, .38, black, x, 4.26, -8.04, 8)
+    const lens = new THREE.Mesh(new THREE.CircleGeometry(.14, 8), new THREE.MeshBasicMaterial({ color: '#ffe8b2' }))
+    lens.rotation.x = -Math.PI / 2
+    lens.position.set(x, 4.05, -8.04)
+    root.add(lens)
+  }
   speaker(root, -11, 1.63, -8.35, 1.05)
   speaker(root, 0, 1.63, -8.35, 1.05)
   microphone(root, -5.5, -9.7)
