@@ -7,6 +7,7 @@ import { renderMasterWav, sectionsDiffer, starterPattern, toggleStep, validPatte
 import { loadLocalMaster, saveLocalMaster } from './localMaster.ts'
 import { makeReleaseHouse } from './releaseWorld.ts'
 import { blankReleaseDraft, releaseBlockers, validReleaseDraft, type ReleaseDraft } from './releaseDraft.ts'
+import { connectPresence, type PresencePlayer } from './presence.ts'
 import './style.css'
 
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
@@ -51,6 +52,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
   <div id="context" class="context" hidden><div><span id="context-icon">✦</span><div><b id="context-name"></b><small id="context-help">Approach and interact</small></div></div><button id="interact">Interact <kbd>E</kbd></button></div>
   <section id="mini-player" class="mini-player" hidden aria-label="Personal music preview"><div class="mini-art">♫</div><div class="mini-copy"><b>Square Sketch</b><small>Original demo · private preview</small></div><button id="mini-play" aria-label="Play Square Sketch">▶</button><button id="mini-save" aria-label="Save Square Sketch">♡</button></section>
   <button id="dance" class="dance-button" aria-pressed="false">♪ Dance</button>
+  <div id="presence-status" class="presence-status" role="status">Connecting to Music Square…</div>
 
   <section id="action-sheet" class="action-sheet" hidden>
     <button id="action-close" class="icon-close" aria-label="Close interaction">×</button>
@@ -178,6 +180,25 @@ avatarPart(new THREE.BoxGeometry(.32, .18, .55), shoes, -.21, .11, .13)
 avatarPart(new THREE.BoxGeometry(.32, .18, .55), shoes, .21, .11, .13)
 avatar.position.set(-4, 0, 7)
 camera.position.set(-4, 3.8, 14.2)
+const remoteAvatars = new Map<string, THREE.Group>()
+let connectedPlayers: PresencePlayer[] = []
+function renderPresence(players: PresencePlayer[], connected: boolean) {
+  connectedPlayers = players
+  const visible = new Set(players.filter(player => player.location === location).map(player => player.id))
+  for (const [id, model] of remoteAvatars) if (!visible.has(id)) { scene.remove(model); remoteAvatars.delete(id) }
+  for (const player of players) {
+    if (player.location !== location) continue
+    let model = remoteAvatars.get(player.id)
+    if (!model) { model = avatar.clone(); model.name = 'Connected guest session'; scene.add(model); remoteAvatars.set(player.id, model) }
+    model.position.set(player.x, 0, player.z)
+    model.rotation.y = player.angle
+  }
+  const count = players.filter(player => player.location === location).length
+  const status = connected ? `${count} other connected ${count === 1 ? 'session' : 'sessions'} here` : 'Offline · reconnecting'
+  if ($<HTMLElement>('presence-status').textContent !== status) $<HTMLElement>('presence-status').textContent = status
+}
+const presence = connectPresence(renderPresence)
+window.addEventListener('beforeunload', () => presence.close())
 
 const keys = new Set<string>()
 let yaw = 0, dragging = false, previousX = 0, pointerStartX = 0, pointerStartY = 0, pointerMoved = false, touchX = 0, touchY = 0
@@ -648,7 +669,7 @@ document.querySelectorAll<HTMLButtonElement>('[data-art]').forEach(button => but
 $<HTMLButtonElement>('display-close').onclick = closeSheets
 document.querySelectorAll<HTMLButtonElement>('[data-quality]').forEach(button => button.onclick = () => { quality = button.dataset.quality as Quality; localStorage.setItem('scene-quality', quality); applyQuality(); updateMetrics() })
 $<HTMLButtonElement>('nav-create').onclick = () => location === 'studio' ? setRoute('studioDesk') : location === 'release' ? setRoute('releaseIntake') : location === 'square' ? setRoute('studio') : toast('Walk to City Studio from Music Square')
-$<HTMLButtonElement>('nav-people').onclick = () => toast('Real player presence arrives with the multiplayer service')
+$<HTMLButtonElement>('nav-people').onclick = () => toast($<HTMLElement>('presence-status').textContent || 'Presence unavailable')
 $<HTMLButtonElement>('home').onclick = () => { closeSheets(); $<HTMLElement>('venue-card').hidden = true }
 $<HTMLButtonElement>('route-close').onclick = () => { routeTarget = null; onwardTarget = null; $<HTMLElement>('route').hidden = true }
 $<HTMLButtonElement>('venue-close').onclick = () => { $<HTMLElement>('venue-card').hidden = true; refreshContext() }
@@ -715,6 +736,7 @@ function resize() { camera.aspect = world.clientWidth / world.clientHeight; came
 window.addEventListener('resize', resize)
 resize()
 let previousFrame = performance.now(), elapsed = 0
+let lastPresenceSend = 0
 const frameSamples: number[] = []
 let readyMs: number | null = null
 function updateMetrics() {
@@ -759,6 +781,14 @@ function frame() {
   camera.position.lerp(desired, 1 - Math.exp(-5 * dt))
   camera.lookAt(avatar.position.x, 1.52, avatar.position.z)
   const next = getNearby(location, avatar.position.x, avatar.position.z)
+  if (now - lastPresenceSend > 125) {
+    presence.send({ x: avatar.position.x, z: avatar.position.z, angle: avatar.rotation.y, dancing, location })
+    lastPresenceSend = now
+  }
+  for (const player of connectedPlayers) {
+    const model = remoteAvatars.get(player.id)
+    if (model && player.dancing) model.rotation.y = player.angle + Math.sin(elapsed * 2.5) * .32
+  }
   if (next !== nearby) { nearby = next; refreshContext() }
   if (routeTarget) {
     const [x, z] = routePoints[routeTarget]

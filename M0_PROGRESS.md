@@ -78,6 +78,10 @@ A free Dance control now animates the local avatar in place, with a Stop control
 
 Music Square gained a layered street edge with warm window materials, arcade columns and a secondary sign line. The browser showed a fuller skyline behind the walkable stage at mobile width. This remains hand-built blockout art; rigged characters, real crowd presence, baked lighting and device performance need production work.
 
+## Local connected-session presence foundation — 13 October 2026
+
+A small WebSocket service attached to the Vite development and preview servers now sends guest session join, movement, dance and leave messages. The browser renders other connected sessions as local avatar clones in the same room and shows a count based on active sockets. Reconnection clears stale local avatars. The server validates message shape, location and coordinates and limits move broadcasts; a two-client protocol test verified empty welcome, join, movement and leave. The in-app browser showed the live connected-session count after restarting the development server. This is **anonymous guest-session presence**, not verified distinct humans, persistent identity, account-level social state or production multiplayer infrastructure. Text chat, privacy/safety controls, server-authenticated movement, 20-player load testing and database-backed identity remain open M1 work.
+
 ## City Studio playable slice — 13 October 2026
 
 Following Master GDD §§3, 6 and Chapter 02 Artist (ART-21 and Slice 0/1), City Studio is now a separate walkable 3D room reached through the physical square door. Its producer desk opens an eight-step, four-lane beat pattern. Players can change pads, play original synthesized sounds, stop playback, and save one private pattern in browser local storage. Desk routes to the studio door or desk. The vocal booth is a spatial landmark only; no microphone request, public release, chart entry, or rights claim is made.

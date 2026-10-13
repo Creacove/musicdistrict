@@ -6,15 +6,17 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "test": "node --experimental-strip-types --test tests/*.test.ts",
+    "test": "node --experimental-strip-types --test tests/*.test.ts tests/*.test.mjs",
     "preview": "vite preview"
   },
   "devDependencies": {
     "@types/three": "^0.186.0",
+    "@types/ws": "^8.18.2",
     "typescript": "~6.0.2",
     "vite": "^8.3.0"
   },
   "dependencies": {
-    "three": "^0.186.1"
+    "three": "^0.186.1",
+    "ws": "^8.22.0"
   }
 }
