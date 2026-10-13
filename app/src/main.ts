@@ -49,6 +49,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
   </section>
 
   <div id="context" class="context" hidden><div><span id="context-icon">✦</span><div><b id="context-name"></b><small id="context-help">Approach and interact</small></div></div><button id="interact">Interact <kbd>E</kbd></button></div>
+  <section id="mini-player" class="mini-player" hidden aria-label="Personal music preview"><div class="mini-art">♫</div><div class="mini-copy"><b>Square Sketch</b><small>Original demo · private preview</small></div><button id="mini-play" aria-label="Play Square Sketch">▶</button><button id="mini-save" aria-label="Save Square Sketch">♡</button></section>
 
   <section id="action-sheet" class="action-sheet" hidden>
     <button id="action-close" class="icon-close" aria-label="Close interaction">×</button>
@@ -192,7 +193,7 @@ let routeTarget: Hotspot | null = null
 let onwardTarget: Hotspot | null = null
 let sheet: 'none' | 'desk' | 'action' = 'none'
 let deskTab: 'today' | 'ask' | 'plans' = 'today'
-let savedPreview = false, equipmentPreviewVisible = false, playing = false
+let savedPreview = false, previewOpened = false, equipmentPreviewVisible = false, playing = false
 let beatPattern: BeatPattern = starterPattern(), beatPatternB: BeatPattern = toggleStep(starterPattern(), 0, 1)
 let beatSection: 'a' | 'b' = 'a', beatPlaying = false, beatTimer: number | undefined, beatStep = 0, beatBar = 0, beatDraftSaved = false
 let masterBlob: Blob | null = null, masterPlayer: HTMLAudioElement | null = null, masterAudioUrl: string | null = null
@@ -200,6 +201,7 @@ let releaseDraft: ReleaseDraft = blankReleaseDraft()
 try { const saved = JSON.parse(localStorage.getItem('scene-beat-draft') || 'null'); if (validPattern(saved)) { beatPattern = saved; beatDraftSaved = true } } catch { /* invalid local draft starts fresh */ }
 try { const saved = JSON.parse(localStorage.getItem('scene-beat-arrangement') || 'null'); if (validPattern(saved?.a) && validPattern(saved?.b)) { beatPattern = saved.a; beatPatternB = saved.b; beatDraftSaved = true } } catch { /* invalid local arrangement starts fresh */ }
 try { const saved = JSON.parse(localStorage.getItem('scene-release-draft') || 'null'); if (validReleaseDraft(saved)) releaseDraft = saved } catch { /* invalid local draft starts fresh */ }
+try { savedPreview = localStorage.getItem('scene-saved-square-sketch') === '1'; previewOpened = savedPreview } catch { /* storage may be unavailable */ }
 void loadLocalMaster().then(blob => { masterBlob = blob; if (!$<HTMLElement>('release-sheet').hidden) renderReleaseDraft(false) }).catch(() => { /* private mode may block local storage */ })
 let audio: AudioContext | null = null, audioTimer: number | undefined
 
@@ -272,6 +274,9 @@ function renderMap() {
 }
 
 function startPreview() {
+  stopBeat()
+  stopMasterPreview()
+  previewOpened = true
   audio ??= new AudioContext()
   void audio.resume()
   playing = true
@@ -292,6 +297,7 @@ function startPreview() {
   audioTimer = window.setInterval(note, 350)
   $<HTMLButtonElement>('audio').innerHTML = '♫ <span>ON</span>'
   $<HTMLButtonElement>('audio').setAttribute('aria-label', 'Audio on')
+  renderMiniPlayer()
 }
 
 function stopPreview() {
@@ -299,6 +305,24 @@ function stopPreview() {
   window.clearInterval(audioTimer)
   $<HTMLButtonElement>('audio').innerHTML = '♫ <span>OFF</span>'
   $<HTMLButtonElement>('audio').setAttribute('aria-label', 'Audio off')
+  renderMiniPlayer()
+}
+
+function savePreview() {
+  savedPreview = true
+  previewOpened = true
+  try { localStorage.setItem('scene-saved-square-sketch', '1') } catch { toast('Storage unavailable; saved for this session only') }
+  renderMiniPlayer()
+  toast('Square Sketch saved privately')
+}
+
+function renderMiniPlayer() {
+  $<HTMLElement>('mini-player').hidden = !previewOpened
+  $<HTMLButtonElement>('mini-play').textContent = playing ? 'Ⅱ' : '▶'
+  $<HTMLButtonElement>('mini-play').setAttribute('aria-label', playing ? 'Pause Square Sketch' : 'Play Square Sketch')
+  $<HTMLButtonElement>('mini-save').textContent = savedPreview ? '♥' : '♡'
+  $<HTMLButtonElement>('mini-save').setAttribute('aria-label', savedPreview ? 'Square Sketch saved' : 'Save Square Sketch')
+  $<HTMLButtonElement>('mini-save').disabled = savedPreview
 }
 
 function beatVoice(lane: number) {
@@ -488,7 +512,7 @@ function leaveVenue() {
 
 function interact() {
   if (!nearby) return
-  if (nearby === 'kiosk') openAction('Listening station', 'Play an original synthesized preview. No song file downloads before you choose Play.', playing ? 'Stop preview' : 'Play preview', () => { playing ? stopPreview() : startPreview(); interact() }, { label: savedPreview ? 'Saved ✓' : 'Save preview', action: () => { savedPreview = true; toast('Saved for this session'); interact() } })
+  if (nearby === 'kiosk') openAction('Square Sketch · listening station', 'An original synthesized demo for this prototype. Choose Play to hear it; saves stay private on this device and do not count toward charts.', playing ? 'Pause preview' : 'Play preview', () => { playing ? stopPreview() : startPreview(); interact() }, { label: savedPreview ? 'Saved ✓' : 'Save privately', action: () => { savePreview(); interact() } })
   if (nearby === 'studio') openAction('City Studio', 'Enter the free studio and walk to the producer desk. The local beat demo uses original synthesized sounds.', 'Enter studio', enterStudio)
   if (nearby === 'studioDesk') openBeat()
   if (nearby === 'studioExit') openAction('Exit City Studio', 'Walk back to Music Square. Your local beat draft stays on this device.', 'Return to square', leaveStudio)
@@ -563,6 +587,9 @@ function openMap() {
 }
 
 $<HTMLButtonElement>('audio').onclick = () => playing ? stopPreview() : masterPlayer ? stopMasterPreview() : toast('Choose Play at a listening station or music desk')
+$<HTMLButtonElement>('mini-play').onclick = () => playing ? stopPreview() : startPreview()
+$<HTMLButtonElement>('mini-save').onclick = savePreview
+renderMiniPlayer()
 $<HTMLButtonElement>('desk-trigger').onclick = () => openDesk()
 $<HTMLButtonElement>('desk-close').onclick = closeSheets
 $<HTMLButtonElement>('action-close').onclick = closeSheets
