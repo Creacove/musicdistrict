@@ -94,6 +94,8 @@ Five tests pass and the production build succeeds. In the live browser, the stud
 
 ## World solidity and Palm Room stage performance slice — 13 October 2026
 
+The production browser playthrough exposed a planter blocking a direct tap target. Tap-to-walk and Map/Desk routes now find walkable waypoints around scene obstacles and move the avatar to the physical interaction point; manual movement still takes control. Browser verification followed the Map route to City Studio, walked to the beat desk, rendered a 30-second master, routed through the studio exit to Release House, and entered Palm Room. The stage preview initially stopped during its own sheet refresh; that shared close behavior is now separated. The rebuilt browser showed the Palm Room stage, active preview lights, audio ON, and a Stop preview control while the local master played. Seventeen automated tests pass, including three pathfinding tests. This remains local playback, not a concert broadcast.
+
 Addressing Risk #1 from the repository audit (rudimentary collision and camera clipping), the world now enforces obstacle boundaries and continuous sliding collision across Music Square and all three interiors:
 
 - **Obstacle bounds & sliding physics:** Defined exact bounding boxes and cylindrical obstacles in `worldModel.ts` matching the visual geometry:

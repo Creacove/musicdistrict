@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { BOUNDARIES, getNearby, isPointBlocked, resolveCollision, type Hotspot, type Location } from './worldModel.ts'
+import { findWalkPath, type WalkPoint } from './navigation.ts'
 import { makePalmRoom, makeSquare } from './world.ts'
 import { reportedTransferBytes, summarizeFrames } from './performance.ts'
 import { makeStudio } from './studioWorld.ts'
@@ -206,13 +207,24 @@ window.addEventListener('beforeunload', () => presence.close())
 const keys = new Set<string>()
 let yaw = 0, dragging = false, previousX = 0, pointerStartX = 0, pointerStartY = 0, pointerMoved = false, touchX = 0, touchY = 0
 let walkTarget: THREE.Vector3 | null = null
+let walkPath: WalkPoint[] = []
 const walkMarker = new THREE.Mesh(new THREE.RingGeometry(.45, .58, 28), new THREE.MeshBasicMaterial({ color: '#36e8b8', side: THREE.DoubleSide, depthTest: false }))
 walkMarker.rotation.x = -Math.PI / 2; walkMarker.visible = false; walkMarker.renderOrder = 20; scene.add(walkMarker)
 const routeMarker = new THREE.Mesh(new THREE.RingGeometry(.7, .84, 32), new THREE.MeshBasicMaterial({ color: '#f7d37d', side: THREE.DoubleSide, depthTest: false }))
 routeMarker.rotation.x = -Math.PI / 2; routeMarker.visible = false; routeMarker.renderOrder = 21; scene.add(routeMarker)
-const routePoints: Record<Hotspot, [number, number]> = { kiosk: [-8, 2], studio: [13, -8], palmEntrance: [10, 2], stage: [0, -7], venueExit: [-10, 9], studioDesk: [0, -5.5], studioExit: [-10, 9], releaseEntrance: [-13, -8], releaseIntake: [0, -5.5], releaseExit: [-10, 9] }
+const routePoints: Record<Hotspot, [number, number]> = { kiosk: [-8, 3.55], studio: [13, -8], palmEntrance: [10, 2], stage: [0, -7], venueExit: [-10, 9], studioDesk: [0, -4.05], studioExit: [-10, 9], releaseEntrance: [-13, -8], releaseIntake: [0, -3.9], releaseExit: [-10, 9] }
 const ground = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), raycaster = new THREE.Raycaster()
-function clearWalkTarget() { walkTarget = null; walkMarker.visible = false }
+function clearWalkTarget() { walkTarget = null; walkPath = []; walkMarker.visible = false }
+function beginWalkTo(x: number, z: number): boolean {
+  const path = findWalkPath(location, [avatar.position.x, avatar.position.z], [x, z])
+  if (!path.length) return false
+  walkPath = path
+  const [firstX, firstZ] = walkPath.shift()!
+  walkTarget = new THREE.Vector3(firstX, 0, firstZ)
+  walkMarker.position.set(x, .05, z)
+  walkMarker.visible = true
+  return true
+}
 let nearby: Hotspot | null = null
 let routeTarget: Hotspot | null = null
 let onwardTarget: Hotspot | null = null
@@ -242,7 +254,7 @@ function toast(text: string) {
   window.setTimeout(() => node.classList.remove('show'), 3100)
 }
 
-function closeSheets() {
+function hideSheets(keepMasterAudio: boolean) {
   $<HTMLElement>('desk-sheet').hidden = true
   $<HTMLElement>('action-sheet').hidden = true
   $<HTMLElement>('display-sheet').hidden = true
@@ -250,10 +262,11 @@ function closeSheets() {
   $<HTMLElement>('release-sheet').hidden = true
   $<HTMLElement>('map-sheet').hidden = true
   stopBeat()
-  stopMasterPreview()
+  if (!keepMasterAudio) stopMasterPreview()
   sheet = 'none'
   refreshContext()
 }
+function closeSheets() { hideSheets(false) }
 
 function stopDance() {
   dancing = false
@@ -280,7 +293,7 @@ function setRoute(target: Hotspot) {
   $<HTMLElement>('route').hidden = false
   $<HTMLElement>('route-title').textContent = target === 'palmEntrance' ? 'PALM ROOM' : target === 'stage' ? 'STAGE SETUP' : target === 'studio' ? 'CITY STUDIO' : target === 'studioDesk' ? 'BEAT DESK' : target === 'studioExit' ? 'STUDIO EXIT' : target === 'releaseEntrance' ? 'RELEASE HOUSE' : target === 'releaseIntake' ? 'RECORD INTAKE' : target === 'releaseExit' ? 'RELEASE EXIT' : target === 'venueExit' ? 'VENUE EXIT' : 'LISTENING STATION'
   closeSheets()
-  toast('Follow the world marker and walk there')
+  toast(beginWalkTo(x, z) ? 'Walking to the marked place · steer with WASD or the touch pad' : 'No clear walking route · move closer and try again')
 }
 
 const mapDestinations: { id: Hotspot; name: string; detail: string }[] = [
@@ -308,8 +321,8 @@ function renderMap() {
     avatarPin.style.left = `${Math.max(5, Math.min(95, (avatar.position.x + 18) / 37 * 100))}%`
     avatarPin.style.top = `${Math.max(6, Math.min(94, (avatar.position.z + 12) / 28 * 100))}%`
   }
-  $<HTMLElement>('map-context').textContent = location === 'square' ? 'Choose a place, then walk to its entrance.' : `You are inside ${location === 'venue' ? 'Palm Room' : location === 'studio' ? 'City Studio' : 'Release House'}. A route to another place begins at this room’s exit.`
-  $<HTMLElement>('map-places').innerHTML = mapDestinations.map(item => `<button data-map-target="${item.id}"><b>${item.name}</b><small>${item.detail}</small><span>Show route ↗</span></button>`).join('')
+  $<HTMLElement>('map-context').textContent = location === 'square' ? 'Choose a place to walk there. Interact at its entrance.' : `You are inside ${location === 'venue' ? 'Palm Room' : location === 'studio' ? 'City Studio' : 'Release House'}. A route to another place begins at this room’s exit.`
+  $<HTMLElement>('map-places').innerHTML = mapDestinations.map(item => `<button data-map-target="${item.id}"><b>${item.name}</b><small>${item.detail}</small><span>Walk there ↗</span></button>`).join('')
   $<HTMLElement>('map-sheet').querySelectorAll<HTMLButtonElement>('[data-map-target]').forEach(button => button.onclick = () => mapRoute(button.dataset.mapTarget as Hotspot))
 }
 
@@ -409,8 +422,8 @@ function toggleBeat() {
   pulse(); beatTimer = window.setInterval(pulse, 312.5)
 }
 
-function openAction(title: string, copy: string, primary: string, onPrimary: () => void, secondary?: { label: string; action: () => void }) {
-  closeSheets()
+function openAction(title: string, copy: string, primary: string, onPrimary: () => void, secondary?: { label: string; action: () => void }, keepMasterAudio = false) {
+  hideSheets(keepMasterAudio)
   sheet = 'action'
   $<HTMLElement>('action-sheet').hidden = false
   $<HTMLElement>('action-title').textContent = title
@@ -588,7 +601,7 @@ function interact() {
             stopMasterPreview()
             masterAudioUrl = URL.createObjectURL(masterBlob!)
             masterPlayer = new Audio(masterAudioUrl)
-            masterPlayer.onended = stopMasterPreview
+            masterPlayer.onended = () => { stopMasterPreview(); if (nearby === 'stage') interact() }
             performingOnStage = true
             palmRoom?.setStagePerformance(true)
             void masterPlayer.play().then(() => {
@@ -597,7 +610,8 @@ function interact() {
               toast('Stage preview · Playing locally')
             }).catch(() => {
               stopMasterPreview()
-              toast('Audio was blocked · Tap perform again')
+              if (nearby === 'stage') interact()
+              toast('Audio was blocked · Tap preview again')
             })
           }
           refreshContext()
@@ -612,7 +626,8 @@ function interact() {
             refreshContext()
             interact()
           },
-        }
+        },
+        performingOnStage
       )
     } else {
       openAction(
@@ -752,7 +767,7 @@ document.querySelectorAll<HTMLButtonElement>('[data-quality]').forEach(button =>
 $<HTMLButtonElement>('nav-create').onclick = () => location === 'studio' ? setRoute('studioDesk') : location === 'release' ? setRoute('releaseIntake') : location === 'square' ? setRoute('studio') : toast('Walk to City Studio from Music Square')
 $<HTMLButtonElement>('nav-people').onclick = () => toast($<HTMLElement>('presence-status').textContent || 'Presence unavailable')
 $<HTMLButtonElement>('home').onclick = () => { closeSheets(); $<HTMLElement>('venue-card').hidden = true }
-$<HTMLButtonElement>('route-close').onclick = () => { routeTarget = null; onwardTarget = null; $<HTMLElement>('route').hidden = true }
+$<HTMLButtonElement>('route-close').onclick = () => { routeTarget = null; onwardTarget = null; $<HTMLElement>('route').hidden = true; clearWalkTarget() }
 $<HTMLButtonElement>('venue-close').onclick = () => { $<HTMLElement>('venue-card').hidden = true; refreshContext() }
 $<HTMLButtonElement>('preview-hall').onclick = () => { $<HTMLElement>('venue-card').hidden = true; refreshContext() }
 $<HTMLButtonElement>('view-setup').onclick = () => { $<HTMLElement>('venue-card').hidden = true; setRoute('stage') }
@@ -785,7 +800,7 @@ world.addEventListener('pointerup', event => {
       toast('That spot is blocked by an obstacle')
       return
     }
-    walkTarget = hit; walkMarker.position.set(hit.x, .05, hit.z); walkMarker.visible = true
+    if (!beginWalkTo(hit.x, hit.z)) { toast('No clear walking route to that spot'); return }
     toast('Walking to marked spot')
   }
 })
@@ -843,7 +858,11 @@ function frame() {
   }
   if (speed > .05) clearWalkTarget()
   const remaining = walkTarget ? Math.hypot(walkTarget.x - avatar.position.x, walkTarget.z - avatar.position.z) : 0
-  if (walkTarget && remaining < .18) clearWalkTarget()
+  if (walkTarget && remaining < .18) {
+    const next = walkPath.shift()
+    if (next) walkTarget.set(next[0], 0, next[1])
+    else clearWalkTarget()
+  }
   if ((speed > .05 || walkTarget) && sheet === 'none') {
     const angle = walkTarget ? Math.atan2(walkTarget.x - avatar.position.x, avatar.position.z - walkTarget.z) : Math.atan2(side, forward) + yaw
     const step = Math.min(walkTarget ? remaining : Infinity, (walkTarget ? 1 : speed) * dt * 4.25)
