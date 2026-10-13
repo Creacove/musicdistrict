@@ -40,8 +40,8 @@ export function makeReleaseHouse() {
   box(4.4, 3.7, .18, ink, 9.5, 2.4, -7.4)
   sign('LISTENING', 3.5, .72, 9.5, 4.45, -7.28)
   box(2.7, 1.1, 1.3, mat('#493847'), 9.5, .55, -5.8)
-  box(4, 4.2, .2, ink, 0, 2.1, 11.7)
-  sign('EXIT TO SQUARE', 4.7, .75, 0, 5.05, 11.58)
+  box(4, 4.2, .2, ink, -10, 2.1, 11.7)
+  sign('EXIT TO SQUARE', 4.7, .75, -10, 5.05, 11.58)
   const light = new THREE.PointLight('#f5aecc', 11, 19); light.position.set(0, 5.4, -4.5); root.add(light)
   return root
 }

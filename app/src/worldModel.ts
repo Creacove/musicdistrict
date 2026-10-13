@@ -14,11 +14,11 @@ const hotspots: Record<Location, { id: Hotspot; x: number; z: number; radius: nu
   ],
   studio: [
     { id: 'studioDesk', x: 0, z: -5.5, radius: 3.4 },
-    { id: 'studioExit', x: 0, z: 9, radius: 3 },
+    { id: 'studioExit', x: -10, z: 9, radius: 3 },
   ],
   release: [
     { id: 'releaseIntake', x: 0, z: -5.5, radius: 3.5 },
-    { id: 'releaseExit', x: 0, z: 9, radius: 3 },
+    { id: 'releaseExit', x: -10, z: 9, radius: 3 },
   ],
 }
 

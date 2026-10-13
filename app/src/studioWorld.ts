@@ -43,8 +43,8 @@ export function makeStudio() {
   box(.35, .25, .35, material('#ddc7ad'), 9.6, 2.35, -8)
   label('VOCAL BOOTH', 3.4, .75, 9.7, 4.8, -3.8)
   for (const x of [-9, -5]) { box(2.4, 2.4, .12, purple, x, 3.2, -11.62); box(1.8, 1.8, .13, teal, x, 3.2, -11.52) }
-  box(3.8, 4.4, .2, wood, 0, 2.2, 11.75)
-  label('EXIT TO SQUARE', 4.3, .75, 0, 5, 11.65)
+  box(3.8, 4.4, .2, wood, -10, 2.2, 11.75)
+  label('EXIT TO SQUARE', 4.3, .75, -10, 5, 11.65)
   const light = new THREE.PointLight('#e7b28e', 12, 19); light.position.set(-3, 5.8, -4); root.add(light)
   return root
 }

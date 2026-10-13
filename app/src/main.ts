@@ -163,7 +163,12 @@ avatar.position.set(-4, 0, 7)
 camera.position.set(-4, 3.8, 14.2)
 
 const keys = new Set<string>()
-let yaw = 0, dragging = false, previousX = 0, touchX = 0, touchY = 0
+let yaw = 0, dragging = false, previousX = 0, pointerStartX = 0, pointerStartY = 0, pointerMoved = false, touchX = 0, touchY = 0
+let walkTarget: THREE.Vector3 | null = null
+const walkMarker = new THREE.Mesh(new THREE.RingGeometry(.45, .58, 28), new THREE.MeshBasicMaterial({ color: '#36e8b8', side: THREE.DoubleSide, depthTest: false }))
+walkMarker.rotation.x = -Math.PI / 2; walkMarker.visible = false; walkMarker.renderOrder = 20; scene.add(walkMarker)
+const ground = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), raycaster = new THREE.Raycaster()
+function clearWalkTarget() { walkTarget = null; walkMarker.visible = false }
 let nearby: Hotspot | null = null
 let routeTarget: Hotspot | null = null
 let sheet: 'none' | 'desk' | 'action' = 'none'
@@ -307,6 +312,7 @@ function enterVenue() {
 }
 
 function showVenue() {
+  clearWalkTarget()
   if (!palmRoom) { palmRoom = makePalmRoom(); scene.add(palmRoom.root) }
   square.visible = false
   palmRoom.root.visible = true
@@ -334,6 +340,7 @@ function enterStudio() {
 }
 
 function showStudio() {
+  clearWalkTarget()
   if (!studioRoom) { studioRoom = makeStudio(); scene.add(studioRoom) }
   square.visible = false; studioRoom.visible = true
   location = 'studio'; $<HTMLElement>('game').dataset.location = 'studio'
@@ -349,7 +356,7 @@ function showStudio() {
 
 function leaveStudio() {
   if (getNearby('studio', avatar.position.x, avatar.position.z) !== 'studioExit') { toast('Walk to the exit first'); return }
-  stopBeat(); studioRoom!.visible = false; square.visible = true
+  clearWalkTarget(); stopBeat(); studioRoom!.visible = false; square.visible = true
   location = 'square'; $<HTMLElement>('game').dataset.location = 'square'
   avatar.position.set(13, 0, -6.7); yaw = 0; camera.position.set(13, 3.8, .3)
   sun.intensity = 2; ambient.intensity = 1.9
@@ -364,6 +371,7 @@ function enterReleaseHouse() {
 }
 
 function showReleaseHouse() {
+  clearWalkTarget()
   if (!releaseRoom) { releaseRoom = makeReleaseHouse(); scene.add(releaseRoom) }
   square.visible = false; releaseRoom.visible = true
   location = 'release'; $<HTMLElement>('game').dataset.location = 'release'
@@ -379,7 +387,7 @@ function showReleaseHouse() {
 
 function leaveReleaseHouse() {
   if (getNearby('release', avatar.position.x, avatar.position.z) !== 'releaseExit') { toast('Walk to the exit first'); return }
-  releaseRoom!.visible = false; square.visible = true
+  clearWalkTarget(); releaseRoom!.visible = false; square.visible = true
   location = 'square'; $<HTMLElement>('game').dataset.location = 'square'
   avatar.position.set(-13, 0, -6.7); yaw = 0; camera.position.set(-13, 3.8, .3)
   sun.intensity = 2; ambient.intensity = 1.9
@@ -404,7 +412,7 @@ function openReleaseDraft() {
 
 function leaveVenue() {
   if (getNearby('venue', avatar.position.x, avatar.position.z) !== 'venueExit') { toast('Walk to the exit first'); return }
-  palmRoom!.root.visible = false
+  clearWalkTarget(); palmRoom!.root.visible = false
   square.visible = true
   location = 'square'
   $<HTMLElement>('game').dataset.location = 'square'
@@ -554,9 +562,22 @@ window.addEventListener('keydown', event => {
 })
 window.addEventListener('keyup', event => keys.delete(event.key.toLowerCase()))
 window.addEventListener('blur', () => keys.clear())
-world.addEventListener('pointerdown', event => { if (event.pointerType === 'mouse') { dragging = true; previousX = event.clientX; world.setPointerCapture(event.pointerId) } })
-world.addEventListener('pointermove', event => { if (dragging) { yaw += (event.clientX - previousX) * .004; previousX = event.clientX } })
-world.addEventListener('pointerup', () => dragging = false)
+world.addEventListener('pointerdown', event => { dragging = true; previousX = pointerStartX = event.clientX; pointerStartY = event.clientY; pointerMoved = false; world.setPointerCapture(event.pointerId) })
+world.addEventListener('pointermove', event => { if (dragging) { if (Math.hypot(event.clientX - pointerStartX, event.clientY - pointerStartY) > 7) pointerMoved = true; if (pointerMoved) yaw += (event.clientX - previousX) * .004; previousX = event.clientX } })
+world.addEventListener('pointerup', event => {
+  dragging = false
+  if (pointerMoved || sheet !== 'none') return
+  const bounds = renderer.domElement.getBoundingClientRect()
+  raycaster.setFromCamera(new THREE.Vector2((event.clientX - bounds.left) / bounds.width * 2 - 1, -(event.clientY - bounds.top) / bounds.height * 2 + 1), camera)
+  const hit = new THREE.Vector3()
+  if (raycaster.ray.intersectPlane(ground, hit)) {
+    const bounds = location === 'square' ? { minX: -18, maxX: 19, minZ: -12, maxZ: 16 } : location === 'venue' ? { minX: -12, maxX: 12, minZ: -10.5, maxZ: 11.5 } : { minX: -11.5, maxX: 11.5, minZ: -10.5, maxZ: 10.5 }
+    hit.x = THREE.MathUtils.clamp(hit.x, bounds.minX, bounds.maxX)
+    hit.z = THREE.MathUtils.clamp(hit.z, bounds.minZ, bounds.maxZ)
+    walkTarget = hit; walkMarker.position.set(hit.x, .05, hit.z); walkMarker.visible = true
+    toast('Walking to marked spot')
+  }
+})
 const pad = $<HTMLDivElement>('pad'), stick = $<HTMLDivElement>('stick')
 function movePad(event: PointerEvent) {
   const bounds = pad.getBoundingClientRect(), dx = event.clientX - bounds.left - bounds.width / 2, dy = event.clientY - bounds.top - bounds.height / 2
@@ -564,7 +585,7 @@ function movePad(event: PointerEvent) {
   touchX = dx / distance * strength; touchY = -dy / distance * strength
   stick.style.transform = `translate(${touchX * 33}px, ${-touchY * 33}px)`
 }
-pad.addEventListener('pointerdown', event => { pad.setPointerCapture(event.pointerId); movePad(event) })
+pad.addEventListener('pointerdown', event => { clearWalkTarget(); pad.setPointerCapture(event.pointerId); movePad(event) })
 pad.addEventListener('pointermove', event => { if (pad.hasPointerCapture(event.pointerId)) movePad(event) })
 for (const name of ['pointerup', 'pointercancel']) pad.addEventListener(name, () => { touchX = touchY = 0; stick.style.transform = 'translate(0,0)' })
 window.addEventListener('pagehide', () => { stopPreview(); stopBeat(); stopMasterPreview() })
@@ -605,8 +626,12 @@ function frame() {
   const forward = (keys.has('w') || keys.has('arrowup') ? 1 : 0) - (keys.has('s') || keys.has('arrowdown') ? 1 : 0) + touchY
   const side = (keys.has('d') || keys.has('arrowright') ? 1 : 0) - (keys.has('a') || keys.has('arrowleft') ? 1 : 0) + touchX
   const speed = Math.min(1, Math.hypot(forward, side))
-  if (speed > .05 && sheet === 'none') {
-    const angle = Math.atan2(side, forward) + yaw, step = speed * dt * 4.25
+  if (speed > .05) clearWalkTarget()
+  const remaining = walkTarget ? Math.hypot(walkTarget.x - avatar.position.x, walkTarget.z - avatar.position.z) : 0
+  if (walkTarget && remaining < .18) clearWalkTarget()
+  if ((speed > .05 || walkTarget) && sheet === 'none') {
+    const angle = walkTarget ? Math.atan2(walkTarget.x - avatar.position.x, avatar.position.z - walkTarget.z) : Math.atan2(side, forward) + yaw
+    const step = Math.min(walkTarget ? remaining : Infinity, (walkTarget ? 1 : speed) * dt * 4.25)
     const boundary = location === 'square' ? { minX: -18, maxX: 19, minZ: -12, maxZ: 16 } : location === 'venue' ? { minX: -12, maxX: 12, minZ: -10.5, maxZ: 11.5 } : { minX: -11.5, maxX: 11.5, minZ: -10.5, maxZ: 10.5 }
     avatar.position.x = THREE.MathUtils.clamp(avatar.position.x + Math.sin(angle) * step, boundary.minX, boundary.maxX)
     avatar.position.z = THREE.MathUtils.clamp(avatar.position.z - Math.cos(angle) * step, boundary.minZ, boundary.maxZ)
@@ -620,7 +645,7 @@ function frame() {
   const next = getNearby(location, avatar.position.x, avatar.position.z)
   if (next !== nearby) { nearby = next; refreshContext() }
   if (routeTarget) {
-    const points: Record<Hotspot, [number, number]> = { kiosk: [-8, 2], studio: [13, -8], palmEntrance: [10, 2], stage: [0, -7], venueExit: [-10, 9], studioDesk: [0, -5.5], studioExit: [0, 9], releaseEntrance: [-13, -8], releaseIntake: [0, -5.5], releaseExit: [0, 9] }
+    const points: Record<Hotspot, [number, number]> = { kiosk: [-8, 2], studio: [13, -8], palmEntrance: [10, 2], stage: [0, -7], venueExit: [-10, 9], studioDesk: [0, -5.5], studioExit: [-10, 9], releaseEntrance: [-13, -8], releaseIntake: [0, -5.5], releaseExit: [-10, 9] }
     const [x, z] = points[routeTarget]
     const distance = Math.round(Math.hypot(x - avatar.position.x, z - avatar.position.z))
     $<HTMLElement>('route-distance').textContent = distance < 3 ? 'Entrance in reach · interact' : `${distance} m · walk through the world`
