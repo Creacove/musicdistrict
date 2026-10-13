@@ -74,6 +74,8 @@ The Music Square blockout also gained paved approaches to all three doors, timbe
 
 The Music Square kiosk now presents the original synthesized demo as “Square Sketch.” Choosing Play opens a compact personal player; saving adds one private item to this browser's local storage. The player can pause and resume while exploring. The save does not create a public artist follow, chart credit, qualified listen or server catalogue record. In the browser, walking to the kiosk exposed Interact, Play changed audio to ON and opened the personal player, Save changed to a saved state, and reload preserved the save while audio remained OFF. The authorised song catalogue, rights review and account-level saved collection still require backend and cleared media.
 
+A free Dance control now animates the local avatar in place, with a Stop control and walking interruption. The mobile browser showed the control enter its active state and the avatar motion. It is a local player expression; other players cannot see it until real multiplayer state exists.
+
 ## City Studio playable slice — 13 October 2026
 
 Following Master GDD §§3, 6 and Chapter 02 Artist (ART-21 and Slice 0/1), City Studio is now a separate walkable 3D room reached through the physical square door. Its producer desk opens an eight-step, four-lane beat pattern. Players can change pads, play original synthesized sounds, stop playback, and save one private pattern in browser local storage. Desk routes to the studio door or desk. The vocal booth is a spatial landmark only; no microphone request, public release, chart entry, or rights claim is made.

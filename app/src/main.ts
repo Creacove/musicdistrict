@@ -50,6 +50,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
 
   <div id="context" class="context" hidden><div><span id="context-icon">✦</span><div><b id="context-name"></b><small id="context-help">Approach and interact</small></div></div><button id="interact">Interact <kbd>E</kbd></button></div>
   <section id="mini-player" class="mini-player" hidden aria-label="Personal music preview"><div class="mini-art">♫</div><div class="mini-copy"><b>Square Sketch</b><small>Original demo · private preview</small></div><button id="mini-play" aria-label="Play Square Sketch">▶</button><button id="mini-save" aria-label="Save Square Sketch">♡</button></section>
+  <button id="dance" class="dance-button" aria-pressed="false">♪ Dance</button>
 
   <section id="action-sheet" class="action-sheet" hidden>
     <button id="action-close" class="icon-close" aria-label="Close interaction">×</button>
@@ -194,6 +195,7 @@ let onwardTarget: Hotspot | null = null
 let sheet: 'none' | 'desk' | 'action' = 'none'
 let deskTab: 'today' | 'ask' | 'plans' = 'today'
 let savedPreview = false, previewOpened = false, equipmentPreviewVisible = false, playing = false
+let dancing = false
 let beatPattern: BeatPattern = starterPattern(), beatPatternB: BeatPattern = toggleStep(starterPattern(), 0, 1)
 let beatSection: 'a' | 'b' = 'a', beatPlaying = false, beatTimer: number | undefined, beatStep = 0, beatBar = 0, beatDraftSaved = false
 let masterBlob: Blob | null = null, masterPlayer: HTMLAudioElement | null = null, masterAudioUrl: string | null = null
@@ -223,6 +225,12 @@ function closeSheets() {
   stopMasterPreview()
   sheet = 'none'
   refreshContext()
+}
+
+function stopDance() {
+  dancing = false
+  $<HTMLButtonElement>('dance').setAttribute('aria-pressed', 'false')
+  $<HTMLButtonElement>('dance').textContent = '♪ Dance'
 }
 
 function stopMasterPreview() {
@@ -389,6 +397,7 @@ function enterVenue() {
 }
 
 function showVenue() {
+  stopDance()
   clearWalkTarget()
   if (!palmRoom) { palmRoom = makePalmRoom(); scene.add(palmRoom.root) }
   square.visible = false
@@ -417,6 +426,7 @@ function enterStudio() {
 }
 
 function showStudio() {
+  stopDance()
   clearWalkTarget()
   if (!studioRoom) { studioRoom = makeStudio(); scene.add(studioRoom) }
   square.visible = false; studioRoom.visible = true
@@ -449,6 +459,7 @@ function enterReleaseHouse() {
 }
 
 function showReleaseHouse() {
+  stopDance()
   clearWalkTarget()
   if (!releaseRoom) { releaseRoom = makeReleaseHouse(); scene.add(releaseRoom) }
   square.visible = false; releaseRoom.visible = true
@@ -590,6 +601,12 @@ $<HTMLButtonElement>('audio').onclick = () => playing ? stopPreview() : masterPl
 $<HTMLButtonElement>('mini-play').onclick = () => playing ? stopPreview() : startPreview()
 $<HTMLButtonElement>('mini-save').onclick = savePreview
 renderMiniPlayer()
+$<HTMLButtonElement>('dance').onclick = () => {
+  dancing = !dancing
+  $<HTMLButtonElement>('dance').setAttribute('aria-pressed', String(dancing))
+  $<HTMLButtonElement>('dance').textContent = dancing ? '■ Stop dancing' : '♪ Dance'
+  if (dancing) { clearWalkTarget(); toast('Your avatar is dancing') }
+}
 $<HTMLButtonElement>('desk-trigger').onclick = () => openDesk()
 $<HTMLButtonElement>('desk-close').onclick = closeSheets
 $<HTMLButtonElement>('action-close').onclick = closeSheets
@@ -714,6 +731,9 @@ function frame() {
   const forward = (keys.has('w') || keys.has('arrowup') ? 1 : 0) - (keys.has('s') || keys.has('arrowdown') ? 1 : 0) + touchY
   const side = (keys.has('d') || keys.has('arrowright') ? 1 : 0) - (keys.has('a') || keys.has('arrowleft') ? 1 : 0) + touchX
   const speed = Math.min(1, Math.hypot(forward, side))
+  if (speed > .05 || walkTarget) {
+    if (dancing) { dancing = false; $<HTMLButtonElement>('dance').setAttribute('aria-pressed', 'false'); $<HTMLButtonElement>('dance').textContent = '♪ Dance' }
+  }
   if (speed > .05) clearWalkTarget()
   const remaining = walkTarget ? Math.hypot(walkTarget.x - avatar.position.x, walkTarget.z - avatar.position.z) : 0
   if (walkTarget && remaining < .18) clearWalkTarget()
@@ -726,7 +746,15 @@ function frame() {
     avatar.rotation.y = angle
     leftLeg.rotation.x = Math.sin(elapsed * 11) * .38; rightLeg.rotation.x = -leftLeg.rotation.x
     leftArm.rotation.x = -leftLeg.rotation.x * .6; rightArm.rotation.x = -rightLeg.rotation.x * .6
-  } else { leftLeg.rotation.x = rightLeg.rotation.x = leftArm.rotation.x = rightArm.rotation.x = 0 }
+  } else if (dancing && sheet === 'none') {
+    avatar.rotation.y = Math.sin(elapsed * 2.5) * .32
+    leftArm.rotation.x = Math.sin(elapsed * 6) * .6
+    rightArm.rotation.x = -leftArm.rotation.x
+    leftArm.rotation.z = -.45 - Math.sin(elapsed * 4) * .2
+    rightArm.rotation.z = .45 + Math.sin(elapsed * 4) * .2
+    leftLeg.rotation.x = Math.sin(elapsed * 6) * .17
+    rightLeg.rotation.x = -leftLeg.rotation.x
+  } else { leftLeg.rotation.x = rightLeg.rotation.x = leftArm.rotation.x = rightArm.rotation.x = 0; leftArm.rotation.z = -.15; rightArm.rotation.z = .15 }
   const desired = avatar.position.clone().add(new THREE.Vector3(Math.sin(yaw) * 7.1, 3.85, Math.cos(yaw) * 7.1))
   camera.position.lerp(desired, 1 - Math.exp(-5 * dt))
   camera.lookAt(avatar.position.x, 1.52, avatar.position.z)

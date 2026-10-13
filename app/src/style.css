@@ -49,6 +49,7 @@ button:disabled{cursor:not-allowed;opacity:.48}
 .context button{margin-left:auto;background:#0d9f74;color:#fff;border:0;border-radius:8px;min-height:43px;padding:8px 11px;white-space:nowrap;font-size:12px;font-weight:800}
 .mini-player{position:absolute;z-index:7;left:clamp(16px,3vw,45px);bottom:83px;display:flex;align-items:center;gap:8px;width:min(295px,calc(100vw - 32px));padding:7px;background:#f9f8f2f2;color:#182a34;border:1px solid #ffffffb8;border-radius:12px;box-shadow:0 8px 26px #1118}
 .mini-art{width:36px;height:36px;flex:none;display:grid;place-items:center;border-radius:8px;background:#173c3b;color:#f3dca9;font-size:21px}.mini-copy{min-width:0;flex:1}.mini-copy b{display:block;font-size:11px}.mini-copy small{display:block;margin-top:2px;color:#606c70;font-size:9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.mini-player button{width:34px;height:34px;flex:none;border:0;border-radius:8px;background:#e7ece9;color:#0d8062;font-size:17px;font-weight:850}.mini-player button:disabled{opacity:1;color:#0d8062}
+.dance-button{position:absolute;z-index:7;right:clamp(15px,3vw,45px);bottom:144px;min-height:42px;padding:8px 13px;border:1px solid #d5bb85;border-radius:10px;background:#1b3035e8;color:#f7e8c6;font-size:12px;font-weight:850;box-shadow:0 8px 22px #1118}.dance-button[aria-pressed="true"]{background:#0c886c;border-color:#b8f1cd;color:white}
 kbd{display:inline-grid;place-items:center;min-width:19px;height:19px;background:#fff3;border:1px solid #fff5;border-radius:4px;font:800 10px 'Segoe UI',sans-serif;margin-left:3px}
 .venue-card{position:absolute;z-index:9;left:50%;top:104px;transform:translateX(-50%);width:min(780px,calc(100vw - 34px));background:#fffffff7;border-radius:19px;padding:15px;box-shadow:0 20px 70px #10131daa;display:grid;grid-template-columns:170px minmax(0,1fr);gap:14px;color:#1c2433}
 .venue-art{grid-row:span 2;min-height:182px;border-radius:12px;background:linear-gradient(165deg,#735b4a,#2a282c 62%,#16191c);display:flex;align-items:center;justify-content:center;flex-direction:column;box-shadow:inset 0 0 34px #0007;color:#f8d8a2;text-align:center}
@@ -139,6 +140,7 @@ kbd{display:inline-grid;place-items:center;min-width:19px;height:19px;background
   .desk-trigger{bottom:76px;right:14px;min-width:112px}.keyboard-hint{display:none}
   .pad{position:absolute;z-index:7;display:block;left:18px;bottom:76px;width:94px;height:94px;background:#213044ab;border:1px solid #ffffff9c;border-radius:50%;backdrop-filter:blur(9px);touch-action:none}
   .mini-player{left:50%;transform:translateX(-50%);bottom:179px;width:min(300px,calc(100vw - 32px))}
+  .dance-button{right:14px;bottom:134px}
   #stick{position:absolute;left:25px;top:25px;width:43px;height:43px;background:#f4e3ceb8;border:1px solid #fff9;border-radius:50%;pointer-events:none}
   .desk-sheet{width:100vw;bottom:63px;max-height:60dvh;padding:13px 14px 18px}
   .desk-cards article{padding:9px;gap:8px}.desk-cards .card-icon{width:39px;height:39px;font-size:20px}.desk-cards article button{padding:7px 8px;font-size:10px}
