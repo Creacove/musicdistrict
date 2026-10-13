@@ -32,6 +32,19 @@
 5. No actual mobile hardware measurements; renderer and scene budget are provisional.
 6. No hosting or staging deployment to verify.
 
+## Next visual and interaction slice — 12 October 2026
+
+The repository now has a root `AGENTS.md` pointing to the authoritative handoff. This slice follows `docs/handoff/AGENTS.md`, the Master GDD, Chapter 01 Venue Operator, `implementation/REFERENCE_LOOKUP.md`, `implementation/REFERENCE_TRUTH_TABLE.md`, the visual and screen-state notes, and the asset and animation brief. References V26 and V27 guided composition only; no screenshot was used as a runtime texture or source of prices, capacity, or presence.
+
+- Authored a richer low-poly Music Square and a separate Palm Room interior with stage, bar, seating, mixing desk, and exit. Players use world movement and a physical entrance to reach the hall.
+- Added a venue information card and rule-based Desk Today/Ask/Plans guidance. Lease remains disabled because there is no authoritative quote, ledger, contract, or server state. No fabricated player count or venue capacity is shown.
+- Added a stage floor-light snap-point **preview**. The light can be shown or hidden locally; it is explicitly not owned, installed, or saved. Actual placement awaits authorised inventory and server persistence.
+- Added hotspot model tests for physical entrance proximity and venue-only interactions. The live in-app browser displayed the Music Square and Palm Room stage, and showed the preview state and explanatory copy after interaction.
+- Simplified Palm Room dynamic lighting by removing five spotlights, the violet fill light, and four candle point lights. Real device performance remains unmeasured.
+- `npm.cmd test`: 2 hotspot tests passed. `npm.cmd run build`: succeeded; JS 559.46 kB / 142.89 kB gzip and CSS 13.14 kB / 3.69 kB gzip. Vite still warns that the main JS chunk exceeds 500 kB.
+
+**Remaining:** These are stylized blockout scenes, well short of V26/V27 production art. The current browser inspection does not establish a complete normal walk from square to hall; the `?qa=palm` and `?qa=stage` query flags are local visual test entries. Scene assets are not yet split into scene-specific downloads, and there are no rigged characters, cleared music, multiplayer, server-backed lease/equipment state, FPS or network measurements, or real-device checks. None of the M0 exit gates are claimed complete.
+
 ## Smallest next PR sequence
 
 1. **M0 renderer/input proof:** browser and real-device checks; collision, camera, joystick, load/FPS instrumentation, and one usable door.
