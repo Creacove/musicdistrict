@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import { getNearby, type Hotspot, type Location } from './worldModel.ts'
 import { makePalmRoom, makeSquare } from './world.ts'
+import { reportedTransferBytes, summarizeFrames } from './performance.ts'
 import './style.css'
 
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
@@ -42,6 +43,15 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
     <div id="desk-cards" class="desk-cards"></div>
   </section>
 
+  <section id="display-sheet" class="display-sheet" hidden aria-label="Display and data settings">
+    <button id="display-close" class="icon-close" aria-label="Close display settings">×</button>
+    <small class="eyebrow">LOCAL PROTOTYPE</small><h2>Display & data</h2>
+    <p>Choose a render quality for this device. Measurements below describe this browser session only.</p>
+    <div class="quality-choices"><button data-quality="saver">Data Saver</button><button data-quality="balanced">Balanced</button><button data-quality="quality">Quality</button></div>
+    <dl class="runtime-metrics"><div><dt>Frame time</dt><dd id="frame-metric">Measuring…</dd></div><div><dt>Reported transfer</dt><dd id="transfer-metric">Measuring…</dd></div><div><dt>Avatar ready</dt><dd id="ready-metric">Measuring…</dd></div><div><dt>Audio before Play</dt><dd>0 B · generated preview</dd></div></dl>
+    <p class="metric-note">This development server sends unbundled files; its transfer total is not a production-load result. Real-phone FPS, thermals, and network recovery remain untested.</p>
+  </section>
+
   <div id="toast" class="toast" role="status"></div>
   <div id="pad" class="pad" aria-label="Touch movement pad"><div id="stick"></div></div>
   <div class="keyboard-hint"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> MOVE <span>·</span> DRAG TO LOOK</div>
@@ -56,7 +66,16 @@ scene.background = new THREE.Color('#413243')
 scene.fog = new THREE.Fog('#413243', 32, 72)
 const camera = new THREE.PerspectiveCamera(62, 1, .1, 90)
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' })
-renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5))
+type Quality = 'saver' | 'balanced' | 'quality'
+let quality: Quality = (['saver', 'balanced', 'quality'].includes(localStorage.getItem('scene-quality') || '') ? localStorage.getItem('scene-quality') : 'balanced') as Quality
+function applyQuality() {
+  renderer.setPixelRatio(Math.min(devicePixelRatio, quality === 'saver' ? 1 : quality === 'quality' ? 2 : 1.5))
+  renderer.shadowMap.enabled = quality !== 'saver'
+  renderer.shadowMap.needsUpdate = true
+  document.querySelectorAll<HTMLButtonElement>('[data-quality]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.quality === quality)))
+  if (world.clientWidth) resize()
+}
+applyQuality()
 renderer.shadowMap.enabled = true
 renderer.shadowMap.type = THREE.PCFShadowMap
 renderer.outputColorSpace = THREE.SRGBColorSpace
@@ -138,6 +157,7 @@ function toast(text: string) {
 function closeSheets() {
   $<HTMLElement>('desk-sheet').hidden = true
   $<HTMLElement>('action-sheet').hidden = true
+  $<HTMLElement>('display-sheet').hidden = true
   sheet = 'none'
   refreshContext()
 }
@@ -307,7 +327,9 @@ $<HTMLButtonElement>('action-close').onclick = closeSheets
 $<HTMLButtonElement>('interact').onclick = interact
 $<HTMLButtonElement>('map-button').onclick = openMap
 $<HTMLButtonElement>('nav-map').onclick = openMap
-$<HTMLButtonElement>('nav-phone').onclick = () => openDesk('plans')
+$<HTMLButtonElement>('nav-phone').onclick = () => { closeSheets(); $<HTMLElement>('venue-card').hidden = true; $<HTMLElement>('display-sheet').hidden = false; sheet = 'action'; updateMetrics() }
+$<HTMLButtonElement>('display-close').onclick = closeSheets
+document.querySelectorAll<HTMLButtonElement>('[data-quality]').forEach(button => button.onclick = () => { quality = button.dataset.quality as Quality; localStorage.setItem('scene-quality', quality); applyQuality(); updateMetrics() })
 $<HTMLButtonElement>('nav-create').onclick = () => location === 'square' ? setRoute('studio') : toast('Walk to City Studio from Music Square')
 $<HTMLButtonElement>('nav-people').onclick = () => toast('Real player presence arrives with the multiplayer service')
 $<HTMLButtonElement>('home').onclick = () => { closeSheets(); $<HTMLElement>('venue-card').hidden = true }
@@ -356,9 +378,18 @@ function resize() { camera.aspect = world.clientWidth / world.clientHeight; came
 window.addEventListener('resize', resize)
 resize()
 let previousFrame = performance.now(), elapsed = 0
+const frameSamples: number[] = []
+let readyMs: number | null = null
+function updateMetrics() {
+  const summary = summarizeFrames(frameSamples)
+  $<HTMLElement>('frame-metric').textContent = summary ? `${summary.medianMs.toFixed(1)} ms median · ${summary.p95Ms.toFixed(1)} ms p95 · ~${summary.fps} FPS` : 'Measuring…'
+  $<HTMLElement>('transfer-metric').textContent = `${(reportedTransferBytes() / 1024).toFixed(0)} KiB reported`
+  $<HTMLElement>('ready-metric').textContent = readyMs === null ? 'Measuring…' : `${(readyMs / 1000).toFixed(2)} s · first rendered avatar`
+}
 function frame() {
   requestAnimationFrame(frame)
   const now = performance.now(), dt = Math.min((now - previousFrame) / 1000, .05)
+  if (readyMs !== null && now - previousFrame < 250) { frameSamples.push(now - previousFrame); if (frameSamples.length > 300) frameSamples.shift() }
   previousFrame = now; elapsed += dt
   const forward = (keys.has('w') || keys.has('arrowup') ? 1 : 0) - (keys.has('s') || keys.has('arrowdown') ? 1 : 0) + touchY
   const side = (keys.has('d') || keys.has('arrowright') ? 1 : 0) - (keys.has('a') || keys.has('arrowleft') ? 1 : 0) + touchX
@@ -386,5 +417,7 @@ function frame() {
     else $<HTMLElement>('route').classList.remove('arrived')
   }
   renderer.render(scene, camera)
+  if (readyMs === null) readyMs = performance.now()
+  if (Math.floor(elapsed * 2) !== Math.floor((elapsed - dt) * 2) && !$<HTMLElement>('display-sheet').hidden) updateMetrics()
 }
 frame()

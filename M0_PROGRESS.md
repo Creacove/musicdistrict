@@ -45,6 +45,15 @@ The repository now has a root `AGENTS.md` pointing to the authoritative handoff.
 
 **Remaining:** These are stylized blockout scenes, well short of V26/V27 production art. The current browser inspection does not establish a complete normal walk from square to hall; the `?qa=palm` and `?qa=stage` query flags are local visual test entries. Scene assets are not yet split into scene-specific downloads, and there are no rigged characters, cleared music, multiplayer, server-backed lease/equipment state, FPS or network measurements, or real-device checks. None of the M0 exit gates are claimed complete.
 
+## M0 measurement slice — 13 October 2026
+
+- Audited the source ZIP against the extracted `docs/handoff/`: all 71 archive files are present. The 70 content entries in `FILE_INVENTORY.json` match extracted file sizes and SHA-256 hashes; the remaining archive entry is the inventory itself.
+- Followed `implementation/QUALITY_GATES.md` M0 and `implementation/PERFORMANCE_MEDIA_BUDGET.md` by adding browser-session frame median/p95, reported transfer, and first rendered avatar time to a Phone display panel. Data Saver, Balanced, and Quality adjust render pixel ratio and shadow use; the selected tier persists locally.
+- In the live in-app browser, the panel showed the three quality controls and measurements. Data Saver became selected after clicking it. One development-server session reported roughly 19 ms median frame time, 32 ms p95, 6,184 KiB browser-reported transfer, and 3.71 s until the first avatar render. This is **not** a cold production build or a real-device result; the development server serves unbundled code.
+- `npm.cmd test` passed 3 tests. `npm.cmd run build` passed with JS 562.02 kB / 143.79 kB gzip and CSS 14.18 kB / 3.89 kB gzip. The >500 kB JS warning remains.
+
+**Still required for M0:** measured production cold and return visits on target Android and iPhone hardware, sustained frame times and heat, quality fallback, actual byte transfer, audio behavior, rigged avatar/animations, cleared music, one reliable travel transition, and authoritative multiplayer/reconnect. The in-browser measurements only establish a starting baseline.
+
 ## Smallest next PR sequence
 
 1. **M0 renderer/input proof:** browser and real-device checks; collision, camera, joystick, load/FPS instrumentation, and one usable door.
