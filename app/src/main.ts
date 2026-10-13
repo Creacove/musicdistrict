@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { getNearby, type Hotspot, type Location } from './worldModel.ts'
+import { BOUNDARIES, getNearby, isPointBlocked, resolveCollision, type Hotspot, type Location } from './worldModel.ts'
 import { makePalmRoom, makeSquare } from './world.ts'
 import { reportedTransferBytes, summarizeFrames } from './performance.ts'
 import { makeStudio } from './studioWorld.ts'
@@ -183,8 +183,10 @@ avatar.position.set(-4, 0, 7)
 camera.position.set(-4, 3.8, 14.2)
 const remoteAvatars = new Map<string, THREE.Group>()
 let connectedPlayers: PresencePlayer[] = []
+let presenceConnected = false
 function renderPresence(players: PresencePlayer[], connected: boolean) {
   connectedPlayers = players
+  presenceConnected = connected
   const visible = new Set(players.filter(player => player.location === location).map(player => player.id))
   for (const [id, model] of remoteAvatars) if (!visible.has(id)) { scene.remove(model); remoteAvatars.delete(id) }
   for (const player of players) {
@@ -220,7 +222,7 @@ let savedPreview = false, previewOpened = false, equipmentPreviewVisible = false
 let dancing = false
 let beatPattern: BeatPattern = starterPattern(), beatPatternB: BeatPattern = toggleStep(starterPattern(), 0, 1)
 let beatSection: 'a' | 'b' = 'a', beatPlaying = false, beatTimer: number | undefined, beatStep = 0, beatBar = 0, beatDraftSaved = false
-let masterBlob: Blob | null = null, masterPlayer: HTMLAudioElement | null = null, masterAudioUrl: string | null = null
+let masterBlob: Blob | null = null, masterPlayer: HTMLAudioElement | null = null, masterAudioUrl: string | null = null, performingOnStage = false
 let releaseDraft: ReleaseDraft = blankReleaseDraft()
 try { const saved = JSON.parse(localStorage.getItem('scene-beat-draft') || 'null'); if (validPattern(saved)) { beatPattern = saved; beatDraftSaved = true } } catch { /* invalid local draft starts fresh */ }
 try { const saved = JSON.parse(localStorage.getItem('scene-beat-arrangement') || 'null'); if (validPattern(saved?.a) && validPattern(saved?.b)) { beatPattern = saved.a; beatPatternB = saved.b; beatDraftSaved = true } } catch { /* invalid local arrangement starts fresh */ }
@@ -263,6 +265,10 @@ function stopMasterPreview() {
   masterPlayer?.pause(); masterPlayer = null
   if (masterAudioUrl) URL.revokeObjectURL(masterAudioUrl)
   masterAudioUrl = null
+  if (performingOnStage) {
+    performingOnStage = false
+    palmRoom?.setStagePerformance(false)
+  }
   if (!playing && !beatPlaying) { $<HTMLButtonElement>('audio').innerHTML = '♫ <span>OFF</span>'; $<HTMLButtonElement>('audio').setAttribute('aria-label', 'Audio off') }
 }
 
@@ -430,6 +436,7 @@ function showVenue() {
   square.visible = false
   palmRoom.root.visible = true
   location = 'venue'
+  renderPresence(connectedPlayers, presenceConnected)
   $<HTMLElement>('game').dataset.location = 'venue'
   avatar.position.set(0, 0, 8)
   yaw = 0
@@ -458,6 +465,7 @@ function showStudio() {
   if (!studioRoom) { studioRoom = makeStudio(); scene.add(studioRoom) }
   square.visible = false; studioRoom.visible = true
   location = 'studio'; $<HTMLElement>('game').dataset.location = 'studio'
+  renderPresence(connectedPlayers, presenceConnected)
   avatar.position.set(0, 0, 7); yaw = 0; camera.position.set(0, 3.7, 14)
   sun.intensity = 1.05; ambient.intensity = 1.45
   scene.background = new THREE.Color('#28202f'); scene.fog = new THREE.Fog('#28202f', 24, 56)
@@ -472,6 +480,7 @@ function leaveStudio() {
   if (getNearby('studio', avatar.position.x, avatar.position.z) !== 'studioExit') { toast('Walk to the exit first'); return }
   clearWalkTarget(); stopBeat(); studioRoom!.visible = false; square.visible = true
   location = 'square'; $<HTMLElement>('game').dataset.location = 'square'
+  renderPresence(connectedPlayers, presenceConnected)
   avatar.position.set(13, 0, -6.7); yaw = 0; camera.position.set(13, 3.8, .3)
   sun.intensity = 2; ambient.intensity = 1.9
   scene.background = new THREE.Color('#413243'); scene.fog = new THREE.Fog('#413243', 32, 72)
@@ -491,6 +500,7 @@ function showReleaseHouse() {
   if (!releaseRoom) { releaseRoom = makeReleaseHouse(); scene.add(releaseRoom) }
   square.visible = false; releaseRoom.visible = true
   location = 'release'; $<HTMLElement>('game').dataset.location = 'release'
+  renderPresence(connectedPlayers, presenceConnected)
   avatar.position.set(0, 0, 7); yaw = 0; camera.position.set(0, 3.7, 14)
   sun.intensity = 1.05; ambient.intensity = 1.45
   scene.background = new THREE.Color('#251d2e'); scene.fog = new THREE.Fog('#251d2e', 24, 56)
@@ -505,6 +515,7 @@ function leaveReleaseHouse() {
   if (getNearby('release', avatar.position.x, avatar.position.z) !== 'releaseExit') { toast('Walk to the exit first'); return }
   clearWalkTarget(); releaseRoom!.visible = false; square.visible = true
   location = 'square'; $<HTMLElement>('game').dataset.location = 'square'
+  renderPresence(connectedPlayers, presenceConnected)
   avatar.position.set(-13, 0, -6.7); yaw = 0; camera.position.set(-13, 3.8, .3)
   sun.intensity = 2; ambient.intensity = 1.9
   scene.background = new THREE.Color('#413243'); scene.fog = new THREE.Fog('#413243', 32, 72)
@@ -532,6 +543,7 @@ function leaveVenue() {
   clearWalkTarget(); palmRoom!.root.visible = false
   square.visible = true
   location = 'square'
+  renderPresence(connectedPlayers, presenceConnected)
   $<HTMLElement>('game').dataset.location = 'square'
   avatar.position.set(10, 0, 3.5)
   yaw = 0
@@ -558,7 +570,65 @@ function interact() {
   if (nearby === 'releaseIntake') openReleaseDraft()
   if (nearby === 'releaseExit') openAction('Exit Release House', 'Walk back to Music Square. Your private sleeve draft remains on this device.', 'Return to square', leaveReleaseHouse)
   if (nearby === 'palmEntrance') openAction('Palm Room', 'Go through the door to inspect a small walkable music venue. No lease or purchase occurs.', 'Enter venue', enterVenue)
-  if (nearby === 'stage') openAction('Stage setup preview', equipmentPreviewVisible ? 'A temporary floor light preview is visible at this snap point. It is not owned, installed, or saved.' : 'Preview a floor light at this snap point. Actual installation requires authorised inventory and a server save.', equipmentPreviewVisible ? 'Hide preview' : 'Show floor light preview', () => { equipmentPreviewVisible = !equipmentPreviewVisible; palmRoom?.setEquipmentPreview(equipmentPreviewVisible); toast(equipmentPreviewVisible ? 'Temporary preview shown' : 'Preview hidden'); refreshContext(); interact() })
+  if (nearby === 'stage') {
+    if (masterBlob) {
+      openAction(
+        performingOnStage ? 'Stage preview · Playing' : 'Palm Room Stage',
+        performingOnStage
+          ? 'Your 30-second City Studio master is playing locally on this device while the stage lights are active.'
+          : 'Preview your rendered City Studio master on this stage. Audio plays only on your device.',
+        performingOnStage ? 'Stop preview' : 'Preview master on stage',
+        () => {
+          if (performingOnStage) {
+            stopMasterPreview()
+            toast('Stage preview ended')
+          } else {
+            stopPreview()
+            stopBeat()
+            stopMasterPreview()
+            masterAudioUrl = URL.createObjectURL(masterBlob!)
+            masterPlayer = new Audio(masterAudioUrl)
+            masterPlayer.onended = stopMasterPreview
+            performingOnStage = true
+            palmRoom?.setStagePerformance(true)
+            void masterPlayer.play().then(() => {
+              $<HTMLButtonElement>('audio').innerHTML = '♫ <span>ON</span>'
+              $<HTMLButtonElement>('audio').setAttribute('aria-label', 'Audio on')
+              toast('Stage preview · Playing locally')
+            }).catch(() => {
+              stopMasterPreview()
+              toast('Audio was blocked · Tap perform again')
+            })
+          }
+          refreshContext()
+          interact()
+        },
+        {
+          label: equipmentPreviewVisible ? 'Hide floor light' : 'Floor light preview',
+          action: () => {
+            equipmentPreviewVisible = !equipmentPreviewVisible
+            palmRoom?.setEquipmentPreview(equipmentPreviewVisible)
+            toast(equipmentPreviewVisible ? 'Temporary preview shown' : 'Preview hidden')
+            refreshContext()
+            interact()
+          },
+        }
+      )
+    } else {
+      openAction(
+        'Stage setup preview',
+        equipmentPreviewVisible ? 'A temporary floor light preview is visible at this snap point. It is not owned, installed, or saved.' : 'Preview a floor light at this snap point. You can also render a master at City Studio to perform here.',
+        equipmentPreviewVisible ? 'Hide preview' : 'Show floor light preview',
+        () => {
+          equipmentPreviewVisible = !equipmentPreviewVisible
+          palmRoom?.setEquipmentPreview(equipmentPreviewVisible)
+          toast(equipmentPreviewVisible ? 'Temporary preview shown' : 'Preview hidden')
+          refreshContext()
+          interact()
+        }
+      )
+    }
+  }
   if (nearby === 'venueExit') openAction('Exit Palm Room', 'Walk back out to Music Square. Your local stage preview state stays available for this session.', 'Return to square', leaveVenue)
 }
 
@@ -575,30 +645,35 @@ function refreshContext() {
     releaseIntake: ['RECORD INTAKE', 'Prepare a private release sleeve'],
     releaseExit: ['MUSIC SQUARE', 'Leave Release House'],
     palmEntrance: ['PALM ROOM', 'Enter the music venue'],
-    stage: ['STAGE PREVIEW', equipmentPreviewVisible ? 'Temporary floor light shown' : 'Inspect one floor-light snap point'],
+    stage: [
+      performingOnStage ? 'STAGE PREVIEW PLAYING' : masterBlob ? 'PREVIEW ON STAGE' : 'STAGE PREVIEW',
+      performingOnStage ? 'Stop local preview' : masterBlob ? 'Play your City Studio master locally' : equipmentPreviewVisible ? 'Temporary floor light shown' : 'Inspect stage snap point',
+    ],
     venueExit: ['MUSIC SQUARE', 'Leave the venue'],
   }
   $<HTMLElement>('context-name').textContent = names[nearby][0]
   $<HTMLElement>('context-help').textContent = names[nearby][1]
-  $<HTMLElement>('context-icon').textContent = nearby === 'kiosk' ? '♫' : nearby === 'stage' ? '☼' : '↗'
+  $<HTMLElement>('context-icon').textContent = performingOnStage ? '♫' : nearby === 'kiosk' ? '♫' : nearby === 'stage' ? '☼' : '↗'
 }
 
 function renderDesk() {
   const cards = $<HTMLDivElement>('desk-cards')
   const intro = $<HTMLElement>('desk-intro')
-  intro.textContent = location === 'venue' ? 'Inspect the space before making any commitment.' : location === 'studio' ? 'Make a private beat at the producer desk.' : location === 'release' ? 'Prepare a private sleeve at Record Intake.' : 'Your music journey, one step at a time.'
+  intro.textContent = location === 'venue' ? (masterBlob ? 'Step up to the stage and preview your master.' : 'Inspect the space before making any commitment.') : location === 'studio' ? 'Make a private beat at the producer desk.' : location === 'release' ? 'Prepare a private sleeve at Record Intake.' : 'Your music journey, one step at a time.'
   if (deskTab === 'today') {
     cards.innerHTML = location === 'release'
       ? `<article><div class="card-icon">▣</div><div><b>Prepare your release</b><p>Set a title, artist name and draft artwork at Record Intake.</p></div><button data-route="releaseIntake">Take me there ↗</button></article><article><div class="card-icon">⌂</div><div><b>Return to the square</b><p>Walk to the exit when finished.</p></div><button data-route="releaseExit">Show exit ↗</button></article>`
       : location === 'studio'
       ? `<article><div class="card-icon">♫</div><div><b>Make a beat</b><p>Walk to the desk and arrange four original sounds.</p></div><button data-route="studioDesk">Take me there ↗</button></article><article><div class="card-icon">⌂</div><div><b>Return to the square</b><p>Your local pattern stays on this device.</p></div><button data-route="studioExit">Show exit ↗</button></article>`
       : location === 'venue'
-      ? `<article><div class="card-icon">☼</div><div><b>Inspect the stage</b><p>Preview one floor-light snap point.</p></div><button data-route="stage">Take me there ↗</button></article><article><div class="card-icon">⌂</div><div><b>Explore freely</b><p>Walk the room, then return to the square.</p></div><button data-close>Keep exploring</button></article>`
-      : `<article><div class="card-icon">♫</div><div><b>Find a sound</b><p>${savedPreview ? 'Your preview is saved. Visit the station again anytime.' : 'Discover an original preview at the listening station.'}</p></div><button data-route="kiosk">Take me there ↗</button></article><article><div class="card-icon">▤</div><div><b>City Studio</b><p>Make a private beat.</p></div><button data-route="studio">Show route ↗</button></article><article><div class="card-icon">▣</div><div><b>Release House</b><p>Prepare a private sleeve draft.</p></div><button data-route="releaseEntrance">Show route ↗</button></article><article><div class="card-icon">♛</div><div><b>Explore Palm Room</b><p>Inspect the venue stage.</p></div><button data-route="palmEntrance">Show route ↗</button></article>`
+      ? masterBlob
+        ? `<article><div class="card-icon">♫</div><div><b>Preview on stage</b><p>Play your 30-second City Studio master on this device.</p></div><button data-route="stage">Take me to stage ↗</button></article><article><div class="card-icon">⌂</div><div><b>Return to square</b><p>Walk to the exit when ready.</p></div><button data-route="venueExit">Show exit ↗</button></article>`
+        : `<article><div class="card-icon">☼</div><div><b>Inspect the stage</b><p>Preview one floor-light snap point.</p></div><button data-route="stage">Take me there ↗</button></article><article><div class="card-icon">⌂</div><div><b>Explore freely</b><p>Walk the room, then return to the square.</p></div><button data-close>Keep exploring</button></article>`
+      : `<article><div class="card-icon">♫</div><div><b>Find a sound</b><p>${savedPreview ? 'Your preview is saved. Visit the station again anytime.' : 'Discover an original preview at the listening station.'}</p></div><button data-route="kiosk">Take me there ↗</button></article><article><div class="card-icon">▤</div><div><b>City Studio</b><p>Make a private beat.</p></div><button data-route="studio">Show route ↗</button></article><article><div class="card-icon">▣</div><div><b>Release House</b><p>Prepare a private sleeve draft.</p></div><button data-route="releaseEntrance">Show route ↗</button></article><article><div class="card-icon">♛</div><div><b>Explore Palm Room</b><p>${masterBlob ? 'Perform your master on stage.' : 'Inspect the venue stage.'}</p></div><button data-route="palmEntrance">Show route ↗</button></article>`
   } else if (deskTab === 'ask') {
-    cards.innerHTML = `<div class="ask-panel"><b>What can I do here?</b><p>${location === 'venue' ? 'Inspect the venue and preview one floor light. Leasing needs a verified server quote.' : location === 'studio' ? 'Make a private beat at the producer desk, then walk to the exit.' : location === 'release' ? 'Prepare a private sleeve. A finished master and rights review are required before submission.' : 'Listen, make a beat, prepare a release draft, or inspect Palm Room. Routes require walking.'}</p><button data-route="${location === 'venue' ? 'stage' : location === 'studio' ? 'studioDesk' : location === 'release' ? 'releaseIntake' : 'studio'}">Show a next move ↗</button></div>`
+    cards.innerHTML = `<div class="ask-panel"><b>What can I do here?</b><p>${location === 'venue' ? (masterBlob ? 'Step up to the stage to perform your master. Leasing needs a verified server quote.' : 'Inspect the venue and preview one floor light. Leasing needs a verified server quote.') : location === 'studio' ? 'Make a private beat at the producer desk, then walk to the exit.' : location === 'release' ? 'Prepare a private sleeve. A finished master and rights review are required before submission.' : 'Listen, make a beat, prepare a release draft, or inspect Palm Room. Routes require walking.'}</p><button data-route="${location === 'venue' ? 'stage' : location === 'studio' ? 'studioDesk' : location === 'release' ? 'releaseIntake' : 'studio'}">Show a next move ↗</button></div>`
   } else {
-    cards.innerHTML = `<div class="ask-panel"><b>Your local session</b><p>${savedPreview ? '♫ Tone preview saved for this session.' : 'No tone preview saved yet.'}</p><p>${beatDraftSaved ? '♫ A private beat pattern is saved on this device.' : 'No beat pattern saved yet.'}</p><p>${releaseDraft.title ? '▣ Private sleeve: ' + releaseDraft.title.replaceAll('&', '&amp;').replaceAll('<', '&lt;') : 'No release sleeve saved yet.'}</p><p>${equipmentPreviewVisible ? '☼ Temporary floor-light preview is visible.' : 'No stage preview is shown.'}</p><p>${routeTarget ? '↗ A walking route is active.' : 'No walking route selected.'}</p></div>`
+    cards.innerHTML = `<div class="ask-panel"><b>Your local session</b><p>${savedPreview ? '♫ Tone preview saved for this session.' : 'No tone preview saved yet.'}</p><p>${beatDraftSaved ? '♫ A private beat pattern is saved on this device.' : 'No beat pattern saved yet.'}</p><p>${masterBlob ? '♫ 30-second master rendered and ready.' : 'No audio master rendered yet.'}</p><p>${releaseDraft.title ? '▣ Private sleeve: ' + releaseDraft.title.replaceAll('&', '&amp;').replaceAll('<', '&lt;') : 'No release sleeve saved yet.'}</p><p>${equipmentPreviewVisible ? '☼ Temporary floor-light preview is visible.' : 'No stage preview is shown.'}</p><p>${routeTarget ? '↗ A walking route is active.' : 'No walking route selected.'}</p></div>`
   }
   cards.querySelectorAll<HTMLButtonElement>('[data-route]').forEach(button => button.addEventListener('click', () => setRoute(button.dataset.route as Hotspot)))
   cards.querySelectorAll<HTMLButtonElement>('[data-close]').forEach(button => button.addEventListener('click', closeSheets))
@@ -703,9 +778,13 @@ world.addEventListener('pointerup', event => {
   raycaster.setFromCamera(new THREE.Vector2((event.clientX - bounds.left) / bounds.width * 2 - 1, -(event.clientY - bounds.top) / bounds.height * 2 + 1), camera)
   const hit = new THREE.Vector3()
   if (raycaster.ray.intersectPlane(ground, hit)) {
-    const bounds = location === 'square' ? { minX: -18, maxX: 19, minZ: -12, maxZ: 16 } : location === 'venue' ? { minX: -12, maxX: 12, minZ: -10.5, maxZ: 11.5 } : { minX: -11.5, maxX: 11.5, minZ: -10.5, maxZ: 10.5 }
+    const bounds = BOUNDARIES[location]
     hit.x = THREE.MathUtils.clamp(hit.x, bounds.minX, bounds.maxX)
     hit.z = THREE.MathUtils.clamp(hit.z, bounds.minZ, bounds.maxZ)
+    if (isPointBlocked(location, hit.x, hit.z)) {
+      toast('That spot is blocked by an obstacle')
+      return
+    }
     walkTarget = hit; walkMarker.position.set(hit.x, .05, hit.z); walkMarker.visible = true
     toast('Walking to marked spot')
   }
@@ -768,9 +847,13 @@ function frame() {
   if ((speed > .05 || walkTarget) && sheet === 'none') {
     const angle = walkTarget ? Math.atan2(walkTarget.x - avatar.position.x, avatar.position.z - walkTarget.z) : Math.atan2(side, forward) + yaw
     const step = Math.min(walkTarget ? remaining : Infinity, (walkTarget ? 1 : speed) * dt * 4.25)
-    const boundary = location === 'square' ? { minX: -18, maxX: 19, minZ: -12, maxZ: 16 } : location === 'venue' ? { minX: -12, maxX: 12, minZ: -10.5, maxZ: 11.5 } : { minX: -11.5, maxX: 11.5, minZ: -10.5, maxZ: 10.5 }
-    avatar.position.x = THREE.MathUtils.clamp(avatar.position.x + Math.sin(angle) * step, boundary.minX, boundary.maxX)
-    avatar.position.z = THREE.MathUtils.clamp(avatar.position.z - Math.cos(angle) * step, boundary.minZ, boundary.maxZ)
+    const nextX = avatar.position.x + Math.sin(angle) * step
+    const nextZ = avatar.position.z - Math.cos(angle) * step
+    const resolved = resolveCollision(location, avatar.position.x, avatar.position.z, nextX, nextZ)
+    avatar.position.x = resolved.x
+    avatar.position.z = resolved.z
+    const targetY = location === 'venue' && avatar.position.z <= -6.4 && avatar.position.z >= -10.8 && Math.abs(avatar.position.x) <= 6.8 ? 0.78 : 0
+    avatar.position.y += (targetY - avatar.position.y) * Math.min(1, dt * 10)
     avatar.rotation.y = angle
     leftLeg.rotation.x = Math.sin(elapsed * 11) * .38; rightLeg.rotation.x = -leftLeg.rotation.x
     leftArm.rotation.x = -leftLeg.rotation.x * .6; rightArm.rotation.x = -rightLeg.rotation.x * .6
@@ -784,8 +867,12 @@ function frame() {
     rightLeg.rotation.x = -leftLeg.rotation.x
   } else { leftLeg.rotation.x = rightLeg.rotation.x = leftArm.rotation.x = rightArm.rotation.x = 0; leftArm.rotation.z = -.15; rightArm.rotation.z = .15 }
   const desired = avatar.position.clone().add(new THREE.Vector3(Math.sin(yaw) * 7.1, 3.85, Math.cos(yaw) * 7.1))
+  const b = BOUNDARIES[location]
+  const camPad = location === 'square' ? 3.5 : 1.2
+  desired.x = THREE.MathUtils.clamp(desired.x, b.minX - camPad, b.maxX + camPad)
+  desired.z = THREE.MathUtils.clamp(desired.z, b.minZ - camPad, b.maxZ + camPad)
   camera.position.lerp(desired, 1 - Math.exp(-5 * dt))
-  camera.lookAt(avatar.position.x, 1.52, avatar.position.z)
+  camera.lookAt(avatar.position.x, avatar.position.y + 1.52, avatar.position.z)
   const next = getNearby(location, avatar.position.x, avatar.position.z)
   if (now - lastPresenceSend > 125) {
     presence.send({ x: avatar.position.x, z: avatar.position.z, angle: avatar.rotation.y, dancing, location })

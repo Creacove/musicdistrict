@@ -1,19 +1,36 @@
-# THE SCENE
+# THE SCENE — playable vertical slice
 
-Early M0 browser prototype. The design handoff is preserved in `docs/handoff/`; the running app is in `app/`.
+The canonical design and visual handoff is in `docs/handoff/`. The playable browser game is in `app/`. This is a prototype for evaluation, not a public music service or the final 3D art build.
 
-## Run locally
+## Run the game
+
+Requires Node.js with `node:sqlite` support (Node 22.13+).
 
 ```powershell
 cd app
-npm install
-npm run dev
+npm ci
+npm run dev -- --host 127.0.0.1
 ```
 
-Open the local URL printed by Vite. Move with WASD or the mobile touch pad. Drag the scene to turn the camera. Approach the listening kiosk or the violet City Studio door. Desk shows a route hint.
+Open `http://127.0.0.1:5173/`. Use WASD or the touch pad to walk, drag the 3D view to turn, and tap ground to walk there. Use Map or Desk to select a route, then walk to the destination and interact.
 
-The kiosk plays an original synthesized tone sequence only after a click. It is a development placeholder, not an approved song. No multiplayer, account, server, or persistence is present.
+## Five-minute demo route
 
-## Current state
+1. Walk to the Music Square listening kiosk. Choose Play to hear the original synthesized Square Sketch, then save it privately.
+2. Open Map and route to City Studio. Walk to the studio door and enter.
+3. At the producer desk, edit both beat sections, play them, and render a 30-second WAV master.
+4. Leave the studio, route to Release House, and create a private sleeve draft at Record Intake.
+5. Return to the square, enter Palm Room, and preview your master on stage with lighting. Audio plays on your device only.
 
-See [M0 progress](M0_PROGRESS.md) for the audit, evidence, and next steps.
+The local guest save uses SQLite under ignored `app/data/`. Beat and sleeve drafts are stored on this browser. Connected session avatars are anonymous WebSocket presence, not verified players. No lease, public release, payments, chat, licensed catalogue, or cross-game SDK integration occurs.
+
+## Verify the built game
+
+```powershell
+cd app
+npm test
+npm run build
+npm run preview -- --host 127.0.0.1
+```
+
+The preview server serves the built game with the local guest API and presence service. See [M0 progress](M0_PROGRESS.md) for evidence and open quality gates.

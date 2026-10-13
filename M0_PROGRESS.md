@@ -92,12 +92,36 @@ Following Master GDD §§3, 6 and Chapter 02 Artist (ART-21 and Slice 0/1), City
 
 Five tests pass and the production build succeeds. In the live browser, the studio and beat desk rendered, a pad changed, Play switched to Stop, Save confirmed a private local draft, and the changed pad remained after reload. The browser used the development-only `?qa=beat` entry to inspect the room; the full ordinary walk from the square door remains to be browser-verified. This is a short pattern prototype, not the Chapter 02 submit-ready 30-second, two-section saved arrangement or a server-backed project. Cleared loop packs, render/export, consent, rights review and device audio checks remain open.
 
+## World solidity and Palm Room stage performance slice — 13 October 2026
+
+Addressing Risk #1 from the repository audit (rudimentary collision and camera clipping), the world now enforces obstacle boundaries and continuous sliding collision across Music Square and all three interiors:
+
+- **Obstacle bounds & sliding physics:** Defined exact bounding boxes and cylindrical obstacles in `worldModel.ts` matching the visual geometry:
+  - **Music Square:** Kiosk structure, covered stage platform and backdrop, Palm Room/City Studio/Release House building fronts, planters, benches, and signpost.
+  - **Palm Room:** Stage wings, backstage barrier, bar counter, lounge tables, and mixing workstation.
+  - **City Studio:** Producer desk and vocal booth structure.
+  - **Release House:** Record intake counter and listening booth.
+- **Direction-aware sliding:** Avatar motion resolves axis-by-axis against obstacles so pushing into walls, desks, or planters smoothly preserves motion along the open axis without penetration or sticking.
+- **Tap-to-walk obstacle rejection:** Clicking inside or too close to an obstacle rejects the walk target with an immediate user toast notification.
+- **Camera boundary clamping:** The third-person follow camera clamps against room perimeters, preventing clipping outside interior walls when rotating yaw.
+- **Palm Room stage performance loop:**
+  - Added physical access steps to the Palm Room stage platform so avatars can walk directly up onto the stage.
+  - When on the stage platform (`location === 'venue'` and on the stage platform), the avatar's vertical height smoothly rises onto the 0.78 m platform.
+  - Added stage performance lighting (spotlight, fill light, stage glow).
+  - When a player has rendered a 30-second WAV master in City Studio, stepping up to the stage enables a local stage preview. Audio plays on that player's device with active stage lighting; it is not broadcast to other sessions.
+  - Desk Phase 1 guidance now highlights stage performance when a master exists.
+- **Presence room filtering:** Remote player avatar instances now re-filter immediately upon entering or leaving any interior room.
+- **Verification:** 14 automated tests pass (`npm test`), including 4 new obstacle collision and boundary tests. Production build (`npm run build`) succeeded with TypeScript compilation. Local Vite server verified responsive on port 5173.
+
+**Remaining gaps:** Scene bundle splitting (main JS chunk is ~598 kB uncompressed / 154 kB gzip, exceeding Vite's 500 kB advisory limit); licensed 3D avatar rig and locomotion animations; cleared production loop packs and licensed tracks; mobile production transfer and hardware thermal testing; persistent player identity and authoritative server-side multiplayer state.
+
 ## Smallest next PR sequence
 
-1. **M0 renderer/input proof:** browser and real-device checks; collision, camera, joystick, load/FPS instrumentation, and one usable door.
+1. **M0/M1 bundle & scene splitting:** Dynamically load interior rooms and audio synthesis modules to bring initial client JS below 500 kB uncompressed.
 2. **M0 asset/audio proof:** licensed prototype avatar/animations and cleared test song; manifest with source, rights, expiry, size, and device measurements.
-3. **M1 identity/presence:** trusted server, two real players in one square, reconnect and basic safety controls.
+3. **M1 identity/presence:** trusted server, two real players in one square, reconnect and basic safety controls (chat/emotes/reporting).
 4. **M1 discovery:** kiosk with explicit playback and a persisted save action, failure/expiry states, and zero-money path.
 5. **M2 creation preview:** walk to City Studio and use a small workstation with approved loops.
 
 Do not claim M0 exit until the device, audio, reconnect, rights, and staging checks in `docs/handoff/implementation/QUALITY_GATES.md` pass.
+

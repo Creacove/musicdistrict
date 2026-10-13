@@ -244,9 +244,19 @@ export function makePalmRoom() {
   for (const x of [-6, -3, 0, 3, 6]) {
     box(root, .33, .38, .36, black, x, 5.47, -7)
   }
+  box(root, 4.2, .4, .8, charcoal, 0, .19, -6.4)
+  box(root, 4.4, .08, .12, brass, 0, .39, -6.0)
   const stageGlow = new THREE.PointLight('#f8b472', 13, 16)
   stageGlow.position.set(0, 4.5, -7.7)
   root.add(stageGlow)
+  const performanceSpot = new THREE.SpotLight('#ffe2a8', 0, 22, Math.PI / 4, .5)
+  performanceSpot.position.set(0, 6.2, -6.5)
+  performanceSpot.target.position.set(0, .8, -8)
+  root.add(performanceSpot)
+  root.add(performanceSpot.target)
+  const stageFill = new THREE.PointLight('#ff70a6', 0, 14)
+  stageFill.position.set(0, 3.2, -8.5)
+  root.add(stageFill)
   // Bar and lounge seating on the left.
   box(root, 6.5, 1.2, 1.35, wood, -9.4, .6, -3)
   box(root, 6.7, .13, 1.55, brass, -9.4, 1.2, -3)
@@ -285,5 +295,13 @@ export function makePalmRoom() {
   equipment.add(equipmentLight)
   equipment.visible = false
   root.add(equipment)
-  return { root, setEquipmentPreview(visible: boolean) { equipment.visible = visible } }
+  return {
+    root,
+    setEquipmentPreview(visible: boolean) { equipment.visible = visible },
+    setStagePerformance(active: boolean) {
+      performanceSpot.intensity = active ? 28 : 0
+      stageFill.intensity = active ? 8 : 0
+      stageGlow.intensity = active ? 22 : 13
+    },
+  }
 }
