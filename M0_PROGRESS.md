@@ -64,6 +64,12 @@ Verification after the final audio-control change: 8 tests passed, the productio
 
 The world now supports tap-to-walk on the ground, with manual movement cancelling the target. In the browser, the avatar walked through Music Square to the physical Release House entrance, opened its interaction, and entered the room. The Release House and Studio exits were moved beside the entry camera path; the browser shows the Release House counter, artwork wall and listening station unobstructed on entry. The ordinary Studio and Palm Room exterior walks still need browser passes.
 
+## District map and connected routes — 13 October 2026
+
+The Map controls now open a district map with the avatar's current square position and the four playable destinations: City Studio, Release House, Palm Room and the listening station. Selecting a place creates a physical route to its hotspot and a visible ground marker; it does not enter a room or spend currency. From an interior, selecting another destination first directs the player to the physical exit, then continues the route from Music Square after they interact with that exit. Cancel clears both route legs. In the browser, the map and a City Studio route rendered in Music Square; selecting City Studio inside Release House displayed the Release Exit as the first leg. The full two-leg walk still needs a browser pass.
+
+The Music Square blockout also gained paved approaches to all three doors, timber awnings, a physical direction sign and edge seating. The browser showed the revised square and the map at a narrow mobile viewport. These are authored prototype meshes, not the production assets or final reference fidelity.
+
 ## City Studio playable slice — 13 October 2026
 
 Following Master GDD §§3, 6 and Chapter 02 Artist (ART-21 and Slice 0/1), City Studio is now a separate walkable 3D room reached through the physical square door. Its producer desk opens an eight-step, four-lane beat pattern. Players can change pads, play original synthesized sounds, stop playback, and save one private pattern in browser local storage. Desk routes to the studio door or desk. The vocal booth is a spatial landmark only; no microphone request, public release, chart entry, or rights claim is made.

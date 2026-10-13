@@ -24,7 +24,22 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
 
   <div class="scene-label"><span>THE SCENE / WORLD 01</span><b id="scene-name">MUSIC SQUARE</b></div>
   <button id="map-button" class="map-button" aria-label="Open map"><span id="map-arrow">⌁</span><small>MAP</small></button>
-  <div id="route" class="route" hidden><span>↗</span><div><b id="route-title"></b><small id="route-distance"></small></div><button id="route-close" aria-label="Cancel route">×</button></div>
+  <div id="route" class="route" hidden><span id="route-arrow" aria-hidden="true">↑</span><div><b id="route-title"></b><small id="route-distance"></small></div><button id="route-close" aria-label="Cancel route">×</button></div>
+  <section id="map-sheet" class="map-sheet" hidden aria-label="Music Square district map">
+    <button id="map-close" class="icon-close" aria-label="Close map">×</button>
+    <small class="eyebrow">LAGOS · WALKABLE DISTRICT</small><h2>Find your way</h2>
+    <p id="map-context">Choose a place. The route leads to its physical entrance.</p>
+    <div class="district-map" role="img" aria-label="Map of Music Square and nearby destinations">
+      <span class="map-road map-road-horizontal"></span><span class="map-road map-road-vertical"></span>
+      <span class="map-plaza">MUSIC<br>SQUARE</span><span id="map-avatar" class="map-avatar" aria-label="Your position">●<small>YOU</small></span>
+      <button data-map-target="releaseEntrance" style="--mx:15%;--my:18%">▣<small>RELEASE HOUSE</small></button>
+      <button data-map-target="studio" style="--mx:84%;--my:18%">♫<small>CITY STUDIO</small></button>
+      <button data-map-target="kiosk" style="--mx:28%;--my:54%">◉<small>LISTEN</small></button>
+      <button data-map-target="palmEntrance" style="--mx:76%;--my:54%">♛<small>PALM ROOM</small></button>
+    </div>
+    <div id="map-places" class="map-places"></div>
+    <small class="map-note">Walking is free. Arriving outside does not enter or book a place.</small>
+  </section>
 
   <section id="venue-card" class="venue-card" hidden>
     <button id="venue-close" class="icon-close" aria-label="Close venue information">×</button>
@@ -167,10 +182,14 @@ let yaw = 0, dragging = false, previousX = 0, pointerStartX = 0, pointerStartY =
 let walkTarget: THREE.Vector3 | null = null
 const walkMarker = new THREE.Mesh(new THREE.RingGeometry(.45, .58, 28), new THREE.MeshBasicMaterial({ color: '#36e8b8', side: THREE.DoubleSide, depthTest: false }))
 walkMarker.rotation.x = -Math.PI / 2; walkMarker.visible = false; walkMarker.renderOrder = 20; scene.add(walkMarker)
+const routeMarker = new THREE.Mesh(new THREE.RingGeometry(.7, .84, 32), new THREE.MeshBasicMaterial({ color: '#f7d37d', side: THREE.DoubleSide, depthTest: false }))
+routeMarker.rotation.x = -Math.PI / 2; routeMarker.visible = false; routeMarker.renderOrder = 21; scene.add(routeMarker)
+const routePoints: Record<Hotspot, [number, number]> = { kiosk: [-8, 2], studio: [13, -8], palmEntrance: [10, 2], stage: [0, -7], venueExit: [-10, 9], studioDesk: [0, -5.5], studioExit: [-10, 9], releaseEntrance: [-13, -8], releaseIntake: [0, -5.5], releaseExit: [-10, 9] }
 const ground = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), raycaster = new THREE.Raycaster()
 function clearWalkTarget() { walkTarget = null; walkMarker.visible = false }
 let nearby: Hotspot | null = null
 let routeTarget: Hotspot | null = null
+let onwardTarget: Hotspot | null = null
 let sheet: 'none' | 'desk' | 'action' = 'none'
 let deskTab: 'today' | 'ask' | 'plans' = 'today'
 let savedPreview = false, equipmentPreviewVisible = false, playing = false
@@ -197,6 +216,7 @@ function closeSheets() {
   $<HTMLElement>('display-sheet').hidden = true
   $<HTMLElement>('beat-sheet').hidden = true
   $<HTMLElement>('release-sheet').hidden = true
+  $<HTMLElement>('map-sheet').hidden = true
   stopBeat()
   stopMasterPreview()
   sheet = 'none'
@@ -212,10 +232,43 @@ function stopMasterPreview() {
 
 function setRoute(target: Hotspot) {
   routeTarget = target
+  const [x, z] = routePoints[target]
+  routeMarker.position.set(x, .075, z)
+  routeMarker.visible = true
   $<HTMLElement>('route').hidden = false
   $<HTMLElement>('route-title').textContent = target === 'palmEntrance' ? 'PALM ROOM' : target === 'stage' ? 'STAGE SETUP' : target === 'studio' ? 'CITY STUDIO' : target === 'studioDesk' ? 'BEAT DESK' : target === 'studioExit' ? 'STUDIO EXIT' : target === 'releaseEntrance' ? 'RELEASE HOUSE' : target === 'releaseIntake' ? 'RECORD INTAKE' : target === 'releaseExit' ? 'RELEASE EXIT' : target === 'venueExit' ? 'VENUE EXIT' : 'LISTENING STATION'
   closeSheets()
   toast('Follow the world marker and walk there')
+}
+
+const mapDestinations: { id: Hotspot; name: string; detail: string }[] = [
+  { id: 'releaseEntrance', name: 'Release House', detail: 'Record intake · private sleeve' },
+  { id: 'studio', name: 'City Studio', detail: 'Free beat desk' },
+  { id: 'kiosk', name: 'Listening station', detail: 'Original music preview' },
+  { id: 'palmEntrance', name: 'Palm Room', detail: 'Walkable venue preview' },
+]
+function exitForLocation(): Hotspot { return location === 'venue' ? 'venueExit' : location === 'studio' ? 'studioExit' : 'releaseExit' }
+function mapRoute(target: Hotspot) {
+  onwardTarget = location === 'square' ? null : target
+  setRoute(location === 'square' ? target : exitForLocation())
+  if (onwardTarget) toast(`Walk to the exit, then follow the route to ${mapDestinations.find(item => item.id === target)?.name}`)
+}
+function continueMapRoute() {
+  if (!onwardTarget) return
+  const target = onwardTarget
+  onwardTarget = null
+  setRoute(target)
+}
+function renderMap() {
+  const avatarPin = $<HTMLElement>('map-avatar')
+  avatarPin.hidden = location !== 'square'
+  if (location === 'square') {
+    avatarPin.style.left = `${Math.max(5, Math.min(95, (avatar.position.x + 18) / 37 * 100))}%`
+    avatarPin.style.top = `${Math.max(6, Math.min(94, (avatar.position.z + 12) / 28 * 100))}%`
+  }
+  $<HTMLElement>('map-context').textContent = location === 'square' ? 'Choose a place, then walk to its entrance.' : `You are inside ${location === 'venue' ? 'Palm Room' : location === 'studio' ? 'City Studio' : 'Release House'}. A route to another place begins at this room’s exit.`
+  $<HTMLElement>('map-places').innerHTML = mapDestinations.map(item => `<button data-map-target="${item.id}"><b>${item.name}</b><small>${item.detail}</small><span>Show route ↗</span></button>`).join('')
+  $<HTMLElement>('map-sheet').querySelectorAll<HTMLButtonElement>('[data-map-target]').forEach(button => button.onclick = () => mapRoute(button.dataset.mapTarget as Hotspot))
 }
 
 function startPreview() {
@@ -363,6 +416,7 @@ function leaveStudio() {
   scene.background = new THREE.Color('#413243'); scene.fog = new THREE.Fog('#413243', 32, 72)
   nearby = null; closeSheets(); $<HTMLElement>('place-name').textContent = 'Music Square · Lagos'
   $<HTMLElement>('scene-name').textContent = 'MUSIC SQUARE'
+  continueMapRoute()
 }
 
 function enterReleaseHouse() {
@@ -394,6 +448,7 @@ function leaveReleaseHouse() {
   scene.background = new THREE.Color('#413243'); scene.fog = new THREE.Fog('#413243', 32, 72)
   nearby = null; closeSheets(); $<HTMLElement>('place-name').textContent = 'Music Square · Lagos'
   $<HTMLElement>('scene-name').textContent = 'MUSIC SQUARE'
+  continueMapRoute()
 }
 
 function renderReleaseDraft(syncInputs = true) {
@@ -428,6 +483,7 @@ function leaveVenue() {
   $<HTMLElement>('venue-card').hidden = true
   $<HTMLElement>('place-name').textContent = 'Music Square · Lagos'
   $<HTMLElement>('scene-name').textContent = 'MUSIC SQUARE'
+  continueMapRoute()
 }
 
 function interact() {
@@ -498,8 +554,12 @@ function openDesk(tab: 'today' | 'ask' | 'plans' = 'today') {
 }
 
 function openMap() {
-  openDesk('ask')
-  toast(location === 'venue' ? 'Stage setup is in front of you' : 'Choose a route from Desk')
+  closeSheets()
+  $<HTMLElement>('venue-card').hidden = true
+  renderMap()
+  $<HTMLElement>('map-sheet').hidden = false
+  sheet = 'action'
+  refreshContext()
 }
 
 $<HTMLButtonElement>('audio').onclick = () => playing ? stopPreview() : masterPlayer ? stopMasterPreview() : toast('Choose Play at a listening station or music desk')
@@ -509,6 +569,7 @@ $<HTMLButtonElement>('action-close').onclick = closeSheets
 $<HTMLButtonElement>('interact').onclick = interact
 $<HTMLButtonElement>('map-button').onclick = openMap
 $<HTMLButtonElement>('nav-map').onclick = openMap
+$<HTMLButtonElement>('map-close').onclick = closeSheets
 $<HTMLButtonElement>('nav-phone').onclick = () => { closeSheets(); $<HTMLElement>('venue-card').hidden = true; $<HTMLElement>('display-sheet').hidden = false; sheet = 'action'; updateMetrics() }
 $<HTMLButtonElement>('beat-close').onclick = closeSheets
 $<HTMLButtonElement>('beat-play').onclick = toggleBeat
@@ -545,7 +606,7 @@ document.querySelectorAll<HTMLButtonElement>('[data-quality]').forEach(button =>
 $<HTMLButtonElement>('nav-create').onclick = () => location === 'studio' ? setRoute('studioDesk') : location === 'release' ? setRoute('releaseIntake') : location === 'square' ? setRoute('studio') : toast('Walk to City Studio from Music Square')
 $<HTMLButtonElement>('nav-people').onclick = () => toast('Real player presence arrives with the multiplayer service')
 $<HTMLButtonElement>('home').onclick = () => { closeSheets(); $<HTMLElement>('venue-card').hidden = true }
-$<HTMLButtonElement>('route-close').onclick = () => { routeTarget = null; $<HTMLElement>('route').hidden = true }
+$<HTMLButtonElement>('route-close').onclick = () => { routeTarget = null; onwardTarget = null; $<HTMLElement>('route').hidden = true }
 $<HTMLButtonElement>('venue-close').onclick = () => { $<HTMLElement>('venue-card').hidden = true; refreshContext() }
 $<HTMLButtonElement>('preview-hall').onclick = () => { $<HTMLElement>('venue-card').hidden = true; refreshContext() }
 $<HTMLButtonElement>('view-setup').onclick = () => { $<HTMLElement>('venue-card').hidden = true; setRoute('stage') }
@@ -645,13 +706,15 @@ function frame() {
   const next = getNearby(location, avatar.position.x, avatar.position.z)
   if (next !== nearby) { nearby = next; refreshContext() }
   if (routeTarget) {
-    const points: Record<Hotspot, [number, number]> = { kiosk: [-8, 2], studio: [13, -8], palmEntrance: [10, 2], stage: [0, -7], venueExit: [-10, 9], studioDesk: [0, -5.5], studioExit: [-10, 9], releaseEntrance: [-13, -8], releaseIntake: [0, -5.5], releaseExit: [-10, 9] }
-    const [x, z] = points[routeTarget]
+    const [x, z] = routePoints[routeTarget]
     const distance = Math.round(Math.hypot(x - avatar.position.x, z - avatar.position.z))
-    $<HTMLElement>('route-distance').textContent = distance < 3 ? 'Entrance in reach · interact' : `${distance} m · walk through the world`
+    const bearing = Math.atan2(x - avatar.position.x, avatar.position.z - z) - yaw
+    $<HTMLElement>('route-arrow').style.transform = `rotate(${bearing}rad)`
+    $<HTMLElement>('route-distance').textContent = distance < 3 ? 'In reach · interact here' : `${distance} m · walk through the world`
     if (nearby === routeTarget) $<HTMLElement>('route').classList.add('arrived')
     else $<HTMLElement>('route').classList.remove('arrived')
   }
+  routeMarker.visible = !!routeTarget
   renderer.render(scene, camera)
   if (readyMs === null) readyMs = performance.now()
   if (Math.floor(elapsed * 2) !== Math.floor((elapsed - dt) * 2) && !$<HTMLElement>('display-sheet').hidden) updateMetrics()

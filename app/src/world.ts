@@ -171,6 +171,25 @@ export function makeSquare() {
   box(root, 8.5, 5.5, 4, charcoal, -14, 2.75, -12)
   box(root, 3.2, 3.8, .12, mat('#6c395f', .1, '#35132b'), -13, 1.9, -9.85)
   sign(root, ['RELEASE HOUSE'], 7.5, 1.1, -14, 4.7, -9.78, { bg: '#201b28', ink: '#ffc1ec', size: 98 })
+  // Short, visible approaches make the three entrances legible from the plaza.
+  for (const [x, z, w, d] of [[-13, -5.2, 3.7, 6.3], [13, -5.2, 3.7, 6.3], [10, 2.4, 3.8, 4.3]]) {
+    box(root, w, .045, d, mat('#aa9880'), x, .023, z)
+    for (const edge of [-1, 1]) box(root, .07, .05, d, brass, x + edge * (w / 2 - .1), .055, z)
+  }
+  for (const x of [-14, 13]) {
+    box(root, 5.5, .22, 1.8, wood, x, 3.95, -9.1)
+    for (let i = -2; i <= 2; i++) box(root, .12, .12, 1.82, brass, x + i * .96, 4.07, -9.1)
+  }
+  // A physical district guide remains useful even when the map sheet is closed.
+  cylinder(root, .075, .095, 3.2, black, 4, 1.6, 1.4, 8)
+  box(root, 2.9, .72, .12, black, 4, 2.75, 1.4)
+  sign(root, ['← RELEASE  ·  STUDIO →'], 2.78, .6, 4, 2.75, 1.48, { bg: '#183e39', ink: '#f6e9c9', size: 73 })
+  box(root, 2.55, .62, .12, black, 4, 1.9, 1.4)
+  sign(root, ['PALM ROOM  →'], 2.44, .52, 4, 1.9, 1.48, { bg: '#2c2d29', ink: '#f6e9c9', size: 82 })
+  for (const [x, z] of [[-15, 9.5], [15, 9.5]]) {
+    box(root, 3.1, .19, .82, wood, x, .69, z)
+    for (const end of [-1, 1]) box(root, .13, .64, .72, black, x + end * 1.25, .32, z)
+  }
   // Designed street furniture and warm pools of light.
   for (const [x, z] of [[-17, 3], [19, 5], [5, -6]]) palm(root, x, z)
   for (const [x, z] of [[-14, -5], [3, 8], [18, -7]]) lamp(root, x, z)
