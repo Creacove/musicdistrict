@@ -3,7 +3,10 @@ import { getNearby, type Hotspot, type Location } from './worldModel.ts'
 import { makePalmRoom, makeSquare } from './world.ts'
 import { reportedTransferBytes, summarizeFrames } from './performance.ts'
 import { makeStudio } from './studioWorld.ts'
-import { starterPattern, toggleStep, validPattern, type BeatPattern } from './beatPattern.ts'
+import { renderMasterWav, sectionsDiffer, starterPattern, toggleStep, validPattern, type BeatPattern } from './beatPattern.ts'
+import { loadLocalMaster, saveLocalMaster } from './localMaster.ts'
+import { makeReleaseHouse } from './releaseWorld.ts'
+import { blankReleaseDraft, releaseBlockers, validReleaseDraft, type ReleaseDraft } from './releaseDraft.ts'
 import './style.css'
 
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
@@ -57,9 +60,18 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
     <button id="beat-close" class="icon-close" aria-label="Close beat desk">×</button>
     <small class="eyebrow">CITY STUDIO · LOCAL DEMO</small><h2>Make a beat</h2>
     <p>Tap pads to arrange four original synthesized sounds. This private pattern stays on this device.</p>
+    <div class="section-tabs"><button data-section="a">Section A</button><button data-section="b">Section B</button></div>
     <div id="beat-grid" class="beat-grid"></div>
-    <div class="beat-actions"><button id="beat-play" class="green-button">▶ Play beat</button><button id="beat-save">Save local draft</button></div>
+    <div class="beat-actions"><button id="beat-play" class="green-button">▶ Play beat</button><button id="beat-save">Save pattern</button><button id="beat-render">Render 30s master</button></div>
     <small id="beat-status">No release, upload, or public sharing is available.</small>
+  </section>
+  <section id="release-sheet" class="release-sheet" hidden aria-label="Release House record intake">
+    <button id="release-close" class="icon-close" aria-label="Close release intake">×</button>
+    <small class="eyebrow">RELEASE HOUSE · PRIVATE DRAFT</small><h2>Prepare your release</h2>
+    <p>Start a sleeve here. Submission and Friday scheduling require a finished master, rights review, and the release service.</p>
+    <div class="release-layout"><div id="release-cover" class="release-cover"><span>THE SCENE</span><strong id="release-cover-title">UNTITLED</strong><small id="release-cover-artist">ARTIST NAME</small></div><div class="release-fields"><label>Song title<input id="release-title" maxlength="80" placeholder="Name your track"></label><label>Artist name<input id="release-artist" maxlength="80" placeholder="Your artist name"></label><div class="cover-choices" aria-label="Draft artwork colour"><button data-art="rose" aria-label="Rose artwork"></button><button data-art="teal" aria-label="Teal artwork"></button><button data-art="night" aria-label="Night artwork"></button></div></div></div>
+    <div class="release-checklist"><b>Before this can be released</b><ul id="release-blockers"></ul></div>
+    <div class="release-actions"><button id="release-save" class="green-button">Save private sleeve draft</button><button id="release-play" hidden>▶ Play local master</button></div><small id="release-status">Not submitted or scheduled.</small>
   </section>
 
   <div id="toast" class="toast" role="status"></div>
@@ -97,6 +109,7 @@ const square = makeSquare()
 scene.add(square)
 let palmRoom: ReturnType<typeof makePalmRoom> | null = null
 let studioRoom: ReturnType<typeof makeStudio> | null = null
+let releaseRoom: ReturnType<typeof makeReleaseHouse> | null = null
 let location: Location = 'square'
 const ambient = new THREE.HemisphereLight('#d9e2ed', '#72523d', 1.9)
 scene.add(ambient)
@@ -156,8 +169,14 @@ let routeTarget: Hotspot | null = null
 let sheet: 'none' | 'desk' | 'action' = 'none'
 let deskTab: 'today' | 'ask' | 'plans' = 'today'
 let savedPreview = false, equipmentPreviewVisible = false, playing = false
-let beatPattern: BeatPattern = starterPattern(), beatPlaying = false, beatTimer: number | undefined, beatStep = 0, beatDraftSaved = false
+let beatPattern: BeatPattern = starterPattern(), beatPatternB: BeatPattern = toggleStep(starterPattern(), 0, 1)
+let beatSection: 'a' | 'b' = 'a', beatPlaying = false, beatTimer: number | undefined, beatStep = 0, beatBar = 0, beatDraftSaved = false
+let masterBlob: Blob | null = null, masterPlayer: HTMLAudioElement | null = null, masterAudioUrl: string | null = null
+let releaseDraft: ReleaseDraft = blankReleaseDraft()
 try { const saved = JSON.parse(localStorage.getItem('scene-beat-draft') || 'null'); if (validPattern(saved)) { beatPattern = saved; beatDraftSaved = true } } catch { /* invalid local draft starts fresh */ }
+try { const saved = JSON.parse(localStorage.getItem('scene-beat-arrangement') || 'null'); if (validPattern(saved?.a) && validPattern(saved?.b)) { beatPattern = saved.a; beatPatternB = saved.b; beatDraftSaved = true } } catch { /* invalid local arrangement starts fresh */ }
+try { const saved = JSON.parse(localStorage.getItem('scene-release-draft') || 'null'); if (validReleaseDraft(saved)) releaseDraft = saved } catch { /* invalid local draft starts fresh */ }
+void loadLocalMaster().then(blob => { masterBlob = blob; if (!$<HTMLElement>('release-sheet').hidden) renderReleaseDraft(false) }).catch(() => { /* private mode may block local storage */ })
 let audio: AudioContext | null = null, audioTimer: number | undefined
 
 function toast(text: string) {
@@ -172,15 +191,24 @@ function closeSheets() {
   $<HTMLElement>('action-sheet').hidden = true
   $<HTMLElement>('display-sheet').hidden = true
   $<HTMLElement>('beat-sheet').hidden = true
+  $<HTMLElement>('release-sheet').hidden = true
   stopBeat()
+  stopMasterPreview()
   sheet = 'none'
   refreshContext()
+}
+
+function stopMasterPreview() {
+  masterPlayer?.pause(); masterPlayer = null
+  if (masterAudioUrl) URL.revokeObjectURL(masterAudioUrl)
+  masterAudioUrl = null
+  if (!playing && !beatPlaying) { $<HTMLButtonElement>('audio').innerHTML = '♫ <span>OFF</span>'; $<HTMLButtonElement>('audio').setAttribute('aria-label', 'Audio off') }
 }
 
 function setRoute(target: Hotspot) {
   routeTarget = target
   $<HTMLElement>('route').hidden = false
-  $<HTMLElement>('route-title').textContent = target === 'palmEntrance' ? 'PALM ROOM' : target === 'stage' ? 'STAGE SETUP' : target === 'studio' ? 'CITY STUDIO' : target === 'studioDesk' ? 'BEAT DESK' : target === 'studioExit' ? 'STUDIO EXIT' : target === 'venueExit' ? 'VENUE EXIT' : 'LISTENING STATION'
+  $<HTMLElement>('route-title').textContent = target === 'palmEntrance' ? 'PALM ROOM' : target === 'stage' ? 'STAGE SETUP' : target === 'studio' ? 'CITY STUDIO' : target === 'studioDesk' ? 'BEAT DESK' : target === 'studioExit' ? 'STUDIO EXIT' : target === 'releaseEntrance' ? 'RELEASE HOUSE' : target === 'releaseIntake' ? 'RECORD INTAKE' : target === 'releaseExit' ? 'RELEASE EXIT' : target === 'venueExit' ? 'VENUE EXIT' : 'LISTENING STATION'
   closeSheets()
   toast('Follow the world marker and walk there')
 }
@@ -231,8 +259,10 @@ function beatVoice(lane: number) {
 
 function drawBeat() {
   const grid = $<HTMLDivElement>('beat-grid')
-  grid.innerHTML = beatPattern.map((lane, laneIndex) => `<div class="beat-row"><b>${['Kick', 'Snare', 'Hat', 'Bass'][laneIndex]}</b>${lane.map((on, step) => `<button aria-label="${['Kick', 'Snare', 'Hat', 'Bass'][laneIndex]} step ${step + 1}" aria-pressed="${on}" data-lane="${laneIndex}" data-step="${step}" class="${beatPlaying && beatStep === step ? 'current' : ''}"></button>`).join('')}</div>`).join('')
-  grid.querySelectorAll<HTMLButtonElement>('button').forEach(button => button.onclick = () => { beatPattern = toggleStep(beatPattern, Number(button.dataset.lane), Number(button.dataset.step)); drawBeat() })
+  const pattern = beatSection === 'a' ? beatPattern : beatPatternB
+  document.querySelectorAll<HTMLButtonElement>('[data-section]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.section === beatSection)))
+  grid.innerHTML = pattern.map((lane, laneIndex) => `<div class="beat-row"><b>${['Kick', 'Snare', 'Hat', 'Bass'][laneIndex]}</b>${lane.map((on, step) => `<button aria-label="${['Kick', 'Snare', 'Hat', 'Bass'][laneIndex]} step ${step + 1}" aria-pressed="${on}" data-lane="${laneIndex}" data-step="${step}" class="${beatPlaying && beatStep === step ? 'current' : ''}"></button>`).join('')}</div>`).join('')
+  grid.querySelectorAll<HTMLButtonElement>('button').forEach(button => button.onclick = () => { if (beatSection === 'a') beatPattern = toggleStep(beatPattern, Number(button.dataset.lane), Number(button.dataset.step)); else beatPatternB = toggleStep(beatPatternB, Number(button.dataset.lane), Number(button.dataset.step)); drawBeat() })
 }
 
 function stopBeat() {
@@ -248,11 +278,11 @@ function openBeat() {
 
 function toggleBeat() {
   if (beatPlaying) { stopBeat(); drawBeat(); return }
-  stopPreview(); beatPlaying = true; beatStep = 0
+  stopPreview(); beatPlaying = true; beatStep = 0; beatBar = 0
   $<HTMLButtonElement>('beat-play').textContent = '■ Stop beat'
   $<HTMLButtonElement>('audio').innerHTML = '♫ <span>BEAT</span>'
   $<HTMLButtonElement>('audio').setAttribute('aria-label', 'Beat playing')
-  const pulse = () => { beatPattern.forEach((row, lane) => { if (row[beatStep]) beatVoice(lane) }); drawBeat(); beatStep = (beatStep + 1) % 8 }
+  const pulse = () => { const pattern = beatBar % 2 ? beatPatternB : beatPattern; pattern.forEach((row, lane) => { if (row[beatStep]) beatVoice(lane) }); drawBeat(); beatStep = (beatStep + 1) % 8; if (beatStep === 0) beatBar++ }
   pulse(); beatTimer = window.setInterval(pulse, 312.5)
 }
 
@@ -328,6 +358,50 @@ function leaveStudio() {
   $<HTMLElement>('scene-name').textContent = 'MUSIC SQUARE'
 }
 
+function enterReleaseHouse() {
+  if (getNearby('square', avatar.position.x, avatar.position.z) !== 'releaseEntrance') { toast('Walk to the Release House entrance first'); return }
+  showReleaseHouse()
+}
+
+function showReleaseHouse() {
+  if (!releaseRoom) { releaseRoom = makeReleaseHouse(); scene.add(releaseRoom) }
+  square.visible = false; releaseRoom.visible = true
+  location = 'release'; $<HTMLElement>('game').dataset.location = 'release'
+  avatar.position.set(0, 0, 7); yaw = 0; camera.position.set(0, 3.7, 14)
+  sun.intensity = 1.05; ambient.intensity = 1.45
+  scene.background = new THREE.Color('#251d2e'); scene.fog = new THREE.Fog('#251d2e', 24, 56)
+  routeTarget = null; $<HTMLElement>('route').hidden = true; nearby = null; closeSheets()
+  $<HTMLElement>('venue-card').hidden = true
+  $<HTMLElement>('place-name').textContent = 'Release House · Lagos'
+  $<HTMLElement>('scene-name').textContent = 'RELEASE HOUSE'
+  toast('Walk to Record Intake to prepare a private sleeve')
+}
+
+function leaveReleaseHouse() {
+  if (getNearby('release', avatar.position.x, avatar.position.z) !== 'releaseExit') { toast('Walk to the exit first'); return }
+  releaseRoom!.visible = false; square.visible = true
+  location = 'square'; $<HTMLElement>('game').dataset.location = 'square'
+  avatar.position.set(-13, 0, -6.7); yaw = 0; camera.position.set(-13, 3.8, .3)
+  sun.intensity = 2; ambient.intensity = 1.9
+  scene.background = new THREE.Color('#413243'); scene.fog = new THREE.Fog('#413243', 32, 72)
+  nearby = null; closeSheets(); $<HTMLElement>('place-name').textContent = 'Music Square · Lagos'
+  $<HTMLElement>('scene-name').textContent = 'MUSIC SQUARE'
+}
+
+function renderReleaseDraft(syncInputs = true) {
+  if (syncInputs) { $<HTMLInputElement>('release-title').value = releaseDraft.title; $<HTMLInputElement>('release-artist').value = releaseDraft.artist }
+  $<HTMLElement>('release-cover-title').textContent = releaseDraft.title || 'UNTITLED'
+  $<HTMLElement>('release-cover-artist').textContent = releaseDraft.artist || 'ARTIST NAME'
+  $<HTMLElement>('release-cover').dataset.art = releaseDraft.artwork
+  document.querySelectorAll<HTMLButtonElement>('[data-art]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.art === releaseDraft.artwork)))
+  $<HTMLElement>('release-blockers').replaceChildren(...releaseBlockers(releaseDraft, !!masterBlob).map(item => { const li = document.createElement('li'); li.textContent = item; return li }))
+  $<HTMLButtonElement>('release-play').hidden = !masterBlob
+}
+
+function openReleaseDraft() {
+  closeSheets(); sheet = 'action'; $<HTMLElement>('release-sheet').hidden = false; renderReleaseDraft()
+}
+
 function leaveVenue() {
   if (getNearby('venue', avatar.position.x, avatar.position.z) !== 'venueExit') { toast('Walk to the exit first'); return }
   palmRoom!.root.visible = false
@@ -354,6 +428,9 @@ function interact() {
   if (nearby === 'studio') openAction('City Studio', 'Enter the free studio and walk to the producer desk. The local beat demo uses original synthesized sounds.', 'Enter studio', enterStudio)
   if (nearby === 'studioDesk') openBeat()
   if (nearby === 'studioExit') openAction('Exit City Studio', 'Walk back to Music Square. Your local beat draft stays on this device.', 'Return to square', leaveStudio)
+  if (nearby === 'releaseEntrance') openAction('Release House', 'Enter the record intake and artwork room. Public release is unavailable until a finished rights-cleared master and server review exist.', 'Enter Release House', enterReleaseHouse)
+  if (nearby === 'releaseIntake') openReleaseDraft()
+  if (nearby === 'releaseExit') openAction('Exit Release House', 'Walk back to Music Square. Your private sleeve draft remains on this device.', 'Return to square', leaveReleaseHouse)
   if (nearby === 'palmEntrance') openAction('Palm Room', 'Go through the door to inspect a small walkable music venue. No lease or purchase occurs.', 'Enter venue', enterVenue)
   if (nearby === 'stage') openAction('Stage setup preview', equipmentPreviewVisible ? 'A temporary floor light preview is visible at this snap point. It is not owned, installed, or saved.' : 'Preview a floor light at this snap point. Actual installation requires authorised inventory and a server save.', equipmentPreviewVisible ? 'Hide preview' : 'Show floor light preview', () => { equipmentPreviewVisible = !equipmentPreviewVisible; palmRoom?.setEquipmentPreview(equipmentPreviewVisible); toast(equipmentPreviewVisible ? 'Temporary preview shown' : 'Preview hidden'); refreshContext(); interact() })
   if (nearby === 'venueExit') openAction('Exit Palm Room', 'Walk back out to Music Square. Your local stage preview state stays available for this session.', 'Return to square', leaveVenue)
@@ -368,6 +445,9 @@ function refreshContext() {
     studio: ['CITY STUDIO', 'Enter the free beat room'],
     studioDesk: ['BEAT DESK', 'Tap pads and make a private beat'],
     studioExit: ['MUSIC SQUARE', 'Leave City Studio'],
+    releaseEntrance: ['RELEASE HOUSE', 'Enter the record intake'],
+    releaseIntake: ['RECORD INTAKE', 'Prepare a private release sleeve'],
+    releaseExit: ['MUSIC SQUARE', 'Leave Release House'],
     palmEntrance: ['PALM ROOM', 'Enter the music venue'],
     stage: ['STAGE PREVIEW', equipmentPreviewVisible ? 'Temporary floor light shown' : 'Inspect one floor-light snap point'],
     venueExit: ['MUSIC SQUARE', 'Leave the venue'],
@@ -380,17 +460,19 @@ function refreshContext() {
 function renderDesk() {
   const cards = $<HTMLDivElement>('desk-cards')
   const intro = $<HTMLElement>('desk-intro')
-  intro.textContent = location === 'venue' ? 'Inspect the space before making any commitment.' : location === 'studio' ? 'Make a private beat at the producer desk.' : 'Your music journey, one step at a time.'
+  intro.textContent = location === 'venue' ? 'Inspect the space before making any commitment.' : location === 'studio' ? 'Make a private beat at the producer desk.' : location === 'release' ? 'Prepare a private sleeve at Record Intake.' : 'Your music journey, one step at a time.'
   if (deskTab === 'today') {
-    cards.innerHTML = location === 'studio'
+    cards.innerHTML = location === 'release'
+      ? `<article><div class="card-icon">▣</div><div><b>Prepare your release</b><p>Set a title, artist name and draft artwork at Record Intake.</p></div><button data-route="releaseIntake">Take me there ↗</button></article><article><div class="card-icon">⌂</div><div><b>Return to the square</b><p>Walk to the exit when finished.</p></div><button data-route="releaseExit">Show exit ↗</button></article>`
+      : location === 'studio'
       ? `<article><div class="card-icon">♫</div><div><b>Make a beat</b><p>Walk to the desk and arrange four original sounds.</p></div><button data-route="studioDesk">Take me there ↗</button></article><article><div class="card-icon">⌂</div><div><b>Return to the square</b><p>Your local pattern stays on this device.</p></div><button data-route="studioExit">Show exit ↗</button></article>`
       : location === 'venue'
       ? `<article><div class="card-icon">☼</div><div><b>Inspect the stage</b><p>Preview one floor-light snap point.</p></div><button data-route="stage">Take me there ↗</button></article><article><div class="card-icon">⌂</div><div><b>Explore freely</b><p>Walk the room, then return to the square.</p></div><button data-close>Keep exploring</button></article>`
-      : `<article><div class="card-icon">♫</div><div><b>Find a sound</b><p>${savedPreview ? 'Your preview is saved. Visit the station again anytime.' : 'Discover an original preview at the listening station.'}</p></div><button data-route="kiosk">Take me there ↗</button></article><article><div class="card-icon">♛</div><div><b>Explore Palm Room</b><p>Walk to the venue entrance and inspect the stage.</p></div><button data-route="palmEntrance">Take me there ↗</button></article><article><div class="card-icon">▤</div><div><b>City Studio</b><p>Enter the free beat room.</p></div><button data-route="studio">Show route ↗</button></article>`
+      : `<article><div class="card-icon">♫</div><div><b>Find a sound</b><p>${savedPreview ? 'Your preview is saved. Visit the station again anytime.' : 'Discover an original preview at the listening station.'}</p></div><button data-route="kiosk">Take me there ↗</button></article><article><div class="card-icon">▤</div><div><b>City Studio</b><p>Make a private beat.</p></div><button data-route="studio">Show route ↗</button></article><article><div class="card-icon">▣</div><div><b>Release House</b><p>Prepare a private sleeve draft.</p></div><button data-route="releaseEntrance">Show route ↗</button></article><article><div class="card-icon">♛</div><div><b>Explore Palm Room</b><p>Inspect the venue stage.</p></div><button data-route="palmEntrance">Show route ↗</button></article>`
   } else if (deskTab === 'ask') {
-    cards.innerHTML = `<div class="ask-panel"><b>What can I do here?</b><p>${location === 'venue' ? 'Inspect the venue and preview one floor light. Leasing needs a verified server quote.' : location === 'studio' ? 'Make a private beat at the producer desk, then walk to the exit.' : 'Listen at the kiosk, walk to Palm Room, or enter City Studio. All routes require walking.'}</p><button data-route="${location === 'venue' ? 'stage' : location === 'studio' ? 'studioDesk' : 'palmEntrance'}">Show a next move ↗</button></div>`
+    cards.innerHTML = `<div class="ask-panel"><b>What can I do here?</b><p>${location === 'venue' ? 'Inspect the venue and preview one floor light. Leasing needs a verified server quote.' : location === 'studio' ? 'Make a private beat at the producer desk, then walk to the exit.' : location === 'release' ? 'Prepare a private sleeve. A finished master and rights review are required before submission.' : 'Listen, make a beat, prepare a release draft, or inspect Palm Room. Routes require walking.'}</p><button data-route="${location === 'venue' ? 'stage' : location === 'studio' ? 'studioDesk' : location === 'release' ? 'releaseIntake' : 'studio'}">Show a next move ↗</button></div>`
   } else {
-    cards.innerHTML = `<div class="ask-panel"><b>Your local session</b><p>${savedPreview ? '♫ Tone preview saved for this session.' : 'No tone preview saved yet.'}</p><p>${beatDraftSaved ? '♫ A private beat pattern is saved on this device.' : 'No beat pattern saved yet.'}</p><p>${equipmentPreviewVisible ? '☼ Temporary floor-light preview is visible.' : 'No stage preview is shown.'}</p><p>${routeTarget ? '↗ A walking route is active.' : 'No walking route selected.'}</p></div>`
+    cards.innerHTML = `<div class="ask-panel"><b>Your local session</b><p>${savedPreview ? '♫ Tone preview saved for this session.' : 'No tone preview saved yet.'}</p><p>${beatDraftSaved ? '♫ A private beat pattern is saved on this device.' : 'No beat pattern saved yet.'}</p><p>${releaseDraft.title ? '▣ Private sleeve: ' + releaseDraft.title.replaceAll('&', '&amp;').replaceAll('<', '&lt;') : 'No release sleeve saved yet.'}</p><p>${equipmentPreviewVisible ? '☼ Temporary floor-light preview is visible.' : 'No stage preview is shown.'}</p><p>${routeTarget ? '↗ A walking route is active.' : 'No walking route selected.'}</p></div>`
   }
   cards.querySelectorAll<HTMLButtonElement>('[data-route]').forEach(button => button.addEventListener('click', () => setRoute(button.dataset.route as Hotspot)))
   cards.querySelectorAll<HTMLButtonElement>('[data-close]').forEach(button => button.addEventListener('click', closeSheets))
@@ -412,7 +494,7 @@ function openMap() {
   toast(location === 'venue' ? 'Stage setup is in front of you' : 'Choose a route from Desk')
 }
 
-$<HTMLButtonElement>('audio').onclick = () => playing ? stopPreview() : toast('Choose Play at the listening station')
+$<HTMLButtonElement>('audio').onclick = () => playing ? stopPreview() : masterPlayer ? stopMasterPreview() : toast('Choose Play at a listening station or music desk')
 $<HTMLButtonElement>('desk-trigger').onclick = () => openDesk()
 $<HTMLButtonElement>('desk-close').onclick = closeSheets
 $<HTMLButtonElement>('action-close').onclick = closeSheets
@@ -422,10 +504,37 @@ $<HTMLButtonElement>('nav-map').onclick = openMap
 $<HTMLButtonElement>('nav-phone').onclick = () => { closeSheets(); $<HTMLElement>('venue-card').hidden = true; $<HTMLElement>('display-sheet').hidden = false; sheet = 'action'; updateMetrics() }
 $<HTMLButtonElement>('beat-close').onclick = closeSheets
 $<HTMLButtonElement>('beat-play').onclick = toggleBeat
-$<HTMLButtonElement>('beat-save').onclick = () => { localStorage.setItem('scene-beat-draft', JSON.stringify(beatPattern)); beatDraftSaved = true; $<HTMLElement>('beat-status').textContent = 'Private pattern saved on this device. Release and sharing are unavailable.'; toast('Local beat draft saved') }
+document.querySelectorAll<HTMLButtonElement>('[data-section]').forEach(button => button.onclick = () => { beatSection = button.dataset.section as 'a' | 'b'; drawBeat() })
+$<HTMLButtonElement>('beat-save').onclick = () => { localStorage.setItem('scene-beat-arrangement', JSON.stringify({ a: beatPattern, b: beatPatternB })); beatDraftSaved = true; $<HTMLElement>('beat-status').textContent = 'Two-section pattern saved on this device.'; toast('Local beat pattern saved') }
+$<HTMLButtonElement>('beat-render').onclick = async () => {
+  if (!sectionsDiffer(beatPattern, beatPatternB)) { $<HTMLElement>('beat-status').textContent = 'Change Section B so the arrangement has two distinct sections.'; return }
+  $<HTMLElement>('beat-status').textContent = 'Rendering your 30-second master…'
+  try {
+    const wav = renderMasterWav(beatPattern, beatPatternB)
+    const blob = new Blob([wav.buffer as ArrayBuffer], { type: 'audio/wav' })
+    await saveLocalMaster(blob)
+    masterBlob = blob
+    localStorage.setItem('scene-beat-arrangement', JSON.stringify({ a: beatPattern, b: beatPatternB }))
+    beatDraftSaved = true
+    $<HTMLElement>('beat-status').textContent = '30-second private master saved on this device. Visit Release House.'
+    toast('Private master ready · visit Release House')
+  } catch { $<HTMLElement>('beat-status').textContent = 'Could not save the master on this device. Try again.' }
+}
+$<HTMLButtonElement>('release-close').onclick = closeSheets
+$<HTMLButtonElement>('release-save').onclick = () => { localStorage.setItem('scene-release-draft', JSON.stringify(releaseDraft)); $<HTMLElement>('release-status').textContent = 'Private sleeve saved on this device. Not submitted or scheduled.'; toast('Private sleeve draft saved') }
+$<HTMLButtonElement>('release-play').onclick = () => {
+  if (!masterBlob) return
+  stopMasterPreview()
+  masterAudioUrl = URL.createObjectURL(masterBlob)
+  masterPlayer = new Audio(masterAudioUrl)
+  masterPlayer.onended = stopMasterPreview
+  void masterPlayer.play().then(() => { $<HTMLButtonElement>('audio').innerHTML = '♫ <span>ON</span>'; $<HTMLButtonElement>('audio').setAttribute('aria-label', 'Audio on'); $<HTMLElement>('release-status').textContent = 'Playing your private master. Not submitted or scheduled.' }).catch(() => { $<HTMLElement>('release-status').textContent = 'Audio was blocked. Tap Play again.'; stopMasterPreview() })
+}
+for (const field of ['title', 'artist'] as const) $<HTMLInputElement>(`release-${field}`).oninput = event => { releaseDraft[field] = (event.target as HTMLInputElement).value; renderReleaseDraft(false) }
+document.querySelectorAll<HTMLButtonElement>('[data-art]').forEach(button => button.onclick = () => { releaseDraft.artwork = button.dataset.art as ReleaseDraft['artwork']; renderReleaseDraft(false) })
 $<HTMLButtonElement>('display-close').onclick = closeSheets
 document.querySelectorAll<HTMLButtonElement>('[data-quality]').forEach(button => button.onclick = () => { quality = button.dataset.quality as Quality; localStorage.setItem('scene-quality', quality); applyQuality(); updateMetrics() })
-$<HTMLButtonElement>('nav-create').onclick = () => location === 'studio' ? setRoute('studioDesk') : location === 'square' ? setRoute('studio') : toast('Walk to City Studio from Music Square')
+$<HTMLButtonElement>('nav-create').onclick = () => location === 'studio' ? setRoute('studioDesk') : location === 'release' ? setRoute('releaseIntake') : location === 'square' ? setRoute('studio') : toast('Walk to City Studio from Music Square')
 $<HTMLButtonElement>('nav-people').onclick = () => toast('Real player presence arrives with the multiplayer service')
 $<HTMLButtonElement>('home').onclick = () => { closeSheets(); $<HTMLElement>('venue-card').hidden = true }
 $<HTMLButtonElement>('route-close').onclick = () => { routeTarget = null; $<HTMLElement>('route').hidden = true }
@@ -435,6 +544,7 @@ $<HTMLButtonElement>('view-setup').onclick = () => { $<HTMLElement>('venue-card'
 document.querySelectorAll<HTMLButtonElement>('.desk-tabs button').forEach(button => button.addEventListener('click', () => openDesk(button.dataset.tab as 'today' | 'ask' | 'plans')))
 
 window.addEventListener('keydown', event => {
+  if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return
   const key = event.key.toLowerCase()
   if (['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(key)) event.preventDefault()
   keys.add(key)
@@ -457,13 +567,16 @@ function movePad(event: PointerEvent) {
 pad.addEventListener('pointerdown', event => { pad.setPointerCapture(event.pointerId); movePad(event) })
 pad.addEventListener('pointermove', event => { if (pad.hasPointerCapture(event.pointerId)) movePad(event) })
 for (const name of ['pointerup', 'pointercancel']) pad.addEventListener(name, () => { touchX = touchY = 0; stick.style.transform = 'translate(0,0)' })
-window.addEventListener('pagehide', () => { stopPreview(); stopBeat() })
+window.addEventListener('pagehide', () => { stopPreview(); stopBeat(); stopMasterPreview() })
 
 // Development-only visual entry point for inspecting the room in a browser.
 // Normal gameplay still requires walking to the physical Palm Room entrance.
 if (import.meta.env.DEV) {
   const qa = new URLSearchParams(window.location.search).get('qa')
-  if (qa === 'studio' || qa === 'beat') {
+  if (qa === 'release' || qa === 'intake') {
+    showReleaseHouse()
+    if (qa === 'intake') { avatar.position.set(0, 0, -4.2); camera.position.set(0, 3.6, 3) }
+  } else if (qa === 'studio' || qa === 'beat') {
     showStudio()
     if (qa === 'beat') { avatar.position.set(0, 0, -4.2); camera.position.set(0, 3.6, 3) }
   } else if (qa === 'palm' || qa === 'stage') {
@@ -507,7 +620,7 @@ function frame() {
   const next = getNearby(location, avatar.position.x, avatar.position.z)
   if (next !== nearby) { nearby = next; refreshContext() }
   if (routeTarget) {
-    const points: Record<Hotspot, [number, number]> = { kiosk: [-8, 2], studio: [13, -8], palmEntrance: [10, 2], stage: [0, -7], venueExit: [-10, 9], studioDesk: [0, -5.5], studioExit: [0, 9] }
+    const points: Record<Hotspot, [number, number]> = { kiosk: [-8, 2], studio: [13, -8], palmEntrance: [10, 2], stage: [0, -7], venueExit: [-10, 9], studioDesk: [0, -5.5], studioExit: [0, 9], releaseEntrance: [-13, -8], releaseIntake: [0, -5.5], releaseExit: [0, 9] }
     const [x, z] = points[routeTarget]
     const distance = Math.round(Math.hypot(x - avatar.position.x, z - avatar.position.z))
     $<HTMLElement>('route-distance').textContent = distance < 3 ? 'Entrance in reach · interact' : `${distance} m · walk through the world`

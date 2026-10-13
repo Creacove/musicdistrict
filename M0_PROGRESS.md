@@ -54,6 +54,14 @@ The repository now has a root `AGENTS.md` pointing to the authoritative handoff.
 
 **Still required for M0:** measured production cold and return visits on target Android and iPhone hardware, sustained frame times and heat, quality fallback, actual byte transfer, audio behavior, rigged avatar/animations, cleared music, one reliable travel transition, and authoritative multiplayer/reconnect. The in-browser measurements only establish a starting baseline.
 
+## Release House and local master — 13 October 2026
+
+Following Chapter 02 Artist §7.3 and the V10 reference, Music Square now has a Release House entrance and a separate walkable 3D intake room with an artwork wall, record counter and listening station. The intake screen supports a private sleeve title, artist name and draft colour, stored locally. Its checklist identifies missing items and keeps public submission and Friday scheduling unavailable until authorised rights, contributor and server services exist. V10's pictured listener forecasts, player count and money figures were not implemented as game data.
+
+City Studio now has distinct A/B beat sections and renders an original 30-second mono WAV. A changed second section is required. The private master is stored in IndexedDB and can be played at Release House; a successful local render removes the master blocker there. This is an original synthesized prototype, not a cleared production loop pack or public song. The browser showed the Studio render success, then showed the local master available at Release House with the rights and server blockers still present. The browser also showed playback start. The normal walk through both exterior doors still needs a browser movement pass; the inspection used development-only visual entry flags.
+
+Verification after the final audio-control change: 8 tests passed, the production build succeeded, and the in-app browser showed the master loading after reload, Play changing audio to ON, and the header control returning it to OFF. The main JS bundle remains above Vite's 500 kB warning threshold; mobile production transfer and device performance remain unmeasured.
+
 ## City Studio playable slice — 13 October 2026
 
 Following Master GDD §§3, 6 and Chapter 02 Artist (ART-21 and Slice 0/1), City Studio is now a separate walkable 3D room reached through the physical square door. Its producer desk opens an eight-step, four-lane beat pattern. Players can change pads, play original synthesized sounds, stop playback, and save one private pattern in browser local storage. Desk routes to the studio door or desk. The vocal booth is a spatial landmark only; no microphone request, public release, chart entry, or rights claim is made.

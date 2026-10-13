@@ -168,6 +168,9 @@ export function makeSquare() {
   box(root, 9, 5.5, 4, charcoal, 14, 2.75, -12)
   box(root, 3, 3.8, .09, violet, 13, 1.9, -9.9)
   sign(root, ['CITY STUDIO'], 7.5, 1.1, 14, 4.75, -9.86, { bg: '#22202d', ink: '#e6d6fa', size: 102 })
+  box(root, 8.5, 5.5, 4, charcoal, -14, 2.75, -12)
+  box(root, 3.2, 3.8, .12, mat('#6c395f', .1, '#35132b'), -13, 1.9, -9.85)
+  sign(root, ['RELEASE HOUSE'], 7.5, 1.1, -14, 4.7, -9.78, { bg: '#201b28', ink: '#ffc1ec', size: 98 })
   // Designed street furniture and warm pools of light.
   for (const [x, z] of [[-17, 3], [19, 5], [5, -6]]) palm(root, x, z)
   for (const [x, z] of [[-14, -5], [3, 8], [18, -7]]) lamp(root, x, z)

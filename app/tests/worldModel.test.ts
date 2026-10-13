@@ -21,3 +21,9 @@ test('studio desk and exit require a physical position inside the studio', () =>
   assert.equal(getNearby('studio', 0, 9), 'studioExit')
   assert.equal(getNearby('square', 0, -5), null)
 })
+
+test('release intake belongs to Release House and cannot be used from the square', () => {
+  assert.equal(getNearby('square', -13, -8), 'releaseEntrance')
+  assert.equal(getNearby('release', 0, -5), 'releaseIntake')
+  assert.equal(getNearby('square', 0, -5), null)
+})
