@@ -8,6 +8,7 @@ import { loadLocalMaster, saveLocalMaster } from './localMaster.ts'
 import { makeReleaseHouse } from './releaseWorld.ts'
 import { blankReleaseDraft, releaseBlockers, validReleaseDraft, type ReleaseDraft } from './releaseDraft.ts'
 import { connectPresence, type PresencePlayer } from './presence.ts'
+import { openGuest, saveGuestPreview } from './guest.ts'
 import './style.css'
 
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
@@ -225,6 +226,10 @@ try { const saved = JSON.parse(localStorage.getItem('scene-beat-draft') || 'null
 try { const saved = JSON.parse(localStorage.getItem('scene-beat-arrangement') || 'null'); if (validPattern(saved?.a) && validPattern(saved?.b)) { beatPattern = saved.a; beatPatternB = saved.b; beatDraftSaved = true } } catch { /* invalid local arrangement starts fresh */ }
 try { const saved = JSON.parse(localStorage.getItem('scene-release-draft') || 'null'); if (validReleaseDraft(saved)) releaseDraft = saved } catch { /* invalid local draft starts fresh */ }
 try { savedPreview = localStorage.getItem('scene-saved-square-sketch') === '1'; previewOpened = savedPreview } catch { /* storage may be unavailable */ }
+void openGuest().then(async guest => {
+  if (savedPreview && !guest.saves.includes('square-sketch')) await saveGuestPreview()
+  if (guest.saves.includes('square-sketch')) { savedPreview = true; previewOpened = true; renderMiniPlayer() }
+}).catch(() => { /* offline guests retain the local demo save */ })
 void loadLocalMaster().then(blob => { masterBlob = blob; if (!$<HTMLElement>('release-sheet').hidden) renderReleaseDraft(false) }).catch(() => { /* private mode may block local storage */ })
 let audio: AudioContext | null = null, audioTimer: number | undefined
 
@@ -343,6 +348,7 @@ function savePreview() {
   try { localStorage.setItem('scene-saved-square-sketch', '1') } catch { toast('Storage unavailable; saved for this session only') }
   renderMiniPlayer()
   toast('Square Sketch saved privately')
+  void saveGuestPreview().catch(() => toast('Saved on this device; server sync unavailable'))
 }
 
 function renderMiniPlayer() {
