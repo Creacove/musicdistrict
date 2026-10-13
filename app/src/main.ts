@@ -2,6 +2,8 @@ import * as THREE from 'three'
 import { getNearby, type Hotspot, type Location } from './worldModel.ts'
 import { makePalmRoom, makeSquare } from './world.ts'
 import { reportedTransferBytes, summarizeFrames } from './performance.ts'
+import { makeStudio } from './studioWorld.ts'
+import { starterPattern, toggleStep, validPattern, type BeatPattern } from './beatPattern.ts'
 import './style.css'
 
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
@@ -51,6 +53,14 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
     <dl class="runtime-metrics"><div><dt>Frame time</dt><dd id="frame-metric">Measuring…</dd></div><div><dt>Reported transfer</dt><dd id="transfer-metric">Measuring…</dd></div><div><dt>Avatar ready</dt><dd id="ready-metric">Measuring…</dd></div><div><dt>Audio before Play</dt><dd>0 B · generated preview</dd></div></dl>
     <p class="metric-note">This development server sends unbundled files; its transfer total is not a production-load result. Real-phone FPS, thermals, and network recovery remain untested.</p>
   </section>
+  <section id="beat-sheet" class="beat-sheet" hidden aria-label="City Studio beat desk">
+    <button id="beat-close" class="icon-close" aria-label="Close beat desk">×</button>
+    <small class="eyebrow">CITY STUDIO · LOCAL DEMO</small><h2>Make a beat</h2>
+    <p>Tap pads to arrange four original synthesized sounds. This private pattern stays on this device.</p>
+    <div id="beat-grid" class="beat-grid"></div>
+    <div class="beat-actions"><button id="beat-play" class="green-button">▶ Play beat</button><button id="beat-save">Save local draft</button></div>
+    <small id="beat-status">No release, upload, or public sharing is available.</small>
+  </section>
 
   <div id="toast" class="toast" role="status"></div>
   <div id="pad" class="pad" aria-label="Touch movement pad"><div id="stick"></div></div>
@@ -86,6 +96,7 @@ world.appendChild(renderer.domElement)
 const square = makeSquare()
 scene.add(square)
 let palmRoom: ReturnType<typeof makePalmRoom> | null = null
+let studioRoom: ReturnType<typeof makeStudio> | null = null
 let location: Location = 'square'
 const ambient = new THREE.HemisphereLight('#d9e2ed', '#72523d', 1.9)
 scene.add(ambient)
@@ -145,6 +156,8 @@ let routeTarget: Hotspot | null = null
 let sheet: 'none' | 'desk' | 'action' = 'none'
 let deskTab: 'today' | 'ask' | 'plans' = 'today'
 let savedPreview = false, equipmentPreviewVisible = false, playing = false
+let beatPattern: BeatPattern = starterPattern(), beatPlaying = false, beatTimer: number | undefined, beatStep = 0, beatDraftSaved = false
+try { const saved = JSON.parse(localStorage.getItem('scene-beat-draft') || 'null'); if (validPattern(saved)) { beatPattern = saved; beatDraftSaved = true } } catch { /* invalid local draft starts fresh */ }
 let audio: AudioContext | null = null, audioTimer: number | undefined
 
 function toast(text: string) {
@@ -158,6 +171,8 @@ function closeSheets() {
   $<HTMLElement>('desk-sheet').hidden = true
   $<HTMLElement>('action-sheet').hidden = true
   $<HTMLElement>('display-sheet').hidden = true
+  $<HTMLElement>('beat-sheet').hidden = true
+  stopBeat()
   sheet = 'none'
   refreshContext()
 }
@@ -165,7 +180,7 @@ function closeSheets() {
 function setRoute(target: Hotspot) {
   routeTarget = target
   $<HTMLElement>('route').hidden = false
-  $<HTMLElement>('route-title').textContent = target === 'palmEntrance' ? 'PALM ROOM' : target === 'stage' ? 'STAGE SETUP' : target === 'studio' ? 'CITY STUDIO' : 'LISTENING STATION'
+  $<HTMLElement>('route-title').textContent = target === 'palmEntrance' ? 'PALM ROOM' : target === 'stage' ? 'STAGE SETUP' : target === 'studio' ? 'CITY STUDIO' : target === 'studioDesk' ? 'BEAT DESK' : target === 'studioExit' ? 'STUDIO EXIT' : target === 'venueExit' ? 'VENUE EXIT' : 'LISTENING STATION'
   closeSheets()
   toast('Follow the world marker and walk there')
 }
@@ -198,6 +213,47 @@ function stopPreview() {
   window.clearInterval(audioTimer)
   $<HTMLButtonElement>('audio').innerHTML = '♫ <span>OFF</span>'
   $<HTMLButtonElement>('audio').setAttribute('aria-label', 'Audio off')
+}
+
+function beatVoice(lane: number) {
+  audio ??= new AudioContext()
+  void audio.resume()
+  const at = audio.currentTime, oscillator = audio.createOscillator(), gain = audio.createGain()
+  oscillator.type = lane === 2 ? 'square' : lane === 1 ? 'triangle' : 'sine'
+  oscillator.frequency.setValueAtTime([125, 240, 680, 164][lane], at)
+  oscillator.frequency.exponentialRampToValueAtTime([48, 120, 420, 150][lane], at + .14)
+  gain.gain.setValueAtTime(.0001, at)
+  gain.gain.exponentialRampToValueAtTime(lane === 2 ? .018 : .065, at + .008)
+  gain.gain.exponentialRampToValueAtTime(.0001, at + (lane === 3 ? .34 : .18))
+  oscillator.connect(gain).connect(audio.destination)
+  oscillator.start(at); oscillator.stop(at + .36)
+}
+
+function drawBeat() {
+  const grid = $<HTMLDivElement>('beat-grid')
+  grid.innerHTML = beatPattern.map((lane, laneIndex) => `<div class="beat-row"><b>${['Kick', 'Snare', 'Hat', 'Bass'][laneIndex]}</b>${lane.map((on, step) => `<button aria-label="${['Kick', 'Snare', 'Hat', 'Bass'][laneIndex]} step ${step + 1}" aria-pressed="${on}" data-lane="${laneIndex}" data-step="${step}" class="${beatPlaying && beatStep === step ? 'current' : ''}"></button>`).join('')}</div>`).join('')
+  grid.querySelectorAll<HTMLButtonElement>('button').forEach(button => button.onclick = () => { beatPattern = toggleStep(beatPattern, Number(button.dataset.lane), Number(button.dataset.step)); drawBeat() })
+}
+
+function stopBeat() {
+  beatPlaying = false; window.clearInterval(beatTimer)
+  const button = $<HTMLButtonElement>('beat-play')
+  if (button) button.textContent = '▶ Play beat'
+  if (!playing) { $<HTMLButtonElement>('audio').innerHTML = '♫ <span>OFF</span>'; $<HTMLButtonElement>('audio').setAttribute('aria-label', 'Audio off') }
+}
+
+function openBeat() {
+  closeSheets(); sheet = 'action'; $<HTMLElement>('beat-sheet').hidden = false; drawBeat()
+}
+
+function toggleBeat() {
+  if (beatPlaying) { stopBeat(); drawBeat(); return }
+  stopPreview(); beatPlaying = true; beatStep = 0
+  $<HTMLButtonElement>('beat-play').textContent = '■ Stop beat'
+  $<HTMLButtonElement>('audio').innerHTML = '♫ <span>BEAT</span>'
+  $<HTMLButtonElement>('audio').setAttribute('aria-label', 'Beat playing')
+  const pulse = () => { beatPattern.forEach((row, lane) => { if (row[beatStep]) beatVoice(lane) }); drawBeat(); beatStep = (beatStep + 1) % 8 }
+  pulse(); beatTimer = window.setInterval(pulse, 312.5)
 }
 
 function openAction(title: string, copy: string, primary: string, onPrimary: () => void, secondary?: { label: string; action: () => void }) {
@@ -242,6 +298,36 @@ function showVenue() {
   toast('Palm Room preview · explore the stage')
 }
 
+function enterStudio() {
+  if (getNearby('square', avatar.position.x, avatar.position.z) !== 'studio') { toast('Walk to the City Studio door first'); return }
+  showStudio()
+}
+
+function showStudio() {
+  if (!studioRoom) { studioRoom = makeStudio(); scene.add(studioRoom) }
+  square.visible = false; studioRoom.visible = true
+  location = 'studio'; $<HTMLElement>('game').dataset.location = 'studio'
+  avatar.position.set(0, 0, 7); yaw = 0; camera.position.set(0, 3.7, 14)
+  sun.intensity = 1.05; ambient.intensity = 1.45
+  scene.background = new THREE.Color('#28202f'); scene.fog = new THREE.Fog('#28202f', 24, 56)
+  routeTarget = null; $<HTMLElement>('route').hidden = true; nearby = null; closeSheets()
+  $<HTMLElement>('venue-card').hidden = true
+  $<HTMLElement>('place-name').textContent = 'City Studio · Lagos'
+  $<HTMLElement>('scene-name').textContent = 'CITY STUDIO'
+  toast('Walk to the producer desk and make a beat')
+}
+
+function leaveStudio() {
+  if (getNearby('studio', avatar.position.x, avatar.position.z) !== 'studioExit') { toast('Walk to the exit first'); return }
+  stopBeat(); studioRoom!.visible = false; square.visible = true
+  location = 'square'; $<HTMLElement>('game').dataset.location = 'square'
+  avatar.position.set(13, 0, -6.7); yaw = 0; camera.position.set(13, 3.8, .3)
+  sun.intensity = 2; ambient.intensity = 1.9
+  scene.background = new THREE.Color('#413243'); scene.fog = new THREE.Fog('#413243', 32, 72)
+  nearby = null; closeSheets(); $<HTMLElement>('place-name').textContent = 'Music Square · Lagos'
+  $<HTMLElement>('scene-name').textContent = 'MUSIC SQUARE'
+}
+
 function leaveVenue() {
   if (getNearby('venue', avatar.position.x, avatar.position.z) !== 'venueExit') { toast('Walk to the exit first'); return }
   palmRoom!.root.visible = false
@@ -265,7 +351,9 @@ function leaveVenue() {
 function interact() {
   if (!nearby) return
   if (nearby === 'kiosk') openAction('Listening station', 'Play an original synthesized preview. No song file downloads before you choose Play.', playing ? 'Stop preview' : 'Play preview', () => { playing ? stopPreview() : startPreview(); interact() }, { label: savedPreview ? 'Saved ✓' : 'Save preview', action: () => { savedPreview = true; toast('Saved for this session'); interact() } })
-  if (nearby === 'studio') openAction('City Studio', 'This door is a route landmark. The free music workstation follows in a later playable slice.', 'Set studio route', () => setRoute('studio'))
+  if (nearby === 'studio') openAction('City Studio', 'Enter the free studio and walk to the producer desk. The local beat demo uses original synthesized sounds.', 'Enter studio', enterStudio)
+  if (nearby === 'studioDesk') openBeat()
+  if (nearby === 'studioExit') openAction('Exit City Studio', 'Walk back to Music Square. Your local beat draft stays on this device.', 'Return to square', leaveStudio)
   if (nearby === 'palmEntrance') openAction('Palm Room', 'Go through the door to inspect a small walkable music venue. No lease or purchase occurs.', 'Enter venue', enterVenue)
   if (nearby === 'stage') openAction('Stage setup preview', equipmentPreviewVisible ? 'A temporary floor light preview is visible at this snap point. It is not owned, installed, or saved.' : 'Preview a floor light at this snap point. Actual installation requires authorised inventory and a server save.', equipmentPreviewVisible ? 'Hide preview' : 'Show floor light preview', () => { equipmentPreviewVisible = !equipmentPreviewVisible; palmRoom?.setEquipmentPreview(equipmentPreviewVisible); toast(equipmentPreviewVisible ? 'Temporary preview shown' : 'Preview hidden'); refreshContext(); interact() })
   if (nearby === 'venueExit') openAction('Exit Palm Room', 'Walk back out to Music Square. Your local stage preview state stays available for this session.', 'Return to square', leaveVenue)
@@ -277,7 +365,9 @@ function refreshContext() {
   if (!nearby) return
   const names: Record<Hotspot, [string, string]> = {
     kiosk: ['LISTEN HERE', 'Choose a preview and save it'],
-    studio: ['CITY STUDIO', 'Free creation space · coming next'],
+    studio: ['CITY STUDIO', 'Enter the free beat room'],
+    studioDesk: ['BEAT DESK', 'Tap pads and make a private beat'],
+    studioExit: ['MUSIC SQUARE', 'Leave City Studio'],
     palmEntrance: ['PALM ROOM', 'Enter the music venue'],
     stage: ['STAGE PREVIEW', equipmentPreviewVisible ? 'Temporary floor light shown' : 'Inspect one floor-light snap point'],
     venueExit: ['MUSIC SQUARE', 'Leave the venue'],
@@ -290,15 +380,17 @@ function refreshContext() {
 function renderDesk() {
   const cards = $<HTMLDivElement>('desk-cards')
   const intro = $<HTMLElement>('desk-intro')
-  intro.textContent = location === 'venue' ? 'Inspect the space before making any commitment.' : 'Your music journey, one step at a time.'
+  intro.textContent = location === 'venue' ? 'Inspect the space before making any commitment.' : location === 'studio' ? 'Make a private beat at the producer desk.' : 'Your music journey, one step at a time.'
   if (deskTab === 'today') {
-    cards.innerHTML = location === 'venue'
+    cards.innerHTML = location === 'studio'
+      ? `<article><div class="card-icon">♫</div><div><b>Make a beat</b><p>Walk to the desk and arrange four original sounds.</p></div><button data-route="studioDesk">Take me there ↗</button></article><article><div class="card-icon">⌂</div><div><b>Return to the square</b><p>Your local pattern stays on this device.</p></div><button data-route="studioExit">Show exit ↗</button></article>`
+      : location === 'venue'
       ? `<article><div class="card-icon">☼</div><div><b>Inspect the stage</b><p>Preview one floor-light snap point.</p></div><button data-route="stage">Take me there ↗</button></article><article><div class="card-icon">⌂</div><div><b>Explore freely</b><p>Walk the room, then return to the square.</p></div><button data-close>Keep exploring</button></article>`
-      : `<article><div class="card-icon">♫</div><div><b>Find a sound</b><p>${savedPreview ? 'Your preview is saved. Visit the station again anytime.' : 'Discover an original preview at the listening station.'}</p></div><button data-route="kiosk">Take me there ↗</button></article><article><div class="card-icon">♛</div><div><b>Explore Palm Room</b><p>Walk to the venue entrance and inspect the stage.</p></div><button data-route="palmEntrance">Take me there ↗</button></article><article><div class="card-icon">▤</div><div><b>City Studio</b><p>Find the studio door in Music Square.</p></div><button data-route="studio">Show route ↗</button></article>`
+      : `<article><div class="card-icon">♫</div><div><b>Find a sound</b><p>${savedPreview ? 'Your preview is saved. Visit the station again anytime.' : 'Discover an original preview at the listening station.'}</p></div><button data-route="kiosk">Take me there ↗</button></article><article><div class="card-icon">♛</div><div><b>Explore Palm Room</b><p>Walk to the venue entrance and inspect the stage.</p></div><button data-route="palmEntrance">Take me there ↗</button></article><article><div class="card-icon">▤</div><div><b>City Studio</b><p>Enter the free beat room.</p></div><button data-route="studio">Show route ↗</button></article>`
   } else if (deskTab === 'ask') {
-    cards.innerHTML = `<div class="ask-panel"><b>What can I do here?</b><p>${location === 'venue' ? 'Inspect the venue and preview one floor light. Leasing needs a verified server quote.' : 'Listen at the kiosk, walk to Palm Room, or find City Studio. All routes require walking.'}</p><button data-route="${location === 'venue' ? 'stage' : 'palmEntrance'}">Show a next move ↗</button></div>`
+    cards.innerHTML = `<div class="ask-panel"><b>What can I do here?</b><p>${location === 'venue' ? 'Inspect the venue and preview one floor light. Leasing needs a verified server quote.' : location === 'studio' ? 'Make a private beat at the producer desk, then walk to the exit.' : 'Listen at the kiosk, walk to Palm Room, or enter City Studio. All routes require walking.'}</p><button data-route="${location === 'venue' ? 'stage' : location === 'studio' ? 'studioDesk' : 'palmEntrance'}">Show a next move ↗</button></div>`
   } else {
-    cards.innerHTML = `<div class="ask-panel"><b>Your local session</b><p>${savedPreview ? '♫ Tone preview saved for this session.' : 'No tone preview saved yet.'}</p><p>${equipmentPreviewVisible ? '☼ Temporary floor-light preview is visible.' : 'No stage preview is shown.'}</p><p>${routeTarget ? '↗ A walking route is active.' : 'No walking route selected.'}</p></div>`
+    cards.innerHTML = `<div class="ask-panel"><b>Your local session</b><p>${savedPreview ? '♫ Tone preview saved for this session.' : 'No tone preview saved yet.'}</p><p>${beatDraftSaved ? '♫ A private beat pattern is saved on this device.' : 'No beat pattern saved yet.'}</p><p>${equipmentPreviewVisible ? '☼ Temporary floor-light preview is visible.' : 'No stage preview is shown.'}</p><p>${routeTarget ? '↗ A walking route is active.' : 'No walking route selected.'}</p></div>`
   }
   cards.querySelectorAll<HTMLButtonElement>('[data-route]').forEach(button => button.addEventListener('click', () => setRoute(button.dataset.route as Hotspot)))
   cards.querySelectorAll<HTMLButtonElement>('[data-close]').forEach(button => button.addEventListener('click', closeSheets))
@@ -328,9 +420,12 @@ $<HTMLButtonElement>('interact').onclick = interact
 $<HTMLButtonElement>('map-button').onclick = openMap
 $<HTMLButtonElement>('nav-map').onclick = openMap
 $<HTMLButtonElement>('nav-phone').onclick = () => { closeSheets(); $<HTMLElement>('venue-card').hidden = true; $<HTMLElement>('display-sheet').hidden = false; sheet = 'action'; updateMetrics() }
+$<HTMLButtonElement>('beat-close').onclick = closeSheets
+$<HTMLButtonElement>('beat-play').onclick = toggleBeat
+$<HTMLButtonElement>('beat-save').onclick = () => { localStorage.setItem('scene-beat-draft', JSON.stringify(beatPattern)); beatDraftSaved = true; $<HTMLElement>('beat-status').textContent = 'Private pattern saved on this device. Release and sharing are unavailable.'; toast('Local beat draft saved') }
 $<HTMLButtonElement>('display-close').onclick = closeSheets
 document.querySelectorAll<HTMLButtonElement>('[data-quality]').forEach(button => button.onclick = () => { quality = button.dataset.quality as Quality; localStorage.setItem('scene-quality', quality); applyQuality(); updateMetrics() })
-$<HTMLButtonElement>('nav-create').onclick = () => location === 'square' ? setRoute('studio') : toast('Walk to City Studio from Music Square')
+$<HTMLButtonElement>('nav-create').onclick = () => location === 'studio' ? setRoute('studioDesk') : location === 'square' ? setRoute('studio') : toast('Walk to City Studio from Music Square')
 $<HTMLButtonElement>('nav-people').onclick = () => toast('Real player presence arrives with the multiplayer service')
 $<HTMLButtonElement>('home').onclick = () => { closeSheets(); $<HTMLElement>('venue-card').hidden = true }
 $<HTMLButtonElement>('route-close').onclick = () => { routeTarget = null; $<HTMLElement>('route').hidden = true }
@@ -362,13 +457,16 @@ function movePad(event: PointerEvent) {
 pad.addEventListener('pointerdown', event => { pad.setPointerCapture(event.pointerId); movePad(event) })
 pad.addEventListener('pointermove', event => { if (pad.hasPointerCapture(event.pointerId)) movePad(event) })
 for (const name of ['pointerup', 'pointercancel']) pad.addEventListener(name, () => { touchX = touchY = 0; stick.style.transform = 'translate(0,0)' })
-window.addEventListener('pagehide', stopPreview)
+window.addEventListener('pagehide', () => { stopPreview(); stopBeat() })
 
 // Development-only visual entry point for inspecting the room in a browser.
 // Normal gameplay still requires walking to the physical Palm Room entrance.
 if (import.meta.env.DEV) {
   const qa = new URLSearchParams(window.location.search).get('qa')
-  if (qa === 'palm' || qa === 'stage') {
+  if (qa === 'studio' || qa === 'beat') {
+    showStudio()
+    if (qa === 'beat') { avatar.position.set(0, 0, -4.2); camera.position.set(0, 3.6, 3) }
+  } else if (qa === 'palm' || qa === 'stage') {
     showVenue()
     if (qa === 'stage') { avatar.position.set(0, 0, -5.2); camera.position.set(0, 3.6, 2) }
   }
@@ -396,7 +494,7 @@ function frame() {
   const speed = Math.min(1, Math.hypot(forward, side))
   if (speed > .05 && sheet === 'none') {
     const angle = Math.atan2(side, forward) + yaw, step = speed * dt * 4.25
-    const boundary = location === 'square' ? { minX: -18, maxX: 19, minZ: -12, maxZ: 16 } : { minX: -12, maxX: 12, minZ: -10.5, maxZ: 11.5 }
+    const boundary = location === 'square' ? { minX: -18, maxX: 19, minZ: -12, maxZ: 16 } : location === 'venue' ? { minX: -12, maxX: 12, minZ: -10.5, maxZ: 11.5 } : { minX: -11.5, maxX: 11.5, minZ: -10.5, maxZ: 10.5 }
     avatar.position.x = THREE.MathUtils.clamp(avatar.position.x + Math.sin(angle) * step, boundary.minX, boundary.maxX)
     avatar.position.z = THREE.MathUtils.clamp(avatar.position.z - Math.cos(angle) * step, boundary.minZ, boundary.maxZ)
     avatar.rotation.y = angle
@@ -409,7 +507,7 @@ function frame() {
   const next = getNearby(location, avatar.position.x, avatar.position.z)
   if (next !== nearby) { nearby = next; refreshContext() }
   if (routeTarget) {
-    const points: Record<Hotspot, [number, number]> = { kiosk: [-8, 2], studio: [13, -8], palmEntrance: [10, 2], stage: [0, -7], venueExit: [-10, 9] }
+    const points: Record<Hotspot, [number, number]> = { kiosk: [-8, 2], studio: [13, -8], palmEntrance: [10, 2], stage: [0, -7], venueExit: [-10, 9], studioDesk: [0, -5.5], studioExit: [0, 9] }
     const [x, z] = points[routeTarget]
     const distance = Math.round(Math.hypot(x - avatar.position.x, z - avatar.position.z))
     $<HTMLElement>('route-distance').textContent = distance < 3 ? 'Entrance in reach · interact' : `${distance} m · walk through the world`

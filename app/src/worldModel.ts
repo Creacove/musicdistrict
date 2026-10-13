@@ -1,5 +1,5 @@
-export type Location = 'square' | 'venue'
-export type Hotspot = 'kiosk' | 'studio' | 'palmEntrance' | 'stage' | 'venueExit'
+export type Location = 'square' | 'venue' | 'studio'
+export type Hotspot = 'kiosk' | 'studio' | 'palmEntrance' | 'stage' | 'venueExit' | 'studioDesk' | 'studioExit'
 
 const hotspots: Record<Location, { id: Hotspot; x: number; z: number; radius: number }[]> = {
   square: [
@@ -10,6 +10,10 @@ const hotspots: Record<Location, { id: Hotspot; x: number; z: number; radius: nu
   venue: [
     { id: 'stage', x: 0, z: -7, radius: 3.6 },
     { id: 'venueExit', x: -10, z: 9, radius: 2.8 },
+  ],
+  studio: [
+    { id: 'studioDesk', x: 0, z: -5.5, radius: 3.4 },
+    { id: 'studioExit', x: 0, z: 9, radius: 3 },
   ],
 }
 

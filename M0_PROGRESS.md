@@ -54,6 +54,12 @@ The repository now has a root `AGENTS.md` pointing to the authoritative handoff.
 
 **Still required for M0:** measured production cold and return visits on target Android and iPhone hardware, sustained frame times and heat, quality fallback, actual byte transfer, audio behavior, rigged avatar/animations, cleared music, one reliable travel transition, and authoritative multiplayer/reconnect. The in-browser measurements only establish a starting baseline.
 
+## City Studio playable slice — 13 October 2026
+
+Following Master GDD §§3, 6 and Chapter 02 Artist (ART-21 and Slice 0/1), City Studio is now a separate walkable 3D room reached through the physical square door. Its producer desk opens an eight-step, four-lane beat pattern. Players can change pads, play original synthesized sounds, stop playback, and save one private pattern in browser local storage. Desk routes to the studio door or desk. The vocal booth is a spatial landmark only; no microphone request, public release, chart entry, or rights claim is made.
+
+Five tests pass and the production build succeeds. In the live browser, the studio and beat desk rendered, a pad changed, Play switched to Stop, Save confirmed a private local draft, and the changed pad remained after reload. The browser used the development-only `?qa=beat` entry to inspect the room; the full ordinary walk from the square door remains to be browser-verified. This is a short pattern prototype, not the Chapter 02 submit-ready 30-second, two-section saved arrangement or a server-backed project. Cleared loop packs, render/export, consent, rights review and device audio checks remain open.
+
 ## Smallest next PR sequence
 
 1. **M0 renderer/input proof:** browser and real-device checks; collision, camera, joystick, load/FPS instrumentation, and one usable door.

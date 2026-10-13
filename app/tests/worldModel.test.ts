@@ -15,3 +15,9 @@ test('venue interactions belong to the venue interior', () => {
   assert.equal(getNearby('venue', 0, 9), null)
   assert.equal(getNearby('venue', -10, 9), 'venueExit')
 })
+
+test('studio desk and exit require a physical position inside the studio', () => {
+  assert.equal(getNearby('studio', 0, -5), 'studioDesk')
+  assert.equal(getNearby('studio', 0, 9), 'studioExit')
+  assert.equal(getNearby('square', 0, -5), null)
+})
