@@ -1,5 +1,7 @@
 export type CatalogueTrack = { id: string; title: string; artist: string; genre: string; duration: number; released: boolean }
 type Guest = { id: string; token: string; saves: string[] }
+export type GuestReportReason = 'harassment' | 'spam' | 'inappropriate_name' | 'other'
+export type GuestReportReceipt = { id: string; status: 'received'; createdAt: string }
 let token = ''
 const SOLO_PREVIEW = import.meta.env?.VITE_SCENE_DEMO_MODE === 'true'
 const PREVIEW_CATALOGUE: CatalogueTrack[] = [
@@ -55,4 +57,36 @@ export async function removeGuestSave(trackId: string): Promise<void> {
   if (!token) throw new Error('Guest service unavailable')
   const response = await fetch(`/api/saves/${trackId}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } })
   if (!response.ok) throw new Error('Remove save unavailable')
+}
+
+async function guestRequest(path: string, init: RequestInit = {}): Promise<Response> {
+  if (SOLO_PREVIEW || !token) throw new Error('Social safety service unavailable in solo preview')
+  const headers = new Headers(init.headers)
+  headers.set('Authorization', `Bearer ${token}`)
+  if (init.body) headers.set('Content-Type', 'application/json')
+  return fetch(path, { ...init, headers })
+}
+
+export async function fetchGuestBlocks(): Promise<string[]> {
+  if (SOLO_PREVIEW) return []
+  const response = await guestRequest('/api/blocks')
+  if (!response.ok) throw new Error('Blocked sessions unavailable')
+  const data = await response.json() as { blockedIds?: unknown }
+  return Array.isArray(data.blockedIds) ? data.blockedIds.filter((id): id is string => typeof id === 'string') : []
+}
+
+export async function blockGuest(targetGuestId: string): Promise<void> {
+  const response = await guestRequest('/api/blocks', { method: 'PUT', body: JSON.stringify({ targetGuestId }) })
+  if (!response.ok) throw new Error('Could not block this session')
+}
+
+export async function unblockGuest(targetGuestId: string): Promise<void> {
+  const response = await guestRequest(`/api/blocks/${encodeURIComponent(targetGuestId)}`, { method: 'DELETE' })
+  if (!response.ok) throw new Error('Could not unblock this session')
+}
+
+export async function submitGuestReport(input: { targetGuestId: string; reason: GuestReportReason; details: string }): Promise<GuestReportReceipt> {
+  const response = await guestRequest('/api/reports', { method: 'POST', body: JSON.stringify(input) })
+  if (!response.ok) throw new Error(response.status === 429 ? 'Report limit reached for this hour' : 'Could not send this report')
+  return response.json() as Promise<GuestReportReceipt>
 }

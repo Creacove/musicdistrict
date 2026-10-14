@@ -395,3 +395,19 @@ Added an integration test that connects 20 real WebSocket test clients to an iso
 - **Live browser:** At the 390 × 844 mobile viewport, Ask returned “Make a beat” for “Where can I make a beat?”, with the local-only explanation and a City Studio route. Selecting the route started physical movement through the world. An unsupported fame question showed the honest fallback with no route. Browser console: zero errors and warnings. Capture: `C:\Users\USER\Desktop\the-scene-ask-desk-live.png`.
 - **Verification:** Full test suite passes 67 tests, including four new query/fallback/physical-route tests. `npm run build` succeeds; `git diff --check` exits 0 aside from Git's existing LF-to-CRLF notices.
 - **Latest bundle:** Main app JS 116.45 kB (39.20 kB gzip), CSS 37.12 kB (8.65 kB gzip), Palm Room 12.19 kB (5.29 kB gzip), City Studio 1.90 kB (1.11 kB gzip), NPC 5.18 kB (2.15 kB gzip), Three.js 567.38 kB (140.97 kB gzip). This adds no external data, image, or audio request. Vite's nonfatal vendor-chunk warning remains.
+
+## M1 social safety controls — 14 October 2026
+
+- **Block:** Added authenticated, persistent guest-to-guest blocks in SQLite. Blocking immediately removes both sessions from one another's visible roster and suppresses chat, emotes, movement updates and join visibility in either direction. The People panel lists blocked sessions and supports unblocking; local mute remains separate and only hides that session's chat and reactions on this device.
+- **Report:** Added an authenticated, private report queue with four documented safety categories, an optional 240-character context field, and a five-per-hour limit. The form is reachable from People without walking to or selecting a 3D avatar, and from avatar inspection. It acknowledges receipt truthfully and states that no moderation team is connected; no report browsing or moderation console is claimed.
+- **GDD trace:** Fan & Social §§11.1, 25.1–25.2 and FS-038; Master GDD §35 M1; `QUALITY_GATES.md` M1. Blocks take precedence over in-world contact and visibility. The server accepts reports but public launch remains gated on age policy, human response staffing, escalation and appeals.
+- **Live browser:** Two authenticated guest sessions on the running Node server at a 390 × 844 mobile viewport. Verified local mute, report submission and queue acknowledgement, block removal in both clients, persisted blocked-session controls and unblock/reappearance. Browser console: 0 current-page errors. Screenshots: `docs/evidence/m1-safety-people.png` and `docs/evidence/m1-safety-report.png`.
+- **Verification:** Full automated suite passes 71 tests, including authenticated API validation, private report storage, report rate limiting, directional block/unblock and two-client chat/emote suppression. `npm run build` and `git diff --check` succeed. The manual report and its temporary test guest were removed from the local prototype database after browser verification.
+- **Build output:** App JS 122.08 kB (40.87 kB gzip), CSS 39.42 kB (9.09 kB gzip), Three.js vendor 567.38 kB (140.97 kB gzip). No new scene assets were added. Vite retains the existing nonfatal >500 kB vendor-chunk warning.
+- **Hosting boundary:** Netlify remains a static, solo preview. Shared guest identity, WebSocket presence, persistent blocks and report intake require the self-hosted Node server; the staging URL does not have those backend services.
+
+## Current next slices
+
+1. Implement the documented mutual friend-request flow with expiry, pending-request caps, anti-repeat rules, idempotent acceptance and block precedence before enabling friend DMs.
+2. Continue M1 device/performance validation; the embedded Chromium mobile viewport is not a physical Android/iPhone test.
+3. Keep public chat and reports gated until age policy, moderation staffing, emergency escalation and appeals have real owners.

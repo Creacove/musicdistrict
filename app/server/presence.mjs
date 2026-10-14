@@ -14,8 +14,8 @@ export function isAllowedQuickChatPhrase(text) {
   return typeof text === 'string' && QUICK_CHAT_PHRASES.includes(text)
 }
 
-export function isPublicZoneChatRecipient(sender, recipient) {
-  return sender.chatOptIn === true && recipient.chatOptIn === true && sender.location === recipient.location
+export function isPublicZoneChatRecipient(sender, recipient, store) {
+  return sender.chatOptIn === true && recipient.chatOptIn === true && sender.location === recipient.location && !store?.isBlockedBetween(sender.id, recipient.id)
 }
 
 const DOORWAYS = {
@@ -32,8 +32,28 @@ const DOORWAYS = {
 export function attachPresence(httpServer, { store } = {}) {
   const wss = new WebSocketServer({ server: httpServer, path: '/presence', maxPayload: 256 })
   const players = new Map()
+  let closing = false
   const send = (socket, message) => { if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message)) }
-  const broadcast = (message, except) => { for (const socket of players.keys()) if (socket !== except) send(socket, message) }
+  const isBlockedBetween = (a, b) => {
+    if (closing) return false
+    try { return store?.isBlockedBetween(a, b) ?? false } catch { return false }
+  }
+  const broadcast = (message, except, source) => {
+    for (const [socket, recipient] of players) {
+      if (socket === except) continue
+      if (source && isBlockedBetween(source.id, recipient.id)) continue
+      send(socket, message)
+    }
+  }
+  const stopBlockListener = store?.onBlock?.(({ blockerId, blockedId }) => {
+    for (const [socket, player] of players) {
+      if (player.id === blockerId) send(socket, { type: 'leave', id: blockedId })
+      else if (player.id === blockedId) send(socket, { type: 'leave', id: blockerId })
+    }
+  })
+  wss.on('close', () => { closing = true; stopBlockListener?.() })
+  const closeWebSocketServer = wss.close.bind(wss)
+  wss.close = callback => { closing = true; stopBlockListener?.(); return closeWebSocketServer(callback) }
   wss.on('connection', (socket, req) => {
     let id = randomUUID()
     let authenticated = false
@@ -47,9 +67,12 @@ export function attachPresence(httpServer, { store } = {}) {
     } catch { /* ignore URL parse error */ }
 
     const player = { id, name: 'Guest', x: -4, z: 7, angle: 0, dancing: false, emote: null, location: 'square', chatOptIn: false, authenticated }
-    send(socket, { type: 'welcome', id, authenticated, players: [...players.values()] })
+    send(socket, {
+      type: 'welcome', id, authenticated,
+      players: [...players.values()].filter(other => !isBlockedBetween(id, other.id)),
+    })
     players.set(socket, player)
-    broadcast({ type: 'join', player }, socket)
+    broadcast({ type: 'join', player }, socket, player)
     let lastMove = 0
     let lastChat = 0
     socket.on('message', raw => {
@@ -63,7 +86,7 @@ export function attachPresence(httpServer, { store } = {}) {
             player.id = id = guestId
             player.authenticated = authenticated = true
             send(socket, { type: 'auth', success: true, id })
-            broadcast({ type: 'move', player }, socket)
+            broadcast({ type: 'move', player }, socket, player)
           } else {
             send(socket, { type: 'auth', success: false })
           }
@@ -83,7 +106,7 @@ export function attachPresence(httpServer, { store } = {}) {
         if (!player.chatOptIn || !trimmed || trimmed.length > 40) return
         const chat = { type: 'chat', id, name: player.name || 'Guest', text: trimmed }
         for (const [recipientSocket, recipient] of players) {
-          if (isPublicZoneChatRecipient(player, recipient)) send(recipientSocket, chat)
+          if (isPublicZoneChatRecipient(player, recipient, store)) send(recipientSocket, chat)
         }
         return
       }
@@ -92,7 +115,7 @@ export function attachPresence(httpServer, { store } = {}) {
         if (typeof emote !== 'string' || !['cheer', 'wave', 'heart', 'fire'].includes(emote)) return
         player.emote = emote
         for (const [recipientSocket, recipient] of players) {
-          if (recipient.location === player.location) send(recipientSocket, { type: 'emote', id, emote })
+          if (recipient.location === player.location && !isBlockedBetween(player.id, recipient.id)) send(recipientSocket, { type: 'emote', id, emote })
         }
         return
       }
@@ -121,9 +144,9 @@ export function attachPresence(httpServer, { store } = {}) {
       const sanitizedName = typeof name === 'string' && name.trim() ? name.trim().slice(0, 16) : player.name
       Object.assign(player, { x, z, angle, dancing, location, name: sanitizedName })
       lastMove = now
-      broadcast({ type: 'move', player }, socket)
+      broadcast({ type: 'move', player }, socket, player)
     })
-    socket.on('close', () => { players.delete(socket); broadcast({ type: 'leave', id }) })
+    socket.on('close', () => { players.delete(socket); broadcast({ type: 'leave', id }, undefined, player) })
   })
   return wss
 }

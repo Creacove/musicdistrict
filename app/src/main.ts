@@ -12,7 +12,7 @@ import { connectPresence, type EmoteType, type PresencePlayer } from './presence
 import { peopleInLocation } from './people.ts'
 import { emotePose, walkingPose } from './avatarMotion.ts'
 import { disposeSpriteResources } from './avatarLifecycle.ts'
-import { fetchCatalogue, openGuest, removeGuestSave, saveGuestPreview, type CatalogueTrack } from './guest.ts'
+import { blockGuest, fetchCatalogue, fetchGuestBlocks, openGuest, removeGuestSave, saveGuestPreview, submitGuestReport, unblockGuest, type CatalogueTrack, type GuestReportReason } from './guest.ts'
 import { LIGHTING_PRESETS, getNextLightingMode, type LightingMode } from './lighting.ts'
 import { parseStageTemplate, serializeStageTemplate, type StageLook } from './stageTemplate.ts'
 import { RELEASE_JOURNEY, nextReleaseStation, previousReleaseStation, releaseStation, type ReleaseStationId } from './releaseJourney.ts'
@@ -215,8 +215,29 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
     <p id="people-description">Only other connected players are shown. Wave to the people sharing this space.</p>
     <p id="people-status" class="people-status" role="status" aria-live="polite">Connecting to the world…</p>
     <div id="people-list" class="people-list" role="list" aria-live="polite"></div>
+    <section id="blocked-section" class="blocked-section" hidden aria-labelledby="blocked-title"><h3 id="blocked-title">Blocked sessions</h3><div id="blocked-list" role="list"></div></section>
     <div class="people-actions"><button id="people-wave" class="green-button" disabled>👋 Wave to everyone here</button><button id="people-edit-avatar" class="people-edit">Customize avatar</button></div>
   </section>
+
+  <dialog id="report-dialog" class="report-dialog" aria-labelledby="report-title">
+    <form id="report-form">
+      <button id="report-close" class="icon-close" type="button" aria-label="Close report">×</button>
+      <small class="eyebrow">PLAYER SAFETY</small><h2 id="report-title">Report a player</h2>
+      <p id="report-target" class="report-target"></p>
+      <label for="report-reason">What happened?</label>
+      <select id="report-reason" required>
+        <option value="harassment">Harassment or abuse</option>
+        <option value="spam">Spam or disruption</option>
+        <option value="inappropriate_name">Inappropriate display name</option>
+        <option value="other">Other safety concern</option>
+      </select>
+      <label for="report-details">Add details <span>Optional · up to 240 characters</span></label>
+      <textarea id="report-details" maxlength="240" rows="4" placeholder="Share only what is needed for review."></textarea>
+      <p class="report-disclosure">This prototype stores reports in a private local queue. No moderation team is connected yet.</p>
+      <p id="report-status" class="report-status" role="status" aria-live="polite"></p>
+      <div class="report-actions"><button id="report-cancel" class="people-edit" type="button">Cancel</button><button id="report-submit" class="green-button" type="submit">Send report</button></div>
+    </form>
+  </dialog>
 
   <section id="avatar-sheet" class="avatar-sheet" hidden aria-label="Avatar appearance">
     <button id="avatar-close" class="icon-close" aria-label="Close appearance">×</button>
@@ -579,8 +600,12 @@ function updateAvatarNameTag(targetGroup: THREE.Group, name: string, id: string)
   }
 }
 
-// Safety: locally muted session IDs — hides emote bubbles and dims avatar
+// Social safety state follows the server guest identity when one is available.
 const mutedIds = new Set<string>()
+const blockedIds = new Set<string>()
+const blockedNames = new Map<string, string>()
+let guestSessionReady = false
+let reportTargetId = ''
 let roomChatOptedIn = false
 const mutePopover = document.createElement('div')
 mutePopover.className = 'mute-popover'
@@ -594,27 +619,28 @@ function showMutePopover(id: string, screenX: number, screenY: number) {
   const targetPlayer = connectedPlayers.find(p => p.id === id)
   const targetName = targetPlayer?.name || 'Guest'
   const muted = mutedIds.has(id)
+  const safetyEnabled = guestSessionReady && targetPlayer?.authenticated === true
   mutePopover.innerHTML = `
     <small class="eyebrow">CONNECTED SESSION</small>
-    <div class="mute-player-name">${targetName}</div>
+    <div class="mute-player-name">${escapeHtml(targetName)}</div>
     <p>${muted ? 'This session is muted.' : 'Mute this session to hide their emote reactions locally.'}</p>
     <div class="mute-actions">
-      <button id="mute-toggle">${muted ? '🔊 Unmute' : '🔇 Mute'}</button>
-      <button id="mute-cancel">Cancel</button>
+      <button id="mute-toggle" type="button">${muted ? '🔊 Unmute' : '🔇 Mute'}</button>
+      <button id="block-toggle" type="button" ${safetyEnabled ? '' : 'disabled'}>Block</button>
+      <button id="report-toggle" type="button" ${safetyEnabled ? '' : 'disabled'}>Report</button>
     </div>
-    <small class="mute-note">Local only · not visible to others · no server action</small>`
+    <button id="mute-cancel" class="mute-cancel" type="button">Done</button>
+    <small class="mute-note">Mute is local. Block is stored on this prototype server. Reports enter a private queue; no moderation team is connected.</small>`
   mutePopover.hidden = false
-  // Position above tap point, clamped to viewport
-  const pw = 220, ph = 130
+  const pw = 250, ph = mutePopover.offsetHeight
   mutePopover.style.left = `${Math.min(Math.max(screenX - pw / 2, 8), window.innerWidth - pw - 8)}px`
-  mutePopover.style.top = `${Math.max(screenY - ph - 16, 60)}px`
+  mutePopover.style.top = `${Math.min(Math.max(screenY - ph - 16, 60), window.innerHeight - ph - 8)}px`
   document.getElementById('mute-toggle')!.onclick = () => {
     if (mutedIds.has(mutePopoverTarget)) {
       mutedIds.delete(mutePopoverTarget)
       toast('Session unmuted')
     } else {
       mutedIds.add(mutePopoverTarget)
-      // Hide any live emote bubble immediately
       const model = remoteAvatars.get(mutePopoverTarget)
       const bubble = model && emoteBubbles.get(mutePopoverTarget)
       if (bubble) bubble.visible = false
@@ -622,11 +648,57 @@ function showMutePopover(id: string, screenX: number, screenY: number) {
       if (speech) speech.visible = false
       toast('Session muted · reactions and chat hidden locally')
     }
-    // Refresh avatar opacity
-    for (const [rid, rmodel] of remoteAvatars) rmodel.traverse(obj => { if ((obj as THREE.Mesh).isMesh) (obj as THREE.Mesh).material instanceof THREE.MeshStandardMaterial && ((obj as THREE.Mesh).material as THREE.MeshStandardMaterial).color.setScalar(mutedIds.has(rid) ? 0.35 : 1) })
+    renderPeople(connectedPlayers, presenceConnected)
+    mutePopover.hidden = true
+  }
+  document.getElementById('block-toggle')!.onclick = () => {
+    if (!safetyEnabled) { toast('Connect a guest session before blocking'); return }
+    const targetId = mutePopoverTarget
+    blockedNames.set(targetId, targetName)
+    mutePopover.hidden = true
+    void setPlayerBlocked(targetId, true)
+  }
+  document.getElementById('report-toggle')!.onclick = () => {
+    if (!safetyEnabled) { toast('Connect a guest session before reporting'); return }
+    openReportDialog(id, targetName)
     mutePopover.hidden = true
   }
   document.getElementById('mute-cancel')!.onclick = () => { mutePopover.hidden = true }
+}
+
+async function setPlayerBlocked(id: string, blocked: boolean) {
+  if (blocked) {
+    blockedIds.add(id)
+    renderPresence(connectedPlayers, presenceConnected, 0)
+    try {
+      await blockGuest(id)
+      toast('Player blocked · contact and visibility are restricted')
+    } catch {
+      blockedIds.delete(id)
+      blockedNames.delete(id)
+      renderPresence(connectedPlayers, presenceConnected, 0)
+      toast('Could not save this block · try again when connected')
+    }
+    return
+  }
+  try {
+    await unblockGuest(id)
+    blockedIds.delete(id)
+    blockedNames.delete(id)
+    renderPresence(connectedPlayers, presenceConnected, 0)
+    toast('Player unblocked')
+  } catch { toast('Could not remove this block · try again when connected') }
+}
+
+function openReportDialog(id: string, name: string) {
+  reportTargetId = id
+  $<HTMLElement>('report-target').textContent = `About ${name}`
+  $<HTMLSelectElement>('report-reason').value = 'harassment'
+  $<HTMLTextAreaElement>('report-details').value = ''
+  $<HTMLElement>('report-status').textContent = ''
+  $<HTMLButtonElement>('report-submit').disabled = false
+  $<HTMLButtonElement>('report-submit').textContent = 'Send report'
+  $<HTMLDialogElement>('report-dialog').showModal()
 }
 function createEmoteTexture(emoji: string): THREE.Texture {
   const canvas = document.createElement('canvas')
@@ -701,7 +773,7 @@ function handleIncomingEmote(id: string, emote: EmoteType) {
   if (id === presence.getOwnId()) {
     triggerAvatarEmote(avatar, emote, 'self')
   } else {
-    if (mutedIds.has(id)) return  // emote suppressed for muted session
+    if (mutedIds.has(id) || blockedIds.has(id)) return
     const model = remoteAvatars.get(id)
     if (model) triggerAvatarEmote(model, emote, id)
   }
@@ -770,7 +842,7 @@ function triggerAvatarSpeech(targetGroup: THREE.Group, text: string, id: string)
 }
 
 function handleIncomingChat(id: string, name: string, text: string) {
-  if (!roomChatOptedIn || mutedIds.has(id)) return
+  if (!roomChatOptedIn || mutedIds.has(id) || blockedIds.has(id)) return
   if (id === presence.getOwnId()) {
     triggerAvatarSpeech(avatar, text, 'self')
   } else {
@@ -793,7 +865,7 @@ function renderPresence(players: PresencePlayer[], connected: boolean, reconnect
   presenceConnected = connected
   renderPeople(players, connected)
   renderStageEventMetrics()
-  const visible = new Set(players.filter(player => player.location === location).map(player => player.id))
+  const visible = new Set(players.filter(player => player.location === location && !blockedIds.has(player.id)).map(player => player.id))
   for (const [id, model] of remoteAvatars) if (!visible.has(id)) {
     const bubble = emoteBubbles.get(id)
     if (bubble) { model.remove(bubble); disposeSpriteResources(bubble, false); emoteBubbles.delete(id) }
@@ -805,7 +877,7 @@ function renderPresence(players: PresencePlayer[], connected: boolean, reconnect
     remoteAvatars.delete(id)
   }
   for (const player of players) {
-    if (player.location !== location) continue
+    if (player.location !== location || blockedIds.has(player.id)) continue
     let model = remoteAvatars.get(player.id)
     let newlySpawned = false
     if (!model) {
@@ -830,15 +902,13 @@ function renderPresence(players: PresencePlayer[], connected: boolean, reconnect
       scene.add(model)
       remoteAvatars.set(player.id, model)
       newlySpawned = true
-      // Apply mute dim if this session was already muted
-      if (mutedIds.has(player.id)) model.traverse(obj => { if ((obj as THREE.Mesh).isMesh && (obj as THREE.Mesh).material instanceof THREE.MeshStandardMaterial) ((obj as THREE.Mesh).material as THREE.MeshStandardMaterial).color.setScalar(0.35) })
     }
     model.userData.walking = !newlySpawned && Math.hypot(player.x - model.position.x, player.z - model.position.z) > .025
     updateAvatarNameTag(model, player.name || 'Guest', player.id)
     model.position.set(player.x, 0, player.z)
     model.rotation.y = player.angle
   }
-  const count = players.filter(player => player.location === location).length
+  const count = players.filter(player => player.location === location && !blockedIds.has(player.id)).length
   const status = SOLO_PREVIEW
     ? 'Solo preview · progress saves on this device.'
     : connected
@@ -850,7 +920,7 @@ function renderPresence(players: PresencePlayer[], connected: boolean, reconnect
 }
 
 function renderPeople(players: PresencePlayer[], connected: boolean) {
-  const view = peopleInLocation(players, location, connected)
+  const view = peopleInLocation(players.filter(player => !blockedIds.has(player.id)), location, connected)
   const place = location === 'square' ? 'Music Square' : location === 'venue' ? 'Palm Room' : location === 'studio' ? 'City Studio' : 'Release House'
   const status = $<HTMLElement>('people-status')
   $<HTMLElement>('people-description').textContent = SOLO_PREVIEW
@@ -865,8 +935,23 @@ function renderPeople(players: PresencePlayer[], connected: boolean) {
     : view.availability === 'empty'
       ? `No one else is in ${place} yet.`
       : `${view.people.length} ${view.people.length === 1 ? 'person' : 'people'} here now`
-  list.innerHTML = view.people.map(person => `<div class="people-entry" role="listitem"><span class="people-dot" aria-hidden="true">●</span><span class="people-details"><b>${escapeHtml(person.name?.trim() || 'Guest')}</b><small>${person.dancing ? 'Dancing here now' : `In ${place}`}</small></span><span class="people-live">LIVE</span></div>`).join('')
-  wave.disabled = view.availability !== 'online'
+  list.innerHTML = view.people.map(person => `<div class="people-entry" role="listitem"><span class="people-dot" aria-hidden="true">●</span><span class="people-details"><b>${escapeHtml(person.name?.trim() || 'Guest')}</b><small>${person.dancing ? 'Dancing here now' : `In ${place}`}${mutedIds.has(person.id) ? ' · muted locally' : ''}</small></span><button type="button" class="people-options" data-player-id="${escapeHtml(person.id)}" aria-label="Safety options for ${escapeHtml(person.name?.trim() || 'Guest')}">Options</button></div>`).join('')
+  list.querySelectorAll<HTMLButtonElement>('.people-options').forEach(button => {
+    button.onclick = () => {
+      const person = view.people.find(player => player.id === button.dataset.playerId)
+      if (!person) return
+      const bounds = button.getBoundingClientRect()
+      showMutePopover(person.id, bounds.left + bounds.width / 2, bounds.top)
+    }
+  })
+  const blockedSection = $<HTMLElement>('blocked-section')
+  const blockedList = $<HTMLElement>('blocked-list')
+  blockedSection.hidden = blockedIds.size === 0
+  blockedList.innerHTML = [...blockedIds].map(id => `<div class="blocked-entry" role="listitem"><span>${escapeHtml(blockedNames.get(id) || `Guest · ${id.slice(0, 8)}`)}</span><button type="button" class="unblock-button" data-player-id="${escapeHtml(id)}">Unblock</button></div>`).join('')
+  blockedList.querySelectorAll<HTMLButtonElement>('.unblock-button').forEach(button => {
+    button.onclick = () => { button.disabled = true; void setPlayerBlocked(button.dataset.playerId || '', false).finally(() => { button.disabled = false }) }
+  })
+  wave.disabled = view.availability !== 'online' || view.people.length === 0
 }
 const presence = connectPresence(renderPresence, handleIncomingEmote, handleIncomingChat)
 window.addEventListener('beforeunload', () => presence.close())
@@ -956,7 +1041,12 @@ void openGuest().then(async guest => {
   for (const id of savedTrackIds) {
     if (!guest.saves.includes(id)) await saveGuestPreview(id).catch(() => {})
   }
+  guestSessionReady = !SOLO_PREVIEW
   presence.auth(guest.token)
+  const savedBlocks = await fetchGuestBlocks().catch(() => [])
+  blockedIds.clear()
+  for (const id of savedBlocks) blockedIds.add(id)
+  renderPresence(connectedPlayers, presenceConnected, 0)
   renderMiniPlayer()
 }).catch(() => { /* offline guests retain the local demo save */ })
 
@@ -1956,6 +2046,26 @@ $<HTMLButtonElement>('nav-people').onclick = () => { closeSheets(); $<HTMLElemen
 $<HTMLButtonElement>('people-close').onclick = closeSheets
 $<HTMLButtonElement>('people-wave').onclick = () => { if (presenceConnected && connectedPlayers.some(player => player.location === location)) presence.sendEmote('wave') }
 $<HTMLButtonElement>('people-edit-avatar').onclick = () => { $<HTMLElement>('people-sheet').hidden = true; $<HTMLElement>('avatar-sheet').hidden = false; applyAppearance() }
+$<HTMLButtonElement>('report-close').onclick = () => $<HTMLDialogElement>('report-dialog').close()
+$<HTMLButtonElement>('report-cancel').onclick = () => $<HTMLDialogElement>('report-dialog').close()
+$<HTMLFormElement>('report-form').addEventListener('submit', async event => {
+  event.preventDefault()
+  const submit = $<HTMLButtonElement>('report-submit')
+  const status = $<HTMLElement>('report-status')
+  submit.disabled = true
+  status.textContent = 'Sending report…'
+  try {
+    const reason = $<HTMLSelectElement>('report-reason').value as GuestReportReason
+    const details = $<HTMLTextAreaElement>('report-details').value
+    const receipt = await submitGuestReport({ targetGuestId: reportTargetId, reason, details })
+    if (receipt.status !== 'received') throw new Error('Report was not received')
+    status.textContent = 'Report received in the private prototype queue. No moderation team is connected yet.'
+    submit.textContent = 'Report received'
+  } catch (error) {
+    status.textContent = error instanceof Error ? error.message : 'Could not send this report. Try again when connected.'
+    submit.disabled = false
+  }
+})
 $<HTMLButtonElement>('avatar-close').onclick = closeSheets
 $<HTMLInputElement>('avatar-name').oninput = event => {
   playerName = (event.target as HTMLInputElement).value.trim().slice(0, 16) || 'Guest'

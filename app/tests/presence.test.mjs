@@ -11,6 +11,22 @@ async function nextMessage(socket) {
   return JSON.parse(raw.toString())
 }
 
+function receivesNoMessage(socket, waitMs = 120) {
+  return new Promise(resolve => {
+    const onMessage = () => { clearTimeout(timer); resolve(false) }
+    const timer = setTimeout(() => { socket.off('message', onMessage); resolve(true) }, waitMs)
+    socket.once('message', onMessage)
+  })
+}
+
+function nextMessageWithin(socket, label, waitMs = 1500) {
+  return new Promise((resolve, reject) => {
+    const onMessage = raw => { clearTimeout(timer); resolve(JSON.parse(raw.toString())) }
+    const timer = setTimeout(() => { socket.off('message', onMessage); reject(new Error(`Timed out waiting for ${label}`)) }, waitMs)
+    socket.once('message', onMessage)
+  })
+}
+
 test('connected people join, move, and leave without invented players', async () => {
   const server = createServer()
   const hub = attachPresence(server)
@@ -62,6 +78,51 @@ test('reconnecting client gets fresh welcome without stale avatars', async () =>
     assert.equal(welcome2.type, 'welcome')
     assert.deepEqual(welcome2.players, [], 'no stale avatars from closed session')
   } finally { b.terminate(); hub.close(); server.close() }
+})
+
+test('blocked guests do not receive each other’s chat or emotes', async t => {
+  const store = createGuestStore(':memory:')
+  const aGuest = store.create(), bGuest = store.create()
+  const server = createServer()
+  const hub = attachPresence(server, { store })
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  const port = server.address().port
+  t.diagnostic('connect reporter')
+  const a = new WebSocket(`ws://127.0.0.1:${port}/presence?token=${aGuest.token}`)
+  const aWelcome = await nextMessageWithin(a, 'reporter welcome')
+  t.diagnostic('reporter welcomed')
+  const aJoin = nextMessageWithin(a, 'target join')
+  const b = new WebSocket(`ws://127.0.0.1:${port}/presence?token=${bGuest.token}`)
+  const bWelcome = await nextMessageWithin(b, 'target welcome')
+  t.diagnostic('target welcomed')
+  try {
+    assert.equal(aWelcome.id, aGuest.id)
+    assert.equal(bWelcome.id, bGuest.id)
+    assert.equal((await aJoin).type, 'join')
+    t.diagnostic('join observed')
+    a.send(JSON.stringify({ type: 'chat-opt-in', enabled: true }))
+    b.send(JSON.stringify({ type: 'chat-opt-in', enabled: true }))
+    await new Promise(resolve => setTimeout(resolve, 650))
+    const firstChat = nextMessageWithin(b, 'initial public chat')
+    a.send(JSON.stringify({ type: 'chat', text: 'Vibing here ✨' }))
+    assert.equal((await firstChat).type, 'chat')
+    t.diagnostic('chat delivered before block')
+
+    const removedFromReporter = nextMessageWithin(a, 'blocked target removed')
+    const removedFromTarget = nextMessageWithin(b, 'blocker removed')
+    store.block(aGuest.id, bGuest.id)
+    assert.deepEqual(await removedFromReporter, { type: 'leave', id: bGuest.id })
+    assert.deepEqual(await removedFromTarget, { type: 'leave', id: aGuest.id })
+    await new Promise(resolve => setTimeout(resolve, 650))
+    a.send(JSON.stringify({ type: 'chat', text: 'Vibing here ✨' }))
+    assert.equal(await receivesNoMessage(b), true)
+    t.diagnostic('chat suppressed after block')
+    a.send(JSON.stringify({ type: 'emote', emote: 'wave' }))
+    assert.equal(await receivesNoMessage(b), true)
+    t.diagnostic('emote suppressed after block')
+    b.send(JSON.stringify({ type: 'chat', text: 'Nice beat! 🔥' }))
+    assert.equal(await receivesNoMessage(a), true)
+  } finally { a.terminate(); b.terminate(); hub.close(); server.close(); store.close() }
 })
 
 test('exponential backoff doubles delay up to 30 s cap', () => {
