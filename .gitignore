@@ -3,3 +3,7 @@ app/dist/
 app/.vite/
 app/data/
 .playwright-cli/
+.netlify/
+.env
+.env.*
+!.env.example

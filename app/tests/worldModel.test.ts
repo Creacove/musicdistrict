@@ -27,3 +27,12 @@ test('release intake belongs to Release House and cannot be used from the square
   assert.equal(getNearby('release', 0, -5), 'releaseIntake')
   assert.equal(getNearby('square', 0, -5), null)
 })
+
+test('Release House preparation stations are separate physical interactions', () => {
+  assert.equal(getNearby('release', -8, -8.5), 'releaseArtwork')
+  assert.equal(getNearby('release', -5.5, -1.5), 'releaseMetadata')
+  assert.equal(getNearby('release', 9.5, -3.5), 'releaseListening')
+  assert.equal(getNearby('release', 8.3, 1.8), 'releaseRights')
+  assert.equal(getNearby('release', .8, 4.5), 'releaseCalendar')
+  assert.equal(getNearby('square', -8, -8.5), null)
+})

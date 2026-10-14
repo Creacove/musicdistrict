@@ -29,6 +29,12 @@ test('tap-to-walk routes around the venue lounge and studio desk', () => {
   assertWalkable('studio', [0, 7], [0, -4.1])
 })
 
+test('tap-to-walk reaches each Release House station without crossing counters', () => {
+  for (const destination of [[0, -3.5], [-8, -8.5], [-5.5, -1.5], [9.5, -3.5], [8.3, 1.8], [.8, 4.5]] as WalkPoint[]) {
+    assertWalkable('release', [0, 7], destination)
+  }
+})
+
 test('tap-to-walk refuses a point inside a solid object', () => {
   assert.deepEqual(findWalkPath('square', [-4, 7], [1, 2]), [])
 })

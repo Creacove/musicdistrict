@@ -115,15 +115,283 @@ Addressing Risk #1 from the repository audit (rudimentary collision and camera c
 - **Presence room filtering:** Remote player avatar instances now re-filter immediately upon entering or leaving any interior room.
 - **Verification:** 14 automated tests pass (`npm test`), including 4 new obstacle collision and boundary tests. Production build (`npm run build`) succeeded with TypeScript compilation. Local Vite server verified responsive on port 5173.
 
-**Remaining gaps:** Scene bundle splitting (main JS chunk is ~598 kB uncompressed / 154 kB gzip, exceeding Vite's 500 kB advisory limit); licensed 3D avatar rig and locomotion animations; cleared production loop packs and licensed tracks; mobile production transfer and hardware thermal testing; persistent player identity and authoritative server-side multiplayer state.
+## Interior scene and audio renderer bundle splitting slice — 13 October 2026
+
+Addressing PR sequence #1 and low-data mobile performance requirements (`PERFORMANCE_MEDIA_BUDGET.md` §3 "Initial JS/CSS transfer ≤550 KiB compressed / break into route chunks"):
+
+- **Vendor separation:** Configured Vite/Rolldown build with dynamic module chunking separating Three.js (`dist/assets/three-*.js`, 542 kB uncompressed / 135 kB gzip) into a cached vendor chunk so app code updates don't invalidate engine cache.
+- **Dynamic room geometry loading:** Extracted Palm Room into `palmWorld.ts` (`dist/assets/palmWorld-*.js`, 4.9 kB uncompressed / 2.45 kB gzip). Interiors for Palm Room, City Studio (`studioWorld-*.js`, 1.8 kB), and Release House (`releaseWorld-*.js`, 1.8 kB) are now loaded strictly on demand via dynamic `import()` upon entrance.
+- **Async audio export:** Extracted the 30-second WAV PCM synthesis engine into `renderMaster.ts` (`dist/assets/renderMaster-*.js`, 0.9 kB). This heavy numerical synthesis module is loaded only when the player triggers master rendering at the City Studio producer desk.
+- **Initial app bundle reduced to 58.05 kB:** The main application entry chunk dropped from **~600 kB** to **58.05 kB** (20.47 kB gzip) — well below Vite's 500 kB advisory threshold and well within the mobile cold-load budget.
+- **Verification:** All 18 automated tests pass (`npm test`). Production build succeeds cleanly (`npm run build`).
+
+## Live social presence emotes and reactions slice — 13 October 2026
+
+Addressing Chapter 05 Fan & Social Experience (§1.1 Invariants, §2 "Be with people", and Quality Gates M1 social controls):
+
+- **Live presence emote broadcast:** Extended the WebSocket presence server (`presence.mjs`) to handle validated social reaction messages (`type: 'emote'`). Permitted emotes (`cheer`, `wave`, `heart`, `fire`) broadcast in real time to all connected players in the instance without fabricating artificial player reactions.
+- **Client presence communication:** Upgraded `connectPresence` in `presence.ts` to expose `sendEmote(emote: EmoteType)` and receive remote peer emotes via an `onEmote` event callback.
+- **3D overhead emote bubble billboards:** Created an emote rendering system in Three.js with dynamic canvas textures for Cheer 🙌, Wave 👋, Love ❤️, and Fire 🔥. Overhead billboards appear above the reacting avatar (both local avatar and remote connected players) with auto-dismissal after 3.2 seconds.
+- **Responsive mobile reaction HUD:** Added a mobile-accessible reaction tray with quick-tap reaction buttons (`cheer`, `wave`, `heart`, `fire`) positioned above the bottom nav and alongside the dance toggle.
+- **Automated test suite:** Added real-time emote broadcast and validation tests in `presence.test.mjs`. All 18 automated tests pass (`npm test`). Production build succeeds cleanly (`npm run build`).
+
+## Music Discovery and persistent catalogue save slice — 13 October 2026
+
+Addressing Chapter 07 Music Discovery & Charts (§1 ID MUS-01/06/11/15, §2 "Walk -> Notice -> Hear -> Choose -> Remember", and Quality Gates M1 discovery):
+
+- **Catalogue API & multi-track discovery:** Added `/api/catalogue` endpoint in `guestStore.mjs` serving verified music metadata (Title, Artist, Genre, Duration) for playable recordings (`Square Sketch` and `Golden Hour Jam`).
+- **Interactive Listening Kiosk:** Upgraded the physical Music Square listening kiosk interaction (`interact()`) to show real metadata for the selected catalogue track, with immediate playback previews and save state inspection.
+- **Personal mini-player track controls:** Enhanced the persistent HUD mini-player with `Previous` and `Next` track buttons, allowing continuous private soundtrack listening and exploration across the district.
+- **Idempotent save & remove persistence:** Added `DELETE /api/saves/:id` endpoint and updated SQLite guest storage. Players can bookmark tracks privately (`♥` / `♡`) with changes synced to the server without fabricating public popularity counts or forcing purchases.
+- **Synthesized track melodies:** Added audio synthesis variations per track (`sine` for Square Sketch, `triangle` for Golden Hour Jam) ensuring zero external audio preloading before user interaction.
+- **Verification:** All 18 automated tests pass (`npm test`), including catalogue retrieval and save deletion assertions in `guestStore.test.mjs`. Production build succeeds cleanly (`npm run build`).
 
 ## Smallest next PR sequence
 
-1. **M0/M1 bundle & scene splitting:** Dynamically load interior rooms and audio synthesis modules to bring initial client JS below 500 kB uncompressed.
-2. **M0 asset/audio proof:** licensed prototype avatar/animations and cleared test song; manifest with source, rights, expiry, size, and device measurements.
-3. **M1 identity/presence:** trusted server, two real players in one square, reconnect and basic safety controls (chat/emotes/reporting).
-4. **M1 discovery:** kiosk with explicit playback and a persisted save action, failure/expiry states, and zero-money path.
-5. **M2 creation preview:** walk to City Studio and use a small workstation with approved loops.
+1. **M0 asset/audio proof:** licensed prototype avatar/animations and cleared test song; manifest with source, rights, expiry, size, and device measurements.
+2. **M1 identity/presence:** trusted server, two real players in one square, reconnect and basic safety controls (chat/emotes/reporting).
+3. **M2 creation preview:** walk to City Studio and use a small workstation with approved loops.
 
 Do not claim M0 exit until the device, audio, reconnect, rights, and staging checks in `docs/handoff/implementation/QUALITY_GATES.md` pass.
 
+## Reconnect resilience and presence health indicator — 13 October 2026
+
+Addressing M1 identity/presence quality gate (reconnect path) and QUALITY_GATES.md §M1 social controls:
+
+- **Exponential backoff:** WebSocket reconnect delay doubles on each successive close: 1500 ms → 3000 → 6000 → 12000 → 24000 → 30000 ms cap. Backoff resets to 1500 ms on successful open.
+- **Attempt counter:** `reconnectAttempts` increments on each scheduled retry, resets to 0 on open. Passed as a third argument to the `onPlayers` callback so the UI can display it without a separate event channel.
+- **Status copy:** Presence status div now shows `"Connecting to Music Square."` on first connect, `"X other connected sessions here"` when live, and `"Offline · reconnecting (attempt N)…"` with the live attempt number during outages.
+- **Server reconnect test:** Added `reconnecting client gets fresh welcome without stale avatars` — closes socket A, waits 50 ms for the server to remove it, verifies socket B receives an empty player list (no ghost avatars from terminated sessions).
+- **Pure backoff logic test:** `exponential backoff doubles delay up to 30 s cap` — asserts the sequence `[1500, 3000, 6000, 12000, 24000, 30000]` without any WebSocket dependency.
+- **Verification:** All 20 automated tests pass (`npm test`). Production build succeeds cleanly (`npm run build`). App bundle: 65.42 kB / 22.49 kB gzip.
+
+## Avatar appearance customisation slice — 13 October 2026
+
+Addressing M1 identity differentiation (Chapter 05 Fan & Social §1.1 "be distinct") with a fully local, zero-rights-required feature:
+
+- **Appearance sheet:** Tapping the People nav button now opens an "Appearance" panel (previously just toasted presence status). The sheet shows a swatch grid for skin tone (5 options), shirt colour (6 options), and trouser colour (6 options).
+- **Live Three.js material update:** `applyAppearance()` calls `material.color.set(hex)` on the `skin`, `shirt`, and `trousers` MeshStandardMaterial instances — changes are visible on the avatar in the 3D scene immediately without a reload.
+- **localStorage persistence:** Each selection writes to `scene-skin`, `scene-shirt`, and `scene-trousers` keys and is reapplied on every page load before the first frame renders.
+- **aria-pressed ring:** The active swatch in each row gets `aria-pressed="true"` and a white border + glow ring via CSS so the selection is accessible and clear.
+- **Preview label:** The panel includes a clear disclosure: "Saved locally — not visible to others until real multiplayer identity exists." No server state, no account identity, no fabricated presence.
+- **Verification:** All 20 automated tests pass (`npm test`). Production build succeeds cleanly (`npm run build`). CSS bundle: 25.25 kB / 6.29 kB gzip.
+
+## Smallest next PR sequence (updated)
+
+1. **M0 asset/audio proof:** licensed prototype avatar/animations and cleared test song; manifest with source, rights, expiry, size, and device measurements.
+2. **M1 identity/presence safety controls:** mute/block UI for connected players, basic chat safety.
+3. **M1 trusted server:** authenticated WebSocket session token, server-authoritative position.
+4. **M2 creation preview:** walk to City Studio and use a small workstation with approved loops.
+
+Do not claim M0 exit until the device, audio, reconnect, rights, and staging checks in `docs/handoff/implementation/QUALITY_GATES.md` pass.
+
+## M2 private release preview export — 13 October 2026
+
+Following the M2 release-flow slice: Record Intake now exports an original, locally rendered 1200 × 1200 PNG sleeve from the selected Lagos palette, title, artist, and genre. When a private 30-second master exists, the player can also download its WAV. Both exports stay on-device; neither action submits or publishes a release. The sleeve source is authored SVG with escaped player text, and a unit test checks its markup and escaping. The rights checklist and authoritative server submission gate remain in place.
+
+## Safety controls: mute / ignore a connected session — 13 October 2026
+
+Addressing Chapter 05 Fan & Social §1.1 Invariants and QUALITY_GATES.md M1 social controls (mute/block/report preview):
+
+- **Tap-to-mute:** Tapping a remote avatar in the 3D scene opens a floating "Player options" popover above the tap point. The popover shows a **🔇 Mute** button and a Cancel button. Tapping Mute a second time shows **🔊 Unmute**. No accidental mutes — a dedicated button is required.
+- **Emote suppression:** Once muted, incoming emote broadcasts for that session ID are discarded in `handleIncomingEmote` before any bubble is created or shown.
+- **Visual dim:** Muted remote avatar meshes have their material color scaled to 0.35 (dark ghost appearance) so the player knows who is muted. The dim is applied immediately on mute and re-applied if the session rejoins while still muted.
+- **Local only:** `mutedIds` is a runtime `Set<string>` — not persisted, not sent to the server, not visible to other players. The popover explicitly states "Local only · not visible to others · no server action."
+- **Avatar raycasting:** The `pointerup` handler now raycasts against all remote avatar meshes before checking the ground plane — a hit shows the popover instead of issuing a walk command.
+- **Popover dismiss:** Tapping anywhere outside the popover (next `pointerup` event) dismisses it. The touch pad is unaffected.
+- **Verification:** All 20 automated tests pass (`npm test`). Production build succeeds cleanly (`npm run build`). App bundle: 67.02 kB / 23.07 kB gzip.
+
+## Player display name & overhead 3D name tag slice — 13 October 2026
+
+Addressing Chapter 05 Fan & Social §1.1 Invariants, "Be with people", and Quality Gates M1 identity differentiation:
+
+- **Display name field:** Added a "Display name" input (max 16 chars) to the Appearance sheet (`nav-people`). Persisted in `localStorage` under `scene-player-name` with fallback to `"Guest"`.
+- **Overhead 3D billboard name tag:** Created dynamic 256x64 2D canvas textures rendered onto Three.js `Sprite` billboards positioned at `y = 2.88` directly above the avatar's head and below emote reaction bubbles.
+- **Presence name synchronization:** Updated the WebSocket server (`presence.mjs`) to store and broadcast sanitized 16-character player names on join and move events. Verified with an automated test in `presence.test.mjs`.
+- **Contextual player safety:** The safety popover (`showMutePopover`) now highlights the specific player's display name (`targetPlayer.name`) when inspecting or muting a connected session.
+- **Remote avatar isolation:** Remote avatar cloning now strips sprite children to prevent duplicate name tags, managing dedicated billboards through the `nameTags` collection with automatic cleanup on disconnect/room transition.
+- **Verification:** All 21 automated tests pass (`npm test`), including display name clamping and broadcast assertions. Production build succeeds cleanly (`npm run build`). App bundle: 68.55 kB / 23.44 kB gzip.
+
+## Proximity quick-chat & 3D speech bubble slice — 13 October 2026
+
+Addressing Chapter 05 Fan & Social §11.2 "Local text chat", §1.1 Invariants ("Blocks, privacy settings, rights withdrawals and moderation checks apply across world interaction, chat"), and Quality Gates M1 social controls:
+
+- **Proximity speech bubbles:** Authored a dynamic 512×128 canvas speech bubble renderer (`createSpeechBubbleTexture`) generating stylized dark rounded speech bubbles with bottom tails, rendered as Three.js `Sprite` billboards directly above avatars (`y = 3.45`) with 4.2-second auto-dismiss timers.
+- **Quick phrases & custom shout tray:** Added a chat trigger (`💬 Chat`) adjacent to the emote bar opening a quick-phrase panel featuring 6 music-scene quick phrases ("Yo! 👋", "Nice beat! 🔥", "Heading to Studio 🎧", "Meet at Palm Room 🌴", "Vibing here ✨", "Check out the sound! 🎶") plus a sanitized custom shout input (max 40 chars).
+- **Transient chat feed:** Integrated a mobile-friendly overlay HUD displaying the last 4 recent messages with author attribution and smooth fade-out.
+- **Server rate limiting & validation:** Upgraded `presence.mjs` to handle `{ type: 'chat', text }` with server-side 600 ms throttles and 40-character length clamping, broadcasting author name and message across the instance. Verified via an automated test in `presence.test.mjs`.
+- **Full safety mute suppression:** When a player mutes an avatar (via tap-to-mute), both their 3D overhead speech bubbles and their incoming chat feed entries are immediately suppressed, and any active bubble is dismissed.
+- **Verification:** All 22 automated tests pass (`npm test`). Production build succeeds cleanly (`npm run build`). App bundle: 71.81 kB / 24.29 kB gzip; CSS bundle: 27.90 kB / 6.82 kB gzip.
+
+## Authored daylight / evening / night atmosphere modes slice — 13 October 2026
+
+Addressing `QUALITY_GATES.md` §M1 requirement ("One attractive daylight/evening Music Square (both authored lighting variants)") and Founder design checkpoints ("Founder approves: main day & night palettes"):
+
+- **Authored lighting presets (`lighting.ts`):** Created 3 authored time-of-day atmospheric presets:
+  1. **Daylight (☀):** Azure Lagos morning sky (`#5a7e9e`), bright high sun (`[-4, 22, 6]`, intensity 2.3), crisp balanced hemisphere fill (`#f0f5fc` / `#8a7460`), exposure 1.12.
+  2. **Golden Hour (🌅):** Rich warm sunset palette (`#413243`), peach low sun angle (`[-8, 16, 9]`, intensity 2.0), amber warm ambient (`#d9e2ed` / `#72523d`), exposure 1.16.
+  3. **Night Vibe (🌙):** Deep nocturnal Lagos purple (`#161320`), indigo lunar directional backlight (`[10, 14, -8]`, intensity 0.9), violet street mood ambient (`#3a2d55` / `#1a1422`), exposure 1.25.
+- **Top bar clock toggle:** Turned the top bar `.clock` pill into an interactive quick-toggle (`#time-toggle`) with active feedback. Tapping the clock smoothly cycles between Daylight ☀, Golden Hour 🌅, and Night Neon 🌙 with toast feedback.
+- **Display & data settings selector:** Added dedicated lighting atmosphere buttons (`[data-lighting]`) to the Display & Data settings sheet (`Phone` nav button) with `aria-pressed` indicators matching render quality controls.
+- **Persistence:** Time-of-day choice is saved locally under `scene-lighting` in `localStorage` and restored automatically on load.
+- **Automated test coverage:** Created `lighting.test.ts` asserting non-empty labels, positive light intensities, distinct sun angles/background colors between daylight and golden hour, and clean mode cycling.
+- **Verification:** All 24 automated tests pass (`npm test`). Production build succeeds cleanly (`npm run build`). App bundle: 73.88 kB / 25.01 kB gzip; CSS bundle: 28.04 kB / 6.84 kB gzip.
+
+## M1 trusted server & authoritative validation slice — 13 October 2026
+
+Addressing `QUALITY_GATES.md` §M1 requirement ("Trusted-server boundaries: position/movement validation on server; clients cannot spoof player count or bypass room rules"):
+
+- **Authenticated WebSocket session handshakes:**
+  - Extended `/presence` WebSocket connection handler in `presence.mjs` to accept `?token=` query parameters checked against the SQLite guest store (`store.resume(token)`).
+  - Implemented `{ type: 'auth', token }` post-handshake message allowing client apps to seamlessly promote active WebSocket connections to authenticated guest sessions once tokens resolve or renew.
+  - Bound client guest session initialization in `main.ts` directly into the presence connection via `presence.auth(guest.token)`.
+  - Wired SQLite guest store persistence directly into both production standalone server (`start.mjs`) and development server (`vite.config.ts`).
+- **Server-authoritative position delta & speed clamp:**
+  - Presence server tracks `lastMove` timestamps and enforces physics-based maximum distance caps per movement packet (`Math.max(10.0 * dt, 6.0)`).
+  - Speed-hack attempts or impossible instant teleports across the world boundaries are rejected and dropped without broadcast.
+- **Server-authoritative doorway transition validation:**
+  - Maintained canonical server-side doorway coordinates for Music Square, Palm Room, City Studio, and Release House (`DOORWAYS`).
+  - Room changes (`location !== player.location`) are validated against proximity to the corresponding entrance hotspot (`<= 5.5 m`); illegal room leaps without reaching the doorway are dropped.
+- **Automated test coverage:**
+  - Added unit test in `presence.test.mjs` verifying initial handshake authentication via token query string and post-connection `auth` promotion with persistent SQLite guest ID assignment.
+  - Added unit test verifying observer streams drop teleport jumps and unvalidated room leap packets while cleanly accepting legitimate physical movement.
+- **Verification:** All 26 automated tests pass (`npm test`). Production build succeeds cleanly (`npm run build`). App bundle: 74.13 kB / 25.09 kB gzip; CSS bundle: 28.04 kB / 6.84 kB gzip.
+
+## M2 City Studio beat workstation preview slice — 13 October 2026
+
+Addressing `QUALITY_GATES.md` §M2–M3 requirement ("V1 City Studio simple beat loops and authorised uploaded music → Release Hall for approved releases → listening") and Reference V03 ("City Studio / context help — Beat station and Desk contextual actions"):
+
+- **Three authored sound kits (`beatPattern.ts`):**
+  - **Afrobeats Core (104 BPM):** Punchy sweeping sub kick, snappy rim shot, rhythmic shaker hat, resonant log/bass.
+  - **Piano Groove (112 BPM):** Deep sub kick, crisp rim/clap, shaker roll, pitched warm log drum.
+  - **Highlife Vibe (96 BPM):** Organic talking kick, acoustic woodblock, bright hi-hat, melodic highlife bassline.
+  - Kits dynamically update pad row labels, synthesized timbre in `beatVoice()`, and default BPM.
+- **Dynamic tempo control & timing synchronization:**
+  - Added an interactive tempo slider (80–140 BPM) with real-time numerical display.
+  - Added `clampBpm()` and `bpmToStepMs()` to calculate precise 8th-note step playback intervals (`30000 / bpm`).
+  - Playback loop adapts step pulse timing immediately when tempo adjusts.
+- **Enhanced workstation UI & workflow (`main.ts`, `style.css`):**
+  - Added kit selection tabs with active `aria-pressed` states and BPM sub-tags.
+  - Added a "Clear" button (`clearPattern()`) to reset the active section's 32 steps.
+  - Persisted `kit` and `bpm` parameters within `scene-beat-arrangement` in `localStorage`, restoring smoothly on load.
+  - Enhanced WAV master renderer (`renderMasterWav`) to synthesize kit-specific timbres and tempo-scaled bar structures into the 30-second PCM WAV file.
+- **Automated test coverage (`beatPattern.test.ts`):**
+  - Added unit test asserting `clearPattern()` properly zeroes all 32 steps across 4 lanes.
+  - Added unit test asserting `clampBpm()` clamps to 80–140 BPM bounds and `bpmToStepMs()` computes accurate step millisecond durations.
+  - Added unit test asserting sound kits declare valid names, labels, and tempo ranges.
+  - Added unit test verifying `renderMasterWav()` generates a valid 30-second RIFF/WAVE PCM buffer with custom kits and BPM.
+- **Verification:** 29 automated tests pass across test suites (`npm test`). Production build succeeds cleanly (`npm run build`). App bundle: 77.18 kB / 26.02 kB gzip; CSS bundle: 29.24 kB / 7.07 kB gzip.
+
+## Smallest next PR sequence (updated)
+
+1. **M0 asset/audio proof:** licensed prototype avatar/animations and cleared test song; manifest with source, rights, expiry, size, and device measurements.
+2. **M2 release flow:** intake submission validation with local preview export, release sleeve artwork selection, and rights check checklist.
+3. **M3 concert stage separation:** real attendance/ticket separation preview in Palm Room.
+
+Do not claim M0 exit until the device, audio, reconnect, rights, and staging checks in `docs/handoff/implementation/QUALITY_GATES.md` pass.
+
+
+
+
+## M3 Palm Room rehearsal metric separation — 13 October 2026
+
+The stage interaction labels local playback as a rehearsal preview. It shows other connected sessions separately from ticket sales (not a ticketed event) and checked-in humans (not recorded). Disconnected presence shows live status unavailable instead of a false zero. This keeps event admission and settlement outside this slice.
+
+## Map route visibility and live People panel — 13 October 2026
+
+The district map now draws the player-to-destination route and marks the active destination. At a 390 × 844 browser viewport, the route remained visible and legible across the district map while the player walked. Choosing a place still starts physical movement; it does not teleport, enter or book it.
+
+The People navigation now shows only real connected sessions in the player's current place. It distinguishes an empty place from unavailable presence, displays current dancing state, and offers the existing room-wide wave only when another player is actually present. Avatar customization remains available from the People panel. No friendship, private messaging, or simulated population is claimed.
+
+Verification: 34 automated tests pass and the production build succeeds. Browser verification at 390 × 844 showed the route line and active destination, followed by the true Music Square empty state and disabled wave action. External avatar/animation and cleared-track evidence remain M0 asset/rights blockers.
+
+## Music Square materials and avatar profile pass — 13 October 2026
+
+- Added seeded tonal variation and shallow surface relief to the authored plaza pavers, plus warmer glass, sills, and plinths to give the surrounding storefronts more depth. All textures are generated from project-owned geometry and canvas drawing; handoff screenshots are still used only as visual references.
+- Reshaped the prototype shirt into a tapered garment and changed its fabric from large dot repeats to a quieter woven geometric pattern. Tuned the head and facial details and kept the existing walking and dance gait. This is still original stylized placeholder geometry, not a licensed production character or rig.
+- Updated the display panel's transfer note to distinguish the local uncompressed preview from CDN delivery. The local build reports 650 KiB transferred; the compiled JavaScript totals about 187 KiB gzip and CSS about 8 KiB gzip.
+- Verification: all 37 tests pass and the production build succeeds. At a 390 × 844 emulated mobile viewport, the live app rendered the new scene with no browser console errors. Balanced quality measured 16.8 ms median / 20.7 ms p95 (about 60 FPS) after closing a second test tab; Data Saver measured about 56 FPS. First rendered avatar was 4.15 s. These are desktop-browser viewport measurements, not real-device results.
+
+## Articulated avatar and instanced Music Square baseline — 13 October 2026
+
+- Split the prototype arms and legs into upper/lower segments with elbow, knee and foot pivots. Local and connected-player walk/dance poses now share alternating knee lift and elbow flex. Added gait tests for the joint motion.
+- Batched static plaza box geometry into instanced meshes grouped by equivalent material. A focused test verifies nested transforms, dimensions, batching and leaving non-box geometry alone. The device panel now reports live draw calls, triangle count and WebGL textures.
+- Browser measurement at 390 × 844 (one connected client, Balanced): 832 → 182 draw calls (about 78% fewer); 34,046 scene triangles; 12 textures; 16.6 ms median / 19.6 ms p95 (about 60 FPS); avatar rendered in 0.95 s; 653 KiB local uncompressed transfer; 0 B track audio before Play. The batching includes off-screen boxes in the triangle total. Browser console reported no errors. Dance articulation and the idle return were inspected in the running scene.
+- Verification: all 39 tests pass and `npm run build` succeeds. This is desktop Chromium at an emulated mobile viewport; physical Android/iPhone and 5-/20-avatar checks remain outstanding. The production rig and commercially cleared recorded track remain documented asset gates.
+
+## 20-client presence stress test — 13 October 2026
+
+Added an integration test that connects 20 real WebSocket test clients to an isolated server, verifies the room snapshot contains exactly those 20 sessions, then verifies one movement update reaches all 19 peers and an observer with the same server-assigned player id and position. Test sockets are terminated at cleanup and do not add simulated players to the running game. In a separate 390 × 844 desktop-Chromium run with 19 temporary clients plus the browser player, remote-shadow optimization reduced the 20-avatar scene from 1,911 draws / 374,868 triangles and ~41–43 FPS to 1,113 draws / 209,264 triangles and ~56–60 FPS. After disconnect, texture use returned from 31 to the 12-texture baseline; no browser console errors remained. Physical-device results are still required.
+
+## M1 local public-place chat, M2 Lagos release calendar and articulated emotes — 14 October 2026
+
+- **Local public-place chat (Chapter 05 §11.2):** Chat starts muted. Players can opt in from the quick-chat menu; only the six authored phrases are sent, and only opted-in sessions in the same public place receive them. The server rejects custom text, rate-limits attempts, and does not relay emotes across place boundaries. Turning chat off hides the local feed and current speech bubbles. This safe prototype path does not claim to replace a production moderation service.
+- **Release calendar (Master GDD §11):** Added a read-only `/api/release-window` based on server time in `Africa/Lagos`. The Release House preview shows the next eligible Friday, Wednesday 18:00 submission cutoff, Thursday 18:00 moderation checkpoint, and Friday 19:00 premiere. It explicitly says no date is reserved and submission/approval are unavailable.
+- **Articulated gestures:** Wave, cheer, heart and fire emotes now animate the avatar's shoulder and elbow joints with eased entry/return, overlaying walk or dance poses for both local and connected avatars. Pure pose tests cover gesture shape, symmetry, clamping and neutral return.
+- **Verification:** Full suite passes 50 tests. Three calendar unit tests cover the Wednesday cutoff and rollover. Chat policy tests cover opt-in, same-place delivery rules, curated phrases and custom-message rejection; server integration verifies the subscription flow. Production TypeScript/Vite build succeeds. In the running 390 × 844 browser, the Release House displayed Friday 16 October 19:00 with the documented Wednesday and Thursday checkpoints; chat opt-in sent a curated greeting and muting cleared it. The avatar wave pose was inspected in the live 3D scene. Browser console had zero errors after the favicon was added.
+- **Build output:** Main app JS 103.78 kB (34.83 kB gzip), CSS 33.06 kB (7.85 kB gzip), Three.js vendor chunk 567.38 kB (140.97 kB gzip). Vite reports its nonfatal >500 kB vendor-chunk warning. Physical Android/iPhone, low-end data/thermal, production CDN and licensed-audio checks remain outstanding.
+
+## M3 Palm Room stagecraft and local lighting preview — 14 October 2026
+
+- Replaced the bare Palm Room stage blockout with authored truss and spot fixtures, a custom palm-room backdrop, a front-facing drum kit, keyboard, amp stack, floor monitors, road cases and stage cabling. The venue camera now leaves more room around the player and frames the stage at mobile width. These remain compact, project-owned procedural meshes and canvas art, not imported reference pixels or licensed GLBs.
+- Added three lighting tests at the physical stage interaction: Warm wash, Sunset and Spot. Selecting one updates the stage lights and beams in the running scene. The panel explicitly labels these as local previews; it does not claim purchased gear, an installed package, ticket sales or human check-ins. The rehearsal ledger continues to report other live sessions separately from admission.
+- Added a versioned, validated stage preview template stored in this browser. Players can save the selected light look and temporary floor-light preview, then restore those choices after reloading and walking back into Palm Room. Saving this preview does not create venue ownership, equipment inventory or a server booking.
+- **GDD trace:** Chapter 06 §11.2's stage-planning rehearsal; the asset brief's limited snap-point gear preview; visual intent from V06 and preferred V27. Commercial leases, inventory, tickets and public performances remain unavailable without their required server, payment and rights systems.
+- **Live browser:** At 390 × 844 in the production preview, walked the district-map route to the Palm Room, entered at its physical door, walked to the stage, selected Sunset and showed the floor-light preview. Saved the preview, reloaded the app, walked back to the stage, and confirmed Sunset was selected and the preview was visible. The save notice appeared; browser console errors: 0.
+- **Performance:** One-player Balanced desktop Chromium at the mobile viewport measured 31.4 ms median / 32.4 ms p95 (~32 FPS), 181 draws, 22,938 triangles and 18 textures in the venue. This is only just above the 30 FPS engineering target, so the stage needs further headroom work and physical Android testing. It is not a release-performance claim.
+- **After saved-preview restore:** 31.2 ms median / 32.4 ms p95 (~32 FPS), 186 draws, 23,590 triangles, 19 textures and 106 KiB reported transfer. The metrics are from embedded desktop Chromium at 390 × 844, not from a physical phone.
+- **Build:** Production TypeScript/Vite build succeeds. Latest app JS 105.33 kB (35.37 kB gzip), CSS 33.64 kB (7.96 kB gzip), Palm Room chunk 10.07 kB (4.53 kB gzip), Three.js vendor 567.38 kB (140.97 kB gzip). Vite's >500 kB vendor warning remains nonfatal.
+
+## Player textile finish — 14 October 2026
+
+- Reworked the player's ochre shirt texture into a finer repeated floral print with dark teal and terracotta marks; added directional weave to the purple trousers, a subtle back-yoke seam and a cuff hem. The silhouette, face, segmented joints, emotes and colors remain consistent with the preferred V27 avatar reference.
+- The live production preview at 390 × 844 shows the updated outfit in Music Square. The locally generated clothing adds no external images or model downloads. The prototype is still stylized geometry; it is not a production human rig or photoreal character.
+- **Verification:** Full suite passes 53 tests; production TypeScript/Vite build succeeds. Browser console errors: 0. One-player Balanced browser metrics from the pass before saving stage templates: 31.4 ms median / 32.7 ms p95 (~32 FPS), 186 draws, 34,686 triangles, 13 textures and 105 KiB reported transfer. This embedded desktop-browser reading is only slightly above the documented 30 FPS target; entry Android and iPhone tests remain necessary.
+- **Latest build:** Main app JS 106.46 kB (35.69 kB gzip), CSS 33.84 kB (8.01 kB gzip), Palm Room chunk 10.07 kB (4.53 kB gzip), Three.js vendor 567.38 kB (140.97 kB gzip). Vite's vendor-chunk warning remains nonfatal.
+
+## M2 Release House physical preparation journey — 14 October 2026
+
+- Split the single record-intake overlay into six physical Release House stations in the Chapter 02 order: Record Intake → Artwork Frame → Title Sleeve → Listening Booth → Rights Console → Release Calendar. Each station has its own authored world marker, proximity interaction, focus panel and walking route. The Desk can guide the next move without teleporting.
+- Added a compact mobile step strip, previous/next walking cues, editable title/artist/genre metadata, an original local sleeve preview and PNG export, local master audition/export when available, rights declarations, and a read-only Lagos Friday window at the final station. The local calendar preflight remains blocked unless its asset and rights requirements are present; even a local pass never uploads, reserves a date, approves rights or publishes a song.
+- **GDD trace:** Chapter 02 §§5.4, 6 and 7.3; Chapter 09 §§4, 5 and 24; `QUALITY_GATES.md` M2–M3. Rights claims remain declarations awaiting review; no real-song upload or public catalogue action was added.
+- **Live browser:** In production Chromium at 390 × 844, walked from Music Square through the physical Release House door and through all six in-room stations. Saved and read back a title, artist and genre locally; confirmed the Rights Console begins with unchecked declarations and the calendar says “no date reserved” with submission unavailable. Browser console errors: 0.
+- **Performance:** Release House measured 16.7 ms median / 18.6 ms p95 (~60 FPS), 173 draws, 19,454 triangles, 21 textures and 112 KiB reported transfer at the emulated mobile viewport. First avatar rendered in 1.03 s. These are desktop-Chromium measurements, not physical-phone evidence.
+- **Verification:** Full suite passes 57 tests; `npm run build` succeeds. Main app JS 111.50 kB (37.39 kB gzip), CSS 35.79 kB (8.40 kB gzip), Release House chunk 2.78 kB (1.54 kB gzip), Three.js vendor 567.38 kB (140.97 kB gzip). Vite’s nonfatal vendor-chunk warning remains.
+
+## M2 Service NPC ambience and Palm Room visual pass — 14 October 2026
+
+- Added one venue usher and one City Studio technician using original procedural 3D geometry and locally generated clothing and role textures. Each has a readable NPC/role marker, a light breathing cycle and a small authored idle gesture. Both are explicitly cosmetic (`actorType: NPC`, `countsAsHuman: false`, `financialEffect: none`) and remain outside player counts, tickets, attendance, wallet, and presence systems.
+- Reworked the Palm Room’s roofline into an open dusk view with a locally generated Lagos skyline. Added subtle tile variation and floor relief; stage light beams now appear only while a local performance preview is playing. Adjusted the City Studio signage to keep the in-world sign clear of the HUD and monitor.
+- **GDD trace:** Chapter 09 §11 (venue usher and studio technician roles) and §28 (visible NPC identification and no false player counts); `PERFORMANCE_MEDIA_BUDGET.md` entry-device target of 30 FPS. No staff payments, access control, real attendance, leases or purchases were added.
+- **Live browser:** Production preview at 390 × 844. Walked into Palm Room and City Studio from the map; verified both staff characters and their role tags in their respective rooms. Browser console errors: 0. Captures: `C:\Users\USER\Desktop\the-scene-palm-room-npc.png` and `C:\Users\USER\Desktop\the-scene-studio-final.png`.
+- **Performance:** One active desktop Chromium tab, Balanced quality. Palm Room: 16.6 ms median / 19.0 ms p95 (~60 FPS), 262 draws, 28,240 triangles, 25 textures, 129 KiB reported transfer and 1.09 s avatar-ready. City Studio: 16.7 ms median / 18.7 ms p95 (~60 FPS), 189 draws, 22,172 triangles, 22 textures, 113 KiB transfer and 0.94 s avatar-ready. Mobile viewport emulation is not a physical-device result.
+- **Verification:** Full suite previously passed 59 tests; final visual edits passed the two focused NPC tests, final `npm run build`, and direct browser checks of both rooms. Main app JS 111.61 kB (37.44 kB gzip), CSS 35.79 kB (8.40 kB gzip), Palm Room chunk 12.19 kB (5.29 kB gzip), City Studio chunk 1.90 kB (1.11 kB gzip), NPC module 5.18 kB (2.15 kB gzip), Three.js vendor 567.38 kB (140.97 kB gzip). Vite's large vendor-chunk warning remains nonfatal.
+
+## M2 Desk Bot first-track journey — 14 October 2026
+
+- Turned the Today tab into a rules-based four-step private music path: save a beat → render a local 30-second WAV → save a private sleeve draft → play it on the Palm Room stage. Each step derives from the existing local game state and links to a real walkable hotspot; it does not teleport or advance without the corresponding player action.
+- Today remains capped at three current options. Release House keeps its separate six-station route; the completion state promises no cash, popularity, approval, or publication. The saved journey marker is local to this device.
+- **GDD trace:** Chapter 10 §§5 and 8.2 (Today cards, structured state and physical navigation); Master GDD §35 M2–M3; `QUALITY_GATES.md` M2–M3. Audio remains local, and the stage preview still reports no ticket sales or recorded attendance.
+- **Live browser:** In production Chromium at 390 × 844, opened Today, followed “Take me there” from Music Square to City Studio on foot, entered the studio and opened the beat workstation. The card showed Step 1 of 4 without changing progress before the player saves a beat. Browser console errors: 0. Captures: `C:\Users\USER\Desktop\the-scene-studio-journey.png` and `C:\Users\USER\Desktop\the-scene-beat-desk-open.png`.
+- **Verification:** Full suite passes 63 tests, including four journey transition tests and server/room integration tests. Production TypeScript/Vite build succeeds. `git diff --check` passes after trimming four inherited trailing blank lines; Git still emits its usual LF-to-CRLF working-copy notices.
+- **Studio performance after journey integration:** With the beat desk open in one production browser tab at 390 × 844, 16.7 ms median / 17.1 ms p95 (~60 FPS), 159 draws, 19,336 triangles, 22 textures, 148 KiB reported transfer and 2.63 s avatar-ready. These browser-only measurements do not replace physical-phone testing.
+- **Latest bundle:** Main app JS 112.95 kB (38.12 kB gzip), CSS 36.32 kB (8.49 kB gzip), Palm Room 12.19 kB (5.29 kB gzip), City Studio 1.90 kB (1.11 kB gzip), NPC module 5.18 kB (2.15 kB gzip), Three.js vendor 567.38 kB (140.97 kB gzip). The vendor warning remains nonfatal.
+
+## M2 Desk Bot private master audition — 14 October 2026
+
+- Expanded the Today first-track path to five steps: save a beat → render a private 30-second master → save a private release sleeve → audition at the Release House Listening Booth → preview on the Palm Room stage. Each card targets an existing physical station; interior-to-interior travel still goes through the room exit.
+- The booth step advances only after browser audio playback successfully starts. Completion is saved in this browser only. The release panel says the master is not submitted, scheduled, or counted as a public listen. No catalogue, chart, sales, ticket or attendance state changes.
+- Playback feedback now changes to “Private audition complete” when the 30-second audio ends or “Private audition stopped” when the player stops it, so the booth cannot remain stuck in a playing state.
+- **GDD trace:** Chapter 02 §§5.4 and 7.3 (local listening booth), Chapter 07 §5.11 (private demos do not count as public discovery), Chapter 10 §§5 and 8.2 (Today cards use verified local state and physical routes), and `QUALITY_GATES.md` M2–M3.
+- **Live browser:** Used a separate `localhost` origin to protect the existing `127.0.0.1` local save. Walked from Music Square into City Studio, changed Section B, saved the pattern and rendered the local WAV. Walked through the studio exit to Release House, saved a private title/artist draft, routed to the physical Listening Booth and started playback. The visible status read “Playing your private master. Not submitted, scheduled, or counted as a public listen”; the local audition flag became `true`. Audio ended locally; the user's original local data was untouched.
+- **Verification:** All 63 tests pass, including four music-journey transition tests for the booth route and stage continuation. `npm run build` succeeds. `git diff --check` exits 0; Git reports only existing LF-to-CRLF working-copy notices.
+- **Latest bundle:** Main app JS 113.75 kB (38.28 kB gzip), CSS 36.32 kB (8.49 kB gzip), Palm Room 12.19 kB (5.29 kB gzip), City Studio 1.90 kB (1.11 kB gzip), NPC 5.18 kB (2.15 kB gzip), Three.js 567.38 kB (140.97 kB gzip). Vite's nonfatal vendor-chunk warning remains; this logic-only slice adds no external asset or audio requests.
+
+## M2 Desk Bot Ask routes — 14 October 2026
+
+- Replaced the static Ask panel with a deterministic local guide for four supported activities: make a beat, prepare a private release draft, listen to an original discovery preview, or explore Palm Room. The answer explains the relevant privacy/cost boundary and offers a real walking route. Requests across rooms direct the player to the current room exit first.
+- Unknown questions return “I could not match that yet” and four visible starter prompts. No AI, API, prediction, commitment, payment, or invented opportunity is involved.
+- **GDD trace:** Chapter 10 §§8.1–8.3 (simple keyword matches, truthful fallback, approved action routes and clear reasons), Chapter 10 §9 (`MAKE_BEAT`, `PREPARE_RELEASE`, and `PLAY_NEW_MUSIC` stay linked to real game flows), and the handoff's no-LLM Phase 1 requirement.
+- **Live browser:** At the 390 × 844 mobile viewport, Ask returned “Make a beat” for “Where can I make a beat?”, with the local-only explanation and a City Studio route. Selecting the route started physical movement through the world. An unsupported fame question showed the honest fallback with no route. Browser console: zero errors and warnings. Capture: `C:\Users\USER\Desktop\the-scene-ask-desk-live.png`.
+- **Verification:** Full test suite passes 67 tests, including four new query/fallback/physical-route tests. `npm run build` succeeds; `git diff --check` exits 0 aside from Git's existing LF-to-CRLF notices.
+- **Latest bundle:** Main app JS 116.45 kB (39.20 kB gzip), CSS 37.12 kB (8.65 kB gzip), Palm Room 12.19 kB (5.29 kB gzip), City Studio 1.90 kB (1.11 kB gzip), NPC 5.18 kB (2.15 kB gzip), Three.js 567.38 kB (140.97 kB gzip). This adds no external data, image, or audio request. Vite's nonfatal vendor-chunk warning remains.

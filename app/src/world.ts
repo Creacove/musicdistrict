@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { instanceStaticBoxes } from './instanceBoxes.ts'
 
 const mat = (color: string, metalness = 0, emissive = '#000000') =>
   new THREE.MeshStandardMaterial({ color, roughness: .78, metalness, emissive, emissiveIntensity: .45 })
@@ -101,20 +102,56 @@ function tileFloor(parent: THREE.Group, width: number, depth: number, color: str
   const canvas = document.createElement('canvas')
   canvas.width = canvas.height = 512
   const c = canvas.getContext('2d')!
+  const relief = document.createElement('canvas')
+  relief.width = relief.height = 512
+  const bump = relief.getContext('2d')!
   c.fillStyle = grout
   c.fillRect(0, 0, 512, 512)
+  bump.fillStyle = '#686868'
+  bump.fillRect(0, 0, 512, 512)
   const tiles = 4
+  let seed = 0x51ce
+  const random = () => {
+    seed = (seed * 1664525 + 1013904223) >>> 0
+    return seed / 0x100000000
+  }
+  const paverTones = ['#b5a28c', '#ad9a85', '#b9a68e', '#ae9d88', '#b2a08a']
   for (let row = 0; row < tiles; row++) for (let col = 0; col < tiles; col++) {
-    c.fillStyle = color
-    c.fillRect(col * 128 + 4, row * 128 + 4, 120, 120)
-    c.fillStyle = 'rgba(255,255,255,.035)'
-    c.fillRect(col * 128 + 5, row * 128 + 5, 118, 2)
+    const x = col * 128 + 4
+    const y = row * 128 + 4
+    c.fillStyle = paverTones[Math.floor(random() * paverTones.length)] ?? color
+    c.fillRect(x, y, 120, 120)
+    c.fillStyle = 'rgba(255,255,255,.12)'
+    c.fillRect(x + 2, y + 2, 116, 2)
+    c.fillStyle = 'rgba(255,255,255,.045)'
+    c.fillRect(x + 2, y + 3, 2, 112)
+    c.fillStyle = 'rgba(48,36,27,.08)'
+    c.fillRect(x + 2, y + 116, 116, 2)
+    bump.fillStyle = '#a0a0a0'
+    bump.fillRect(x, y, 120, 120)
+    bump.fillStyle = '#b6b6b6'
+    bump.fillRect(x + 2, y + 2, 116, 2)
+    bump.fillStyle = '#888888'
+    bump.fillRect(x + 2, y + 116, 116, 2)
+    for (let fleck = 0; fleck < 28; fleck++) {
+      const fx = x + 5 + Math.floor(random() * 110)
+      const fy = y + 6 + Math.floor(random() * 108)
+      const size = 1 + Math.floor(random() * 3)
+      c.fillStyle = random() > .5 ? 'rgba(255,247,226,.09)' : 'rgba(61,48,38,.055)'
+      c.fillRect(fx, fy, size, size)
+      const reliefValue = 143 + Math.floor(random() * 28)
+      bump.fillStyle = `rgb(${reliefValue},${reliefValue},${reliefValue})`
+      bump.fillRect(fx, fy, size, size)
+    }
   }
   const tex = new THREE.CanvasTexture(canvas)
+  const bumpTexture = new THREE.CanvasTexture(relief)
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping
+  bumpTexture.wrapS = bumpTexture.wrapT = THREE.RepeatWrapping
   tex.repeat.set(width / 4.5, depth / 4.5)
+  bumpTexture.repeat.copy(tex.repeat)
   tex.colorSpace = THREE.SRGBColorSpace
-  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(width, depth), new THREE.MeshStandardMaterial({ map: tex, roughness: 1 }))
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(width, depth), new THREE.MeshStandardMaterial({ map: tex, bumpMap: bumpTexture, bumpScale: .035, color: '#ffffff', roughness: .91 }))
   mesh.rotation.x = -Math.PI / 2
   mesh.receiveShadow = true
   parent.add(mesh)
@@ -200,15 +237,19 @@ function festoon(parent: THREE.Group, from: [number, number, number], to: [numbe
 export function makeSquare() {
   const root = new THREE.Group()
   root.name = 'Music Square'
-  tileFloor(root, 43, 40, '#a18f7b', '#756b60')
+  tileFloor(root, 43, 40, '#b19e87', '#877868')
   // Layered street edge gives the small playable square a surrounding city.
-  const sand = mat('#a88b71'), pale = mat('#c5a488'), brick = mat('#805b4c'), windowGlass = mat('#d6ad78', .1, '#493320')
+  const sand = mat('#a88b71'), pale = mat('#c5a488'), brick = mat('#805b4c')
+  const windowGlass = new THREE.MeshStandardMaterial({ color: '#c79660', roughness: .31, metalness: .06, emissive: '#7e4727', emissiveIntensity: .32 })
   for (const [x, z, w, h, face] of [[-19, -22, 7, 14, sand], [-10, -25, 8, 17, pale], [4, -24, 9, 13, brick], [17, -23, 7, 16, sand], [-23, -6, 4, 12, pale], [23, -4, 4, 14, brick]] as const) {
     box(root, w, h, 2.3, face, x, h / 2, z)
+    box(root, w + .24, .5, 2.55, brick, x, .25, z + .035)
     box(root, w + .4, .36, 2.7, charcoal, x, h, z)
     for (let floor = 1; floor < h - 1; floor += 2.8) for (let col = -w / 2 + 1; col < w / 2; col += 2.3) {
       box(root, 1.05, 1.45, .08, charcoal, x + col, floor + .6, z + 1.18)
       box(root, .85, 1.25, .09, windowGlass, x + col, floor + .6, z + 1.24)
+      box(root, .055, 1.2, .06, brass, x + col, floor + .6, z + 1.31)
+      box(root, .96, .075, .14, cream, x + col, floor - .16, z + 1.28)
     }
   }
   for (const [x, z] of [[-16, -17], [7, -17], [20, -17]]) {
@@ -309,94 +350,6 @@ export function makeSquare() {
   for (const x of [1.45, 4.55]) box(root, .14, .85, 1.1, black, x, .43, 9)
   box(root, 2.5, 3.8, .12, black, 20, 2, -1.5)
   sign(root, ['LAGOS', 'CREATES', 'STARS'], 2.35, 3.6, 20, 2, -1.41, { bg: '#4b2c32', ink: '#f1dac0', size: 92 })
+  instanceStaticBoxes(root)
   return root
-}
-
-export function makePalmRoom() {
-  const root = new THREE.Group()
-  root.name = 'Palm Room'
-  tileFloor(root, 28, 27, '#876c5a', '#5d5048')
-  box(root, 28, 7, .5, mat('#483c3b'), 0, 3.5, -13.25)
-  box(root, .5, 7, 27, mat('#51443e'), -14, 3.5, 0)
-  box(root, .5, 7, 27, mat('#51443e'), 14, 3.5, 0)
-  for (const x of [-10, -5, 0, 5, 10]) box(root, .2, 7, .25, wood, x, 3.5, -12.9)
-  box(root, 14.2, .8, 5, charcoal, 0, .38, -9.3)
-  box(root, 14.4, .13, .16, brass, 0, .81, -6.8)
-  box(root, 13.6, 5.1, .18, black, 0, 3.35, -12.82)
-  sign(root, ['🌴', 'PALM ROOM'], 6.4, 3.8, 0, 3.8, -12.68, { bg: '#19181c', ink: '#f4d19a', size: 130 })
-  for (const x of [-6.6, 6.6]) speaker(root, x, 1.7, -6.9, 1.6)
-  microphone(root, -1.9, -8.1)
-  microphone(root, 2.2, -8.1)
-  // Drum kit and lighting truss are actual geometry.
-  cylinder(root, .67, .67, .7, cream, 1, 1.42, -10.4, 16)
-  cylinder(root, .36, .36, .37, charcoal, -.1, 1.24, -10, 14)
-  cylinder(root, .42, .42, .4, charcoal, 2.1, 1.25, -10, 14)
-  for (const x of [-.9, 3]) {
-    cylinder(root, .025, .025, 1.2, black, x, 1.55, -9.8)
-    cylinder(root, .44, .44, .03, brass, x, 2.15, -9.8, 14)
-  }
-  box(root, 16, .13, .13, black, 0, 5.85, -7)
-  for (const x of [-6, -3, 0, 3, 6]) {
-    box(root, .33, .38, .36, black, x, 5.47, -7)
-  }
-  box(root, 4.2, .4, .8, charcoal, 0, .19, -6.4)
-  box(root, 4.4, .08, .12, brass, 0, .39, -6.0)
-  const stageGlow = new THREE.PointLight('#f8b472', 13, 16)
-  stageGlow.position.set(0, 4.5, -7.7)
-  root.add(stageGlow)
-  const performanceSpot = new THREE.SpotLight('#ffe2a8', 0, 22, Math.PI / 4, .5)
-  performanceSpot.position.set(0, 6.2, -6.5)
-  performanceSpot.target.position.set(0, .8, -8)
-  root.add(performanceSpot)
-  root.add(performanceSpot.target)
-  const stageFill = new THREE.PointLight('#ff70a6', 0, 14)
-  stageFill.position.set(0, 3.2, -8.5)
-  root.add(stageFill)
-  // Bar and lounge seating on the left.
-  box(root, 6.5, 1.2, 1.35, wood, -9.4, .6, -3)
-  box(root, 6.7, .13, 1.55, brass, -9.4, 1.2, -3)
-  for (const y of [2.2, 3.35]) {
-    box(root, 6.3, .1, .65, wood, -9.4, y, -5.7)
-    for (let i = 0; i < 7; i++) cylinder(root, .1, .13, .5, mat(i % 2 ? '#bb8d51' : '#63906b', .3), -12 + i * .83, y + .29, -5.65)
-  }
-  const barGlow = new THREE.PointLight('#efaa65', 6, 11)
-  barGlow.position.set(-10, 3.5, -4.8)
-  root.add(barGlow)
-  for (const [x, z] of [[-9, 4], [-5.5, 6], [5, 4], [8.8, 1.3]]) {
-    cylinder(root, .58, .6, .11, wood, x, .72, z, 12)
-    cylinder(root, .055, .055, .65, black, x, .36, z)
-    for (let i = 0; i < 2; i++) box(root, .65, .72, .68, mat('#41615d'), x + (i ? 1.1 : -1.1), .37, z)
-    cylinder(root, .08, .08, .16, mat('#ffe3a3', .2, '#ffb875'), x, .82, z)
-  }
-  // Mixing workstation and visible equipment snap point.
-  box(root, 4.2, 1.2, 1.7, charcoal, 8.8, .6, 7.4)
-  box(root, 3.8, .12, 1.4, mat('#4e5965', .45), 8.8, 1.27, 7.4)
-  for (let i = 0; i < 14; i++) box(root, .09, .06, .09, i % 3 ? violet : mint, 7.2 + (i % 7) * .5, 1.36, 7.1 + Math.floor(i / 7) * .34)
-  box(root, 1.05, .8, .07, black, 9.5, 1.72, 6.92)
-  box(root, .9, .62, .04, violet, 9.5, 1.72, 6.98)
-  sign(root, ['MUSIC', 'PEOPLE', 'GOOD TIMES'], 2.2, 3.4, -12.6, 3.1, -8.3, { bg: '#332924', ink: '#f8d195', size: 78 })
-  sign(root, ['LAGOS', 'SOUNDS', 'BETTER'], 2.1, 3.3, 12.6, 3.2, -7.8, { bg: '#552c3f', ink: '#ffdcb2', size: 82 })
-  for (const [x, z] of [[-11, 9], [11, -3]]) palm(root, x, z, 3.2)
-  box(root, 3.2, 4.5, .16, wood, -10, 2.25, 12.45)
-  sign(root, ['EXIT TO SQUARE'], 3.6, .64, -10, 5.1, 12.53, { bg: '#22252a', ink: '#f3ebd7', size: 100 })
-  const equipment = new THREE.Group()
-  box(equipment, .9, .7, .8, black, 3.2, 1.1, -6.6)
-  cylinder(equipment, .1, .12, .7, black, 3.2, 1.78, -6.6)
-  const bulb = new THREE.Mesh(new THREE.SphereGeometry(.22, 10, 8), mat('#ffe1a7', .1, '#ff9f3c'))
-  bulb.position.set(3.2, 2.15, -6.6)
-  equipment.add(bulb)
-  const equipmentLight = new THREE.PointLight('#e295ff', 3, 7)
-  equipmentLight.position.set(1.5, 2.5, -6.6)
-  equipment.add(equipmentLight)
-  equipment.visible = false
-  root.add(equipment)
-  return {
-    root,
-    setEquipmentPreview(visible: boolean) { equipment.visible = visible },
-    setStagePerformance(active: boolean) {
-      performanceSpot.intensity = active ? 28 : 0
-      stageFill.intensity = active ? 8 : 0
-      stageGlow.intensity = active ? 22 : 13
-    },
-  }
 }

@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { createServiceNpc, updateServiceNpc } from './serviceNpc.ts'
 
 const material = (color: string, emissive = '#000000') => new THREE.MeshStandardMaterial({ color, roughness: .78, emissive, emissiveIntensity: .35 })
 const wall = material('#3b3340'), dark = material('#1a1d24'), wood = material('#604536')
@@ -26,8 +27,7 @@ export function makeStudio() {
   box(.5, 7, 24, wall, -13, 3.5, 0)
   box(.5, 7, 24, wall, 13, 3.5, 0)
   for (const x of [-10, -6, -2, 2, 6, 10]) box(.11, .02, 24, material('#6d5953'), x, .015, 0)
-  label('CITY STUDIO', 8, 2, 0, 4.7, -11.7)
-  label('MAKE YOUR FIRST BEAT', 6.2, 1.2, 0, 2.8, -11.6, '#b6ffe5')
+  label('CITY STUDIO', 8, 1.5, 0, 3.55, -11.7)
   // Producer desk, eight illuminated pads, speakers and a simple workstation screen.
   box(8, 1.1, 2.8, wood, 0, .55, -6.2)
   box(8.4, .16, 3, dark, 0, 1.2, -6.2)
@@ -46,5 +46,9 @@ export function makeStudio() {
   box(3.8, 4.4, .2, wood, -10, 2.2, 11.75)
   label('EXIT TO SQUARE', 4.3, .75, -10, 5, 11.65)
   const light = new THREE.PointLight('#e7b28e', 12, 19); light.position.set(-3, 5.8, -4); root.add(light)
+  const technician = createServiceNpc('studio-technician')
+  technician.position.set(3.3, 0, -3.8)
+  root.add(technician)
+  root.userData.updateServiceNpc = (time: number) => updateServiceNpc(technician, time)
   return root
 }

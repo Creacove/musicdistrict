@@ -14,11 +14,23 @@ test('guest save is authenticated, idempotent and resumes from SQLite', async ()
     assert.equal(createdResponse.status, 201)
     const guest = await createdResponse.json()
     const auth = { Authorization: `Bearer ${guest.token}` }
+    const catalogueRes = await fetch(`${base}/api/catalogue`)
+    assert.equal(catalogueRes.status, 200)
+    const { tracks } = await catalogueRes.json()
+    assert.equal(tracks.length >= 2, true)
+    assert.equal(tracks[0].id, 'square-sketch')
+
     assert.equal((await fetch(`${base}/api/saves`)).status, 401)
     assert.equal((await fetch(`${base}/api/saves/square-sketch`, { method: 'PUT', headers: auth })).status, 200)
     assert.equal((await fetch(`${base}/api/saves/square-sketch`, { method: 'PUT', headers: auth })).status, 200)
+    assert.equal((await fetch(`${base}/api/saves/non-existent`, { method: 'PUT', headers: auth })).status, 404)
     const resumed = await (await fetch(`${base}/api/guest`, { method: 'POST', headers: auth })).json()
     assert.equal(resumed.id, guest.id)
     assert.deepEqual(resumed.saves, ['square-sketch'])
+
+    // Remove save test
+    const deleteRes = await fetch(`${base}/api/saves/square-sketch`, { method: 'DELETE', headers: auth })
+    assert.equal(deleteRes.status, 200)
+    assert.deepEqual((await deleteRes.json()).saves, [])
   } finally { server.close(); store.close() }
 })

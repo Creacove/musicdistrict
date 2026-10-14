@@ -1,15 +1,23 @@
 import * as THREE from 'three'
 import { BOUNDARIES, getNearby, isPointBlocked, resolveCollision, type Hotspot, type Location } from './worldModel.ts'
 import { findWalkPath, type WalkPoint } from './navigation.ts'
-import { makePalmRoom, makeSquare } from './world.ts'
+import { makeSquare } from './world.ts'
 import { reportedTransferBytes, summarizeFrames } from './performance.ts'
-import { makeStudio } from './studioWorld.ts'
-import { renderMasterWav, sectionsDiffer, starterPattern, toggleStep, validPattern, type BeatPattern } from './beatPattern.ts'
+import { sectionsDiffer, starterPattern, toggleStep, validPattern, clearPattern, clampBpm, bpmToStepMs, SOUND_KITS, type BeatPattern, type SoundKit } from './beatPattern.ts'
 import { loadLocalMaster, saveLocalMaster } from './localMaster.ts'
-import { makeReleaseHouse } from './releaseWorld.ts'
-import { blankReleaseDraft, releaseBlockers, validReleaseDraft, type ReleaseDraft } from './releaseDraft.ts'
-import { connectPresence, type PresencePlayer } from './presence.ts'
-import { openGuest, saveGuestPreview } from './guest.ts'
+import { blankReleaseDraft, releaseBlockers, validReleaseDraft, canPreflight, RELEASE_GENRES, type ReleaseDraft, type ArtworkVariant, type ReleaseGenre } from './releaseDraft.ts'
+import { createReleaseSleeveSvg } from './releaseArtwork.ts'
+import { rehearsalMetrics } from './eventPreview.ts'
+import { connectPresence, type EmoteType, type PresencePlayer } from './presence.ts'
+import { peopleInLocation } from './people.ts'
+import { emotePose, walkingPose } from './avatarMotion.ts'
+import { disposeSpriteResources } from './avatarLifecycle.ts'
+import { fetchCatalogue, openGuest, removeGuestSave, saveGuestPreview, type CatalogueTrack } from './guest.ts'
+import { LIGHTING_PRESETS, getNextLightingMode, type LightingMode } from './lighting.ts'
+import { parseStageTemplate, serializeStageTemplate, type StageLook } from './stageTemplate.ts'
+import { RELEASE_JOURNEY, nextReleaseStation, previousReleaseStation, releaseStation, type ReleaseStationId } from './releaseJourney.ts'
+import { nextMusicJourneyStep } from './musicJourney.ts'
+import { resolveDeskQuestion } from './deskQuery.ts'
 import './style.css'
 
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
@@ -19,7 +27,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
   <header class="topbar">
     <div class="brand"><span class="brand-mark">♛</span><span>THE<br>SCENE</span></div>
     <div class="top-divider"></div>
-    <div class="clock"><span>☀</span><div><b>GOLDEN HOUR</b><small id="place-name">Music Square · Lagos</small></div></div>
+    <div class="clock" id="time-toggle" role="button" tabindex="0" title="Switch atmosphere (Daylight / Golden Hour / Night)"><span>🌅</span><div><b id="time-label">GOLDEN HOUR</b><small id="place-name">Music Square · Lagos</small></div></div>
     <div class="top-divider mood-divider"></div>
     <div class="mood"><i></i> EXPLORING</div>
     <button id="audio" aria-label="Audio off">♫ <span>OFF</span></button>
@@ -34,6 +42,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
     <p id="map-context">Choose a place. The route leads to its physical entrance.</p>
     <div class="district-map" role="img" aria-label="Map of Music Square and nearby destinations">
       <span class="map-road map-road-horizontal"></span><span class="map-road map-road-vertical"></span>
+      <svg id="map-route-line" class="map-route-line" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true" hidden><line id="map-route-stroke" x1="0" y1="0" x2="0" y2="0" /></svg>
       <span class="map-plaza">MUSIC<br>SQUARE</span><span id="map-avatar" class="map-avatar" aria-label="Your position">●<small>YOU</small></span>
       <button data-map-target="releaseEntrance" style="--mx:15%;--my:18%">▣<small>RELEASE HOUSE</small></button>
       <button data-map-target="studio" style="--mx:84%;--my:18%">♫<small>CITY STUDIO</small></button>
@@ -52,8 +61,40 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
   </section>
 
   <div id="context" class="context" hidden><div><span id="context-icon">✦</span><div><b id="context-name"></b><small id="context-help">Approach and interact</small></div></div><button id="interact">Interact <kbd>E</kbd></button></div>
-  <section id="mini-player" class="mini-player" hidden aria-label="Personal music preview"><div class="mini-art">♫</div><div class="mini-copy"><b>Square Sketch</b><small>Original demo · private preview</small></div><button id="mini-play" aria-label="Play Square Sketch">▶</button><button id="mini-save" aria-label="Save Square Sketch">♡</button></section>
-  <button id="dance" class="dance-button" aria-pressed="false">♪ Dance</button>
+  <section id="mini-player" class="mini-player" hidden aria-label="Personal music preview">
+    <div class="mini-art">♫</div>
+    <div class="mini-copy"><b id="mini-title">Square Sketch</b><small id="mini-artist">Original demo · private preview</small></div>
+    <button id="mini-prev" aria-label="Previous track" title="Previous song">◀</button>
+    <button id="mini-play" aria-label="Play track">▶</button>
+    <button id="mini-next" aria-label="Next track" title="Next song">▶</button>
+    <button id="mini-save" aria-label="Save track">♡</button>
+  </section>
+  <div class="emote-bar" aria-label="Social reactions">
+    <button id="dance" class="dance-button" aria-pressed="false" title="Dance to music">♪ Dance</button>
+    <div class="emote-actions">
+      <button data-emote="cheer" title="Cheer" aria-label="Cheer emote">🙌<small>Cheer</small></button>
+      <button data-emote="wave" title="Wave" aria-label="Wave emote">👋<small>Wave</small></button>
+      <button data-emote="heart" title="Heart" aria-label="Heart emote">❤️<small>Love</small></button>
+      <button data-emote="fire" title="Fire" aria-label="Fire emote">🔥<small>Fire</small></button>
+      <button id="chat-toggle" title="Quick chat" aria-label="Quick chat phrases">💬<small>Chat</small></button>
+    </div>
+  </div>
+  <div id="chat-menu" class="chat-menu" hidden aria-label="Quick phrases">
+    <div class="chat-channel-control">
+      <small id="chat-channel-copy">Local chat starts muted. Enable it to receive and send phrases in this place.</small>
+      <button id="chat-channel-toggle" type="button" aria-pressed="false">Enable local chat</button>
+    </div>
+    <div class="chat-phrases">
+      <button data-phrase="Yo! 👋" disabled>Yo! 👋</button>
+      <button data-phrase="Nice beat! 🔥" disabled>Nice beat! 🔥</button>
+      <button data-phrase="Heading to Studio 🎧" disabled>Heading to Studio 🎧</button>
+      <button data-phrase="Meet at Palm Room 🌴" disabled>Meet at Palm Room 🌴</button>
+      <button data-phrase="Vibing here ✨" disabled>Vibing here ✨</button>
+      <button data-phrase="Check out the sound! 🎶" disabled>Check out the sound! 🎶</button>
+    </div>
+    <small class="chat-safety-note">Curated phrases only · visible to opted-in players in this public place.</small>
+  </div>
+  <div id="chat-feed" class="chat-feed" aria-live="polite"></div>
   <div id="presence-status" class="presence-status" role="status">Connecting to Music Square…</div>
 
   <section id="action-sheet" class="action-sheet" hidden>
@@ -74,25 +115,90 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
     <small class="eyebrow">LOCAL PROTOTYPE</small><h2>Display & data</h2>
     <p>Choose a render quality for this device. Measurements below describe this browser session only.</p>
     <div class="quality-choices"><button data-quality="saver">Data Saver</button><button data-quality="balanced">Balanced</button><button data-quality="quality">Quality</button></div>
-    <dl class="runtime-metrics"><div><dt>Frame time</dt><dd id="frame-metric">Measuring…</dd></div><div><dt>Reported transfer</dt><dd id="transfer-metric">Measuring…</dd></div><div><dt>Avatar ready</dt><dd id="ready-metric">Measuring…</dd></div><div><dt>Audio before Play</dt><dd>0 B · generated preview</dd></div></dl>
-    <p class="metric-note">This development server sends unbundled files; its transfer total is not a production-load result. Real-phone FPS, thermals, and network recovery remain untested.</p>
+    <div class="quality-choices" id="lighting-choices" style="margin-top:12px"><button data-lighting="day">Daylight ☀</button><button data-lighting="golden">Golden Hour 🌅</button><button data-lighting="night">Night Neon 🌙</button></div>
+    <dl class="runtime-metrics"><div><dt>Frame time</dt><dd id="frame-metric">Measuring…</dd></div><div><dt>Rendered scene</dt><dd id="scene-metric">Measuring…</dd></div><div><dt>Reported transfer</dt><dd id="transfer-metric">Measuring…</dd></div><div><dt>Avatar ready</dt><dd id="ready-metric">Measuring…</dd></div><div><dt>Audio before Play</dt><dd>0 B · generated preview</dd></div></dl>
+    <p class="metric-note">The local preview is not CDN-compressed. Real-phone FPS, thermals, and network recovery still need device testing.</p>
   </section>
   <section id="beat-sheet" class="beat-sheet" hidden aria-label="City Studio beat desk">
     <button id="beat-close" class="icon-close" aria-label="Close beat desk">×</button>
-    <small class="eyebrow">CITY STUDIO · LOCAL DEMO</small><h2>Make a beat</h2>
-    <p>Tap pads to arrange four original synthesized sounds. This private pattern stays on this device.</p>
-    <div class="section-tabs"><button data-section="a">Section A</button><button data-section="b">Section B</button></div>
+    <small class="eyebrow">CITY STUDIO · WORKSTATION PREVIEW</small><h2>Make a beat</h2>
+    <p>Tap pads to arrange four sound loops. Choose an authored sound kit and sync tempo. This private pattern stays on this device.</p>
+    <div class="kit-tabs" aria-label="Sound Kit">
+      <button data-kit="afrobeats" aria-pressed="true">Afrobeats Core<small>104 BPM</small></button>
+      <button data-kit="amapiano" aria-pressed="false">Piano Groove<small>112 BPM</small></button>
+      <button data-kit="highlife" aria-pressed="false">Highlife Vibe<small>96 BPM</small></button>
+    </div>
+    <div class="tempo-row">
+      <div class="section-tabs"><button data-section="a">Section A</button><button data-section="b">Section B</button></div>
+      <div class="tempo-control">
+        <label for="beat-tempo">Tempo <b id="tempo-display">104</b> BPM</label>
+        <input type="range" id="beat-tempo" min="80" max="140" value="104" step="2" />
+      </div>
+      <button id="beat-clear" class="subtle-btn" title="Clear current section">Clear</button>
+    </div>
     <div id="beat-grid" class="beat-grid"></div>
-    <div class="beat-actions"><button id="beat-play" class="green-button">▶ Play beat</button><button id="beat-save">Save pattern</button><button id="beat-render">Render 30s master</button></div>
+    <div class="beat-actions">
+      <button id="beat-play" class="green-button">▶ Play beat</button>
+      <button id="beat-save">Save pattern</button>
+      <button id="beat-render">Render 30s master</button>
+    </div>
     <small id="beat-status">No release, upload, or public sharing is available.</small>
   </section>
-  <section id="release-sheet" class="release-sheet" hidden aria-label="Release House record intake">
-    <button id="release-close" class="icon-close" aria-label="Close release intake">×</button>
-    <small class="eyebrow">RELEASE HOUSE · PRIVATE DRAFT</small><h2>Prepare your release</h2>
-    <p>Start a sleeve here. Submission and Friday scheduling require a finished master, rights review, and the release service.</p>
-    <div class="release-layout"><div id="release-cover" class="release-cover"><span>THE SCENE</span><strong id="release-cover-title">UNTITLED</strong><small id="release-cover-artist">ARTIST NAME</small></div><div class="release-fields"><label>Song title<input id="release-title" maxlength="80" placeholder="Name your track"></label><label>Artist name<input id="release-artist" maxlength="80" placeholder="Your artist name"></label><div class="cover-choices" aria-label="Draft artwork colour"><button data-art="rose" aria-label="Rose artwork"></button><button data-art="teal" aria-label="Teal artwork"></button><button data-art="night" aria-label="Night artwork"></button></div></div></div>
-    <div class="release-checklist"><b>Before this can be released</b><ul id="release-blockers"></ul></div>
-    <div class="release-actions"><button id="release-save" class="green-button">Save private sleeve draft</button><button id="release-play" hidden>▶ Play local master</button></div><small id="release-status">Not submitted or scheduled.</small>
+  <section id="release-sheet" class="release-sheet" hidden aria-labelledby="release-station-title">
+    <button id="release-close" class="icon-close" aria-label="Close release station">×</button>
+    <small id="release-step-count" class="eyebrow">STATION 1 OF 6</small>
+    <h2 id="release-station-title">Record Intake</h2>
+    <p id="release-station-instruction">Check the private master saved from City Studio.</p>
+    <ol id="release-steps" class="release-steps" aria-label="Release preparation stations"></ol>
+    <section data-release-panel="intake" class="release-panel">
+      <div class="release-station-card"><small>LOCAL PROJECT</small><b id="release-master-status">No rendered master on this device</b><p>Render a 30-second arrangement at the City Studio desk. It stays private here.</p></div>
+    </section>
+    <section data-release-panel="artwork" class="release-panel" hidden>
+      <div class="release-layout">
+        <div id="release-cover" class="release-cover" data-art="rose" role="img" aria-label="Private release sleeve preview">
+          <span>THE SCENE</span><strong id="release-cover-title">UNTITLED</strong><small id="release-cover-artist">ARTIST NAME</small><div class="cover-genre-tag" id="release-cover-genre">Afrobeats</div>
+        </div>
+        <div><div class="cover-choices-label">Choose a local sleeve palette</div><div class="cover-choices" aria-label="Draft artwork colour">
+          <button data-art="rose" aria-label="Eko Rose" title="Eko Rose"></button><button data-art="teal" aria-label="Marina Teal" title="Marina Teal"></button><button data-art="night" aria-label="Broad St Night" title="Broad St Night"></button><button data-art="amber" aria-label="Lekki Amber" title="Lekki Amber"></button><button data-art="lagos-violet" aria-label="Lagos Neon" title="Lagos Neon"></button>
+        </div><button id="release-export-sleeve" class="release-export">Download sleeve PNG</button></div>
+      </div>
+      <small>Original artwork preview, saved on this device. No upload or public listing.</small>
+    </section>
+    <section data-release-panel="metadata" class="release-panel" hidden>
+      <div class="release-fields">
+        <label>Song title<input id="release-title" maxlength="80" placeholder="Name your track" autocomplete="off" /></label>
+        <label>Artist name<input id="release-artist" maxlength="80" placeholder="Your artist name" autocomplete="off" /></label>
+        <label>Genre<select id="release-genre" class="release-select"><option value="afrobeats">Afrobeats</option><option value="amapiano">Amapiano</option><option value="highlife">Highlife</option><option value="afro-fusion">Afro-fusion</option><option value="street-pop">Street-pop</option></select></label>
+      </div>
+      <small>Credits are private metadata in this prototype. Add collaborator consent at the Rights Console.</small>
+    </section>
+    <section data-release-panel="listening" class="release-panel" hidden>
+      <div class="release-station-card"><small>LOCAL MASTER · NO CATALOGUE UPLOAD</small><b id="release-listen-status">Render a master in City Studio before auditioning.</b><p>Playback starts only when you choose Play. This is a private local check.</p></div>
+      <div class="release-actions"><button id="release-play" class="green-button" hidden>▶ Play local master</button><button id="release-export-master" class="release-export" hidden>Download local master WAV</button></div>
+    </section>
+    <section data-release-panel="rights" class="release-panel" hidden>
+      <div class="rights-console"><b>Rights & Clearances Affirmations</b><small>Chapter 02 §6 · declarations are not independent verification. Original works only in this local preflight.</small>
+        <div class="rights-grid">
+          <label class="rights-checkbox"><input type="checkbox" id="right-master" /><span>I control or own this master sound recording</span></label>
+          <label class="rights-checkbox"><input type="checkbox" id="right-composition" /><span>I control the original lyrics, melody and composition</span></label>
+          <label class="rights-checkbox"><input type="checkbox" id="right-samples" /><span>All loops, instruments and samples are cleared for this use</span></label>
+          <label class="rights-checkbox"><input type="checkbox" id="right-consent" /><span>Every named performer and credited collaborator has consented</span></label>
+        </div>
+      </div>
+      <small>Covers and remixes need an enhanced permission review that this prototype does not provide.</small>
+    </section>
+    <section data-release-panel="calendar" class="release-panel" hidden>
+      <div class="release-calendar" aria-label="Read-only Lagos Friday release calendar preview">
+        <div class="release-calendar-top"><div><small>NEXT ELIGIBLE FRIDAY · LAGOS TIME</small><b id="release-next-friday">Loading server calendar…</b></div><span id="release-calendar-status" role="status">Checking server time</span></div>
+        <div class="release-calendar-times"><div><small>SUBMIT BY</small><b id="release-submit-deadline">—</b></div><div><small>MODERATION CHECKPOINT</small><b id="release-moderation-checkpoint">—</b></div><div><small>PREMIERE</small><b id="release-premiere-time">—</b></div></div>
+      </div>
+      <div class="release-checklist"><b>Local preflight checklist</b><ul id="release-blockers"></ul></div>
+      <button id="release-preflight" class="purple-button" disabled>Check local preflight</button>
+      <small>Calendar preview only. Upload, rights review, reservation and Friday publication are unavailable.</small>
+    </section>
+    <div class="release-journey-nav"><button id="release-previous" class="release-export" hidden></button><button id="release-next" class="green-button" hidden></button></div>
+    <div class="release-actions"><button id="release-save" class="green-button">Save private draft on this device</button></div>
+    <small id="release-status" role="status" aria-live="polite">Private release preparation. Nothing is uploaded or submitted.</small>
   </section>
 
   <div id="toast" class="toast" role="status"></div>
@@ -100,9 +206,59 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
   <div class="keyboard-hint"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> MOVE <span>·</span> DRAG TO LOOK</div>
   <nav class="bottom-nav" aria-label="Main navigation"><button id="home" class="active"><span>⌂</span>Home</button><button id="nav-map"><span>▱</span>Map</button><button id="nav-create"><span>⊕</span>Create</button><button id="nav-people"><span>♧</span>People</button><button id="nav-phone"><span>▯</span>Phone</button></nav>
   <button id="desk-trigger" class="desk-trigger"><span>✦</span> Desk <small>Next moves</small></button>
+
+  <section id="people-sheet" class="avatar-sheet people-sheet" hidden aria-labelledby="people-title">
+    <button id="people-close" class="icon-close" aria-label="Close people">×</button>
+    <small class="eyebrow">LIVE IN THE WORLD</small><h2 id="people-title">People in this place</h2>
+    <p>Only other connected players are shown. Wave to the people sharing this space.</p>
+    <p id="people-status" class="people-status" role="status" aria-live="polite">Connecting to the world…</p>
+    <div id="people-list" class="people-list" role="list" aria-live="polite"></div>
+    <div class="people-actions"><button id="people-wave" class="green-button" disabled>👋 Wave to everyone here</button><button id="people-edit-avatar" class="people-edit">Customize avatar</button></div>
+  </section>
+
+  <section id="avatar-sheet" class="avatar-sheet" hidden aria-label="Avatar appearance">
+    <button id="avatar-close" class="icon-close" aria-label="Close appearance">×</button>
+    <small class="eyebrow">YOUR AVATAR · LOCAL PREVIEW</small><h2>Appearance</h2>
+    <p>Choose how your placeholder avatar looks on this device. Saved locally — not visible to others until real multiplayer identity exists.</p>
+    <div class="avatar-row">
+      <div class="avatar-preview" id="avatar-preview-canvas"></div>
+      <div class="avatar-options">
+        <label class="option-label" for="avatar-name">Display name</label>
+        <div class="name-row">
+          <input id="avatar-name" maxlength="16" placeholder="Your name" autocomplete="off" />
+        </div>
+        <label class="option-label">Skin tone</label>
+        <div class="swatch-row" data-option="skin">
+          <button data-value="#c68642" aria-label="Skin tone 1" style="background:#c68642"></button>
+          <button data-value="#8d5524" aria-label="Skin tone 2" style="background:#8d5524"></button>
+          <button data-value="#70412f" aria-label="Skin tone 3" style="background:#70412f"></button>
+          <button data-value="#f1c27d" aria-label="Skin tone 4" style="background:#f1c27d"></button>
+          <button data-value="#ffdbac" aria-label="Skin tone 5" style="background:#ffdbac"></button>
+        </div>
+        <label class="option-label">Shirt colour</label>
+        <div class="swatch-row" data-option="shirt">
+          <button data-value="#7758b0" aria-label="Purple shirt" style="background:#7758b0"></button>
+          <button data-value="#2e7d32" aria-label="Green shirt" style="background:#2e7d32"></button>
+          <button data-value="#1565c0" aria-label="Blue shirt" style="background:#1565c0"></button>
+          <button data-value="#b71c1c" aria-label="Red shirt" style="background:#b71c1c"></button>
+          <button data-value="#e65100" aria-label="Orange shirt" style="background:#e65100"></button>
+          <button data-value="#37474f" aria-label="Slate shirt" style="background:#37474f"></button>
+        </div>
+        <label class="option-label">Trouser colour</label>
+        <div class="swatch-row" data-option="trousers">
+          <button data-value="#7758b0" aria-label="Purple trousers" style="background:#7758b0"></button>
+          <button data-value="#1a237e" aria-label="Indigo trousers" style="background:#1a237e"></button>
+          <button data-value="#263238" aria-label="Charcoal trousers" style="background:#263238"></button>
+          <button data-value="#4e342e" aria-label="Brown trousers" style="background:#4e342e"></button>
+          <button data-value="#004d40" aria-label="Teal trousers" style="background:#004d40"></button>
+          <button data-value="#880e4f" aria-label="Burgundy trousers" style="background:#880e4f"></button>
+        </div>
+      </div>
+    </div>
+  </section>
 </main>`
 
-const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T
+const $ = <T extends Element>(id: string) => document.getElementById(id) as unknown as T
 const world = $<HTMLDivElement>('world')
 const scene = new THREE.Scene()
 scene.background = new THREE.Color('#413243')
@@ -128,9 +284,10 @@ world.appendChild(renderer.domElement)
 
 const square = makeSquare()
 scene.add(square)
-let palmRoom: ReturnType<typeof makePalmRoom> | null = null
-let studioRoom: ReturnType<typeof makeStudio> | null = null
-let releaseRoom: ReturnType<typeof makeReleaseHouse> | null = null
+type PalmRoom = { root: THREE.Group; update: (time: number) => void; setEquipmentPreview: (visible: boolean) => void; setStageLook: (look: StageLook) => void; setStagePerformance: (active: boolean) => void }
+let palmRoom: PalmRoom | null = null
+let studioRoom: THREE.Group | null = null
+let releaseRoom: THREE.Group | null = null
 let location: Location = 'square'
 const ambient = new THREE.HemisphereLight('#d9e2ed', '#72523d', 1.9)
 scene.add(ambient)
@@ -142,66 +299,567 @@ sun.shadow.camera.left = sun.shadow.camera.bottom = -24
 sun.shadow.camera.right = sun.shadow.camera.top = 24
 scene.add(sun)
 
+let lightingMode: LightingMode = (['day', 'golden', 'night'].includes(localStorage.getItem('scene-lighting') || '') ? localStorage.getItem('scene-lighting') : 'golden') as LightingMode
+function applyLighting(mode: LightingMode) {
+  lightingMode = mode
+  localStorage.setItem('scene-lighting', mode)
+  const preset = LIGHTING_PRESETS[mode]
+  scene.background = new THREE.Color(preset.background)
+  scene.fog = new THREE.Fog(preset.fog, 32, 72)
+  ambient.color.set(preset.skyColor)
+  ambient.groundColor.set(preset.groundColor)
+  ambient.intensity = preset.ambientIntensity
+  sun.color.set(preset.sunColor)
+  sun.intensity = preset.sunIntensity
+  sun.position.set(...preset.sunPos)
+  renderer.toneMappingExposure = preset.exposure
+
+  const clockIcon = document.querySelector<HTMLElement>('#time-toggle > span')
+  if (clockIcon) clockIcon.textContent = preset.icon
+  const clockText = document.querySelector<HTMLElement>('#time-label')
+  if (clockText) clockText.textContent = preset.label
+
+  document.querySelectorAll<HTMLButtonElement>('[data-lighting]').forEach(b => {
+    b.setAttribute('aria-pressed', String(b.dataset.lighting === mode))
+  })
+}
+applyLighting(lightingMode)
+
 // The avatar is original prototype geometry, not a borrowed rig or a fake connected player.
 const avatar = new THREE.Group()
 scene.add(avatar)
+const avatarBody = new THREE.Group()
+avatarBody.name = 'avatar-body'
+avatar.add(avatarBody)
 const skin = new THREE.MeshStandardMaterial({ color: '#70412f', roughness: .9 })
 const cloth = document.createElement('canvas')
 cloth.width = cloth.height = 256
 const clothContext = cloth.getContext('2d')!
-clothContext.fillStyle = '#dfac5f'; clothContext.fillRect(0, 0, 256, 256)
+clothContext.fillStyle = '#d5a344'; clothContext.fillRect(0, 0, 256, 256)
+clothContext.save()
+clothContext.globalAlpha = .1
+for (let y = 0; y < 256; y += 4) {
+  clothContext.strokeStyle = y % 8 ? '#f4d98e' : '#946f38'
+  clothContext.lineWidth = 1
+  clothContext.beginPath(); clothContext.moveTo(0, y); clothContext.lineTo(256, y + 2); clothContext.stroke()
+}
+clothContext.restore()
 for (let row = 0; row < 8; row++) for (let col = 0; col < 8; col++) {
   const x = 16 + col * 32, y = 16 + row * 32
-  clothContext.strokeStyle = '#a86935'; clothContext.lineWidth = 3
-  clothContext.beginPath(); clothContext.arc(x, y, 8, 0, Math.PI * 2); clothContext.stroke()
-  clothContext.fillStyle = '#eee0aa'; clothContext.fillRect(x - 2, y - 2, 4, 4)
+  clothContext.save()
+  clothContext.translate(x, y)
+  clothContext.rotate((row + col) % 2 ? Math.PI / 4 : 0)
+  clothContext.strokeStyle = '#1e5a50'; clothContext.lineWidth = 1.4
+  clothContext.strokeRect(-8, -8, 16, 16)
+  clothContext.strokeStyle = '#f2d88d'; clothContext.lineWidth = 1
+  clothContext.strokeRect(-5, -5, 10, 10)
+  clothContext.restore()
+  clothContext.save()
+  clothContext.translate(x, y)
+  for (let petal = 0; petal < 8; petal++) {
+    clothContext.save()
+    clothContext.rotate(petal * Math.PI / 4)
+    clothContext.fillStyle = petal % 2 ? '#24584a' : '#873f32'
+    clothContext.beginPath(); clothContext.ellipse(0, -5, 2.4, 4.5, 0, 0, Math.PI * 2); clothContext.fill()
+    clothContext.restore()
+  }
+  clothContext.fillStyle = '#f7e1a8'
+  clothContext.beginPath(); clothContext.arc(0, 0, 1.8, 0, Math.PI * 2); clothContext.fill()
+  clothContext.restore()
 }
 const clothTexture = new THREE.CanvasTexture(cloth)
 clothTexture.colorSpace = THREE.SRGBColorSpace
 const shirt = new THREE.MeshStandardMaterial({ map: clothTexture, roughness: .95 })
-const trousers = new THREE.MeshStandardMaterial({ color: '#7758b0', roughness: .91 })
+const trouserCanvas = document.createElement('canvas')
+trouserCanvas.width = trouserCanvas.height = 128
+const trouserContext = trouserCanvas.getContext('2d')!
+trouserContext.fillStyle = '#7655aa'; trouserContext.fillRect(0, 0, 128, 128)
+trouserContext.globalAlpha = .11
+for (let x = 0; x <= 128; x += 4) {
+  trouserContext.strokeStyle = x % 8 ? '#b29bd2' : '#4b3976'
+  trouserContext.lineWidth = 1
+  trouserContext.beginPath(); trouserContext.moveTo(x, 0); trouserContext.lineTo(x - 10, 128); trouserContext.stroke()
+}
+trouserContext.globalAlpha = 1
+const trouserTexture = new THREE.CanvasTexture(trouserCanvas)
+trouserTexture.colorSpace = THREE.SRGBColorSpace
+const trousers = new THREE.MeshStandardMaterial({ map: trouserTexture, roughness: .94 })
 const hair = new THREE.MeshStandardMaterial({ color: '#18131a', roughness: 1 })
 const shoes = new THREE.MeshStandardMaterial({ color: '#211d22', roughness: .8 })
+const shirtTrim = new THREE.MeshStandardMaterial({ color: '#a86935', roughness: .95 })
+const shoeSole = new THREE.MeshStandardMaterial({ color: '#d4c5ac', roughness: .9 })
+const trouserTrim = new THREE.MeshStandardMaterial({ color: '#604589', roughness: .95 })
+const faceDetail = new THREE.MeshStandardMaterial({ color: '#211611', roughness: .85 })
+const eyeWhite = new THREE.MeshStandardMaterial({ color: '#f1e4cf', roughness: .6 })
+const eyeBrown = new THREE.MeshStandardMaterial({ color: '#4b2b1b', roughness: .55 })
 function avatarPart(geometry: THREE.BufferGeometry, material: THREE.Material, x: number, y: number, z: number) {
   const part = new THREE.Mesh(geometry, material)
   part.position.set(x, y, z)
   part.castShadow = true
-  avatar.add(part)
+  avatarBody.add(part)
   return part
 }
-avatarPart(new THREE.CapsuleGeometry(.42, .76, 4, 10), shirt, 0, 1.4, 0)
-avatarPart(new THREE.SphereGeometry(.31, 12, 9), skin, 0, 2.4, 0)
-avatarPart(new THREE.SphereGeometry(.335, 12, 9), hair, 0, 2.58, -.05)
-const leftArm = avatarPart(new THREE.CapsuleGeometry(.105, .56, 3, 8), skin, -.5, 1.37, 0)
-const rightArm = avatarPart(new THREE.CapsuleGeometry(.105, .56, 3, 8), skin, .5, 1.37, 0)
+const shirtShape = new THREE.LatheGeometry([
+  new THREE.Vector2(.26, -.5), new THREE.Vector2(.32, -.47), new THREE.Vector2(.34, -.34),
+  new THREE.Vector2(.36, -.12), new THREE.Vector2(.4, .1), new THREE.Vector2(.37, .25),
+  new THREE.Vector2(.31, .42), new THREE.Vector2(.2, .5),
+], 18)
+avatarPart(shirtShape, shirt, 0, 1.4, 0)
+avatarPart(new THREE.CylinderGeometry(.12, .15, .2, 10), skin, 0, 2.2, 0)
+avatarPart(new THREE.SphereGeometry(.31, 16, 12), skin, 0, 2.43, 0)
+avatarPart(new THREE.SphereGeometry(.335, 14, 10), hair, 0, 2.62, -.05)
+const curls = new THREE.InstancedMesh(new THREE.SphereGeometry(.044, 8, 6), hair, 42)
+const curlPose = new THREE.Object3D()
+for (let i = 0; i < 42; i++) {
+  const polar = Math.acos(1 - (i + .5) / 42)
+  const azimuth = i * Math.PI * (3 - Math.sqrt(5))
+  const radius = .32
+  curlPose.position.set(radius * Math.sin(polar) * Math.cos(azimuth), 2.62 + radius * Math.cos(polar), -.05 + radius * Math.sin(polar) * Math.sin(azimuth))
+  curlPose.scale.setScalar(.82 + (i % 4) * .07)
+  curlPose.updateMatrix(); curls.setMatrixAt(i, curlPose.matrix)
+}
+curls.castShadow = true
+avatarBody.add(curls)
+avatarPart(new THREE.SphereGeometry(.052, 10, 8), skin, -.3, 2.42, 0)
+avatarPart(new THREE.SphereGeometry(.052, 10, 8), skin, .3, 2.42, 0)
+avatarPart(new THREE.SphereGeometry(.038, 10, 8), eyeWhite, -.105, 2.46, .285)
+avatarPart(new THREE.SphereGeometry(.038, 10, 8), eyeWhite, .105, 2.46, .285)
+avatarPart(new THREE.SphereGeometry(.019, 8, 6), eyeBrown, -.105, 2.46, .318)
+avatarPart(new THREE.SphereGeometry(.019, 8, 6), eyeBrown, .105, 2.46, .318)
+const leftBrow = avatarPart(new THREE.BoxGeometry(.085, .014, .018), hair, -.105, 2.525, .292)
+const rightBrow = avatarPart(new THREE.BoxGeometry(.085, .014, .018), hair, .105, 2.525, .292)
+leftBrow.rotation.z = -.09; rightBrow.rotation.z = .09
+const nose = avatarPart(new THREE.SphereGeometry(.043, 8, 6), skin, 0, 2.36, .31)
+nose.scale.set(.72, 1.18, .9)
+const smile = new THREE.CatmullRomCurve3([
+  new THREE.Vector3(-.048, 2.272, .288), new THREE.Vector3(0, 2.26, .3), new THREE.Vector3(.048, 2.272, .288),
+])
+avatarPart(new THREE.TubeGeometry(smile, 8, .006, 5, false), faceDetail, 0, 0, 0)
+const collar = avatarPart(new THREE.TorusGeometry(.18, .027, 6, 20), shirtTrim, 0, 2.02, 0)
+collar.rotation.x = Math.PI / 2
+const shirtFront = avatarPart(new THREE.BoxGeometry(.035, .5, .018), shirtTrim, 0, 1.54, .4)
+shirtFront.renderOrder = 1
+for (const y of [1.72, 1.54, 1.36]) avatarPart(new THREE.SphereGeometry(.022, 7, 5), shoeSole, 0, y, .415)
+const shirtHem = avatarPart(new THREE.TorusGeometry(.34, .016, 5, 24), shirtTrim, 0, .91, 0)
+shirtHem.rotation.x = Math.PI / 2
+const waistBand = avatarPart(new THREE.TorusGeometry(.36, .028, 6, 24), shirtTrim, 0, .99, 0)
+waistBand.rotation.x = Math.PI / 2
+const garmentSeam = new THREE.MeshStandardMaterial({ color: '#b27b36', roughness: 1 })
+const backYoke = new THREE.CatmullRomCurve3([
+  new THREE.Vector3(-.22, 1.73, -.25), new THREE.Vector3(-.12, 1.69, -.32),
+  new THREE.Vector3(0, 1.68, -.34), new THREE.Vector3(.12, 1.69, -.32),
+  new THREE.Vector3(.22, 1.73, -.25),
+])
+avatarPart(new THREE.TubeGeometry(backYoke, 18, .007, 5, false), garmentSeam, 0, 0, 0)
+
+function createAvatarArm(x: number, side: -1 | 1, name: 'left' | 'right') {
+  const shoulder = new THREE.Group()
+  shoulder.position.set(x, 1.72, 0)
+  shoulder.name = `avatar-${name}-arm`
+  const upperArm = new THREE.Mesh(new THREE.CapsuleGeometry(.087, .28, 4, 9), skin)
+  upperArm.position.y = -.19; upperArm.castShadow = true
+  shoulder.add(upperArm)
+  const sleeve = new THREE.Mesh(new THREE.CapsuleGeometry(.13, .2, 4, 9), shirt)
+  sleeve.position.set(0, -.17, 0); sleeve.rotation.z = side * .09; sleeve.castShadow = true
+  shoulder.add(sleeve)
+  const sleeveCuff = new THREE.Mesh(new THREE.TorusGeometry(.108, .012, 5, 12), shirtTrim)
+  sleeveCuff.position.y = -.34; sleeveCuff.rotation.x = Math.PI / 2
+  shoulder.add(sleeveCuff)
+  const elbow = new THREE.Group()
+  elbow.position.y = -.39
+  elbow.name = `avatar-${name}-elbow`
+  const joint = new THREE.Mesh(new THREE.SphereGeometry(.081, 9, 7), skin)
+  joint.castShadow = true; elbow.add(joint)
+  const forearm = new THREE.Mesh(new THREE.CapsuleGeometry(.074, .24, 4, 8), skin)
+  forearm.position.y = -.17; forearm.castShadow = true; elbow.add(forearm)
+  const wrist = new THREE.Mesh(new THREE.TorusGeometry(.071, .009, 5, 12), shirtTrim)
+  wrist.position.y = -.32; wrist.rotation.x = Math.PI / 2; elbow.add(wrist)
+  const hand = new THREE.Mesh(new THREE.SphereGeometry(.086, 10, 8), skin)
+  hand.position.y = -.36; hand.castShadow = true; elbow.add(hand)
+  shoulder.add(elbow)
+  avatarBody.add(shoulder)
+  shoulder.rotation.z = side * .15
+  return { shoulder, elbow }
+}
+const leftArmParts = createAvatarArm(-.49, -1, 'left')
+const rightArmParts = createAvatarArm(.49, 1, 'right')
+const leftArm = leftArmParts.shoulder, rightArm = rightArmParts.shoulder
+const leftElbow = leftArmParts.elbow, rightElbow = rightArmParts.elbow
 leftArm.rotation.z = -.15
 rightArm.rotation.z = .15
-const leftLeg = avatarPart(new THREE.CapsuleGeometry(.14, .65, 3, 8), trousers, -.21, .55, 0)
-const rightLeg = avatarPart(new THREE.CapsuleGeometry(.14, .65, 3, 8), trousers, .21, .55, 0)
-avatarPart(new THREE.BoxGeometry(.32, .18, .55), shoes, -.21, .11, .13)
-avatarPart(new THREE.BoxGeometry(.32, .18, .55), shoes, .21, .11, .13)
+function addShoe(foot: THREE.Group) {
+  const sole = new THREE.Mesh(new THREE.BoxGeometry(.3, .07, .48), shoeSole)
+  sole.position.set(0, .035, .1); sole.castShadow = true; foot.add(sole)
+  const upper = new THREE.Mesh(new THREE.CapsuleGeometry(.13, .14, 3, 8), shoes)
+  upper.rotation.x = Math.PI / 2; upper.position.set(0, .16, .11); upper.castShadow = true; foot.add(upper)
+  const lace = new THREE.Mesh(new THREE.BoxGeometry(.1, .014, .05), shoeSole)
+  lace.position.set(0, .29, .25); foot.add(lace)
+}
+function createAvatarLeg(x: number, name: 'left' | 'right') {
+  const hip = new THREE.Group()
+  hip.position.set(x, 1, 0)
+  hip.name = `avatar-${name}-leg`
+  const thigh = new THREE.Mesh(new THREE.CapsuleGeometry(.14, .29, 4, 9), trousers)
+  thigh.position.y = -.265; thigh.castShadow = true; hip.add(thigh)
+  const knee = new THREE.Group()
+  knee.position.y = -.55
+  knee.name = `avatar-${name}-knee`
+  const joint = new THREE.Mesh(new THREE.SphereGeometry(.122, 10, 8), trousers)
+  joint.castShadow = true; knee.add(joint)
+  const shin = new THREE.Mesh(new THREE.CapsuleGeometry(.105, .3, 4, 9), trousers)
+  shin.position.y = -.195; shin.castShadow = true; knee.add(shin)
+  const hem = new THREE.Mesh(new THREE.TorusGeometry(.098, .009, 5, 14), trouserTrim)
+  hem.position.y = -.405; hem.rotation.x = Math.PI / 2; knee.add(hem)
+  const foot = new THREE.Group()
+  foot.position.y = -.45
+  foot.name = `avatar-${name}-foot`
+  knee.add(foot)
+  addShoe(foot)
+  hip.add(knee)
+  avatarBody.add(hip)
+  return { hip, knee, foot }
+}
+const leftLegParts = createAvatarLeg(-.21, 'left')
+const rightLegParts = createAvatarLeg(.21, 'right')
+const leftLeg = leftLegParts.hip, rightLeg = rightLegParts.hip
+const leftKnee = leftLegParts.knee, rightKnee = rightLegParts.knee
+const leftFoot = leftLegParts.foot, rightFoot = rightLegParts.foot
 avatar.position.set(-4, 0, 7)
 camera.position.set(-4, 3.8, 14.2)
 const remoteAvatars = new Map<string, THREE.Group>()
 let connectedPlayers: PresencePlayer[] = []
 let presenceConnected = false
-function renderPresence(players: PresencePlayer[], connected: boolean) {
+const emoteBubbles = new Map<string, THREE.Sprite>()
+const nameTags = new Map<string, THREE.Sprite>()
+
+function createNameTexture(name: string): THREE.Texture {
+  const canvas = document.createElement('canvas')
+  canvas.width = 256
+  canvas.height = 64
+  const ctx = canvas.getContext('2d')!
+  ctx.fillStyle = '#171e2bf0'
+  if (ctx.roundRect) {
+    ctx.beginPath()
+    ctx.roundRect(8, 8, 240, 48, 12)
+    ctx.fill()
+  } else {
+    ctx.fillRect(8, 8, 240, 48)
+  }
+  ctx.lineWidth = 3
+  ctx.strokeStyle = '#d5bb85'
+  ctx.stroke()
+  ctx.fillStyle = '#f4f0ff'
+  ctx.font = 'bold 22px sans-serif'
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillText(name.slice(0, 16), 128, 32)
+  const texture = new THREE.CanvasTexture(canvas)
+  texture.colorSpace = THREE.SRGBColorSpace
+  return texture
+}
+
+function updateAvatarNameTag(targetGroup: THREE.Group, name: string, id: string) {
+  let sprite = nameTags.get(id)
+  if (!sprite) {
+    const mat = new THREE.SpriteMaterial({ map: createNameTexture(name), depthTest: false })
+    sprite = new THREE.Sprite(mat)
+    sprite.scale.set(1.4, 0.35, 1)
+    sprite.position.set(0, 2.88, 0)
+    sprite.renderOrder = 25
+    sprite.userData.displayName = name
+    targetGroup.add(sprite)
+    nameTags.set(id, sprite)
+  } else if (sprite.userData.displayName !== name) {
+    sprite.material.map?.dispose()
+    sprite.material.map = createNameTexture(name)
+    sprite.material.needsUpdate = true
+    sprite.userData.displayName = name
+  }
+}
+
+// Safety: locally muted session IDs — hides emote bubbles and dims avatar
+const mutedIds = new Set<string>()
+let roomChatOptedIn = false
+const mutePopover = document.createElement('div')
+mutePopover.className = 'mute-popover'
+mutePopover.setAttribute('role', 'dialog')
+mutePopover.setAttribute('aria-label', 'Player options')
+mutePopover.hidden = true
+document.getElementById('game')!.appendChild(mutePopover)
+let mutePopoverTarget = ''
+function showMutePopover(id: string, screenX: number, screenY: number) {
+  mutePopoverTarget = id
+  const targetPlayer = connectedPlayers.find(p => p.id === id)
+  const targetName = targetPlayer?.name || 'Guest'
+  const muted = mutedIds.has(id)
+  mutePopover.innerHTML = `
+    <small class="eyebrow">CONNECTED SESSION</small>
+    <div class="mute-player-name">${targetName}</div>
+    <p>${muted ? 'This session is muted.' : 'Mute this session to hide their emote reactions locally.'}</p>
+    <div class="mute-actions">
+      <button id="mute-toggle">${muted ? '🔊 Unmute' : '🔇 Mute'}</button>
+      <button id="mute-cancel">Cancel</button>
+    </div>
+    <small class="mute-note">Local only · not visible to others · no server action</small>`
+  mutePopover.hidden = false
+  // Position above tap point, clamped to viewport
+  const pw = 220, ph = 130
+  mutePopover.style.left = `${Math.min(Math.max(screenX - pw / 2, 8), window.innerWidth - pw - 8)}px`
+  mutePopover.style.top = `${Math.max(screenY - ph - 16, 60)}px`
+  document.getElementById('mute-toggle')!.onclick = () => {
+    if (mutedIds.has(mutePopoverTarget)) {
+      mutedIds.delete(mutePopoverTarget)
+      toast('Session unmuted')
+    } else {
+      mutedIds.add(mutePopoverTarget)
+      // Hide any live emote bubble immediately
+      const model = remoteAvatars.get(mutePopoverTarget)
+      const bubble = model && emoteBubbles.get(mutePopoverTarget)
+      if (bubble) bubble.visible = false
+      const speech = model && speechBubbles.get(mutePopoverTarget)
+      if (speech) speech.visible = false
+      toast('Session muted · reactions and chat hidden locally')
+    }
+    // Refresh avatar opacity
+    for (const [rid, rmodel] of remoteAvatars) rmodel.traverse(obj => { if ((obj as THREE.Mesh).isMesh) (obj as THREE.Mesh).material instanceof THREE.MeshStandardMaterial && ((obj as THREE.Mesh).material as THREE.MeshStandardMaterial).color.setScalar(mutedIds.has(rid) ? 0.35 : 1) })
+    mutePopover.hidden = true
+  }
+  document.getElementById('mute-cancel')!.onclick = () => { mutePopover.hidden = true }
+}
+function createEmoteTexture(emoji: string): THREE.Texture {
+  const canvas = document.createElement('canvas')
+  canvas.width = canvas.height = 128
+  const ctx = canvas.getContext('2d')!
+  ctx.fillStyle = '#17252ae8'
+  ctx.beginPath()
+  ctx.arc(64, 64, 56, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.lineWidth = 6
+  ctx.strokeStyle = '#d5bb85'
+  ctx.stroke()
+  ctx.font = '64px sans-serif'
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillText(emoji, 64, 68)
+  const texture = new THREE.CanvasTexture(canvas)
+  texture.colorSpace = THREE.SRGBColorSpace
+  return texture
+}
+const emoteTextures: Record<EmoteType, THREE.Texture> = {
+  cheer: createEmoteTexture('🙌'),
+  wave: createEmoteTexture('👋'),
+  heart: createEmoteTexture('❤️'),
+  fire: createEmoteTexture('🔥'),
+}
+function triggerAvatarEmote(targetGroup: THREE.Group, emote: EmoteType, id: string) {
+  const emoteStartedAt = performance.now()
+  targetGroup.userData.activeEmote = emote
+  targetGroup.userData.emoteStartedAt = emoteStartedAt
+  let sprite = emoteBubbles.get(id)
+  if (!sprite) {
+    const mat = new THREE.SpriteMaterial({ map: emoteTextures[emote], depthTest: false })
+    sprite = new THREE.Sprite(mat)
+    sprite.scale.set(1.1, 1.1, 1)
+    sprite.position.set(0, 3.2, 0)
+    sprite.renderOrder = 30
+    targetGroup.add(sprite)
+    emoteBubbles.set(id, sprite)
+  } else {
+    sprite.material.map = emoteTextures[emote]
+    sprite.material.needsUpdate = true
+    sprite.visible = true
+  }
+  const timerKey = `timer_${id}`
+  const existingTimer = (sprite as unknown as Record<string, number>)[timerKey]
+  if (existingTimer) window.clearTimeout(existingTimer)
+  ;(sprite as unknown as Record<string, number>)[timerKey] = window.setTimeout(() => {
+    if (sprite) sprite.visible = false
+    if (targetGroup.userData.emoteStartedAt === emoteStartedAt) targetGroup.userData.activeEmote = null
+  }, 3200)
+}
+
+function applyActiveAvatarEmote(
+  targetGroup: THREE.Group,
+  parts: { body: THREE.Group; leftArm: THREE.Group; rightArm: THREE.Group; leftElbow: THREE.Group; rightElbow: THREE.Group },
+) {
+  const emote = targetGroup.userData.activeEmote as EmoteType | null | undefined
+  const startedAt = targetGroup.userData.emoteStartedAt as number | undefined
+  if (!emote || startedAt === undefined) return
+  const pose = emotePose(emote, (performance.now() - startedAt) / 3200)
+  const blend = (current: number, target: number) => current + (target - current) * pose.weight
+  parts.leftArm.rotation.z = blend(parts.leftArm.rotation.z, pose.leftArmZ)
+  parts.rightArm.rotation.z = blend(parts.rightArm.rotation.z, pose.rightArmZ)
+  parts.leftElbow.rotation.z = blend(parts.leftElbow.rotation.z, pose.leftElbowZ)
+  parts.rightElbow.rotation.z = blend(parts.rightElbow.rotation.z, pose.rightElbowZ)
+  parts.body.position.y += pose.bodyBob * pose.weight
+  targetGroup.rotation.y += pose.turn * pose.weight
+}
+
+function handleIncomingEmote(id: string, emote: EmoteType) {
+  if (id === presence.getOwnId()) {
+    triggerAvatarEmote(avatar, emote, 'self')
+  } else {
+    if (mutedIds.has(id)) return  // emote suppressed for muted session
+    const model = remoteAvatars.get(id)
+    if (model) triggerAvatarEmote(model, emote, id)
+  }
+}
+
+function escapeHtml(str: string): string {
+  return str.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] || c)
+}
+
+const speechBubbles = new Map<string, THREE.Sprite>()
+function createSpeechBubbleTexture(text: string): THREE.Texture {
+  const canvas = document.createElement('canvas')
+  canvas.width = 512
+  canvas.height = 128
+  const ctx = canvas.getContext('2d')!
+  ctx.fillStyle = '#17252af5'
+  if (ctx.roundRect) {
+    ctx.beginPath()
+    ctx.roundRect(12, 10, 488, 92, 16)
+    ctx.fill()
+  } else {
+    ctx.fillRect(12, 10, 488, 92)
+  }
+  ctx.lineWidth = 4
+  ctx.strokeStyle = '#d5bb85'
+  ctx.stroke()
+  ctx.fillStyle = '#17252af5'
+  ctx.beginPath()
+  ctx.moveTo(240, 102); ctx.lineTo(256, 122); ctx.lineTo(272, 102); ctx.fill()
+  ctx.strokeStyle = '#d5bb85'
+  ctx.beginPath()
+  ctx.moveTo(240, 102); ctx.lineTo(256, 122); ctx.lineTo(272, 102); ctx.stroke()
+  ctx.fillStyle = '#f4f0ff'
+  ctx.font = 'bold 26px sans-serif'
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillText(text.slice(0, 40), 256, 56)
+  const texture = new THREE.CanvasTexture(canvas)
+  texture.colorSpace = THREE.SRGBColorSpace
+  return texture
+}
+
+function triggerAvatarSpeech(targetGroup: THREE.Group, text: string, id: string) {
+  let sprite = speechBubbles.get(id)
+  const tex = createSpeechBubbleTexture(text)
+  if (!sprite) {
+    const mat = new THREE.SpriteMaterial({ map: tex, depthTest: false })
+    sprite = new THREE.Sprite(mat)
+    sprite.scale.set(2.4, 0.6, 1)
+    sprite.position.set(0, 3.45, 0)
+    sprite.renderOrder = 35
+    targetGroup.add(sprite)
+    speechBubbles.set(id, sprite)
+  } else {
+    if (sprite.material.map) sprite.material.map.dispose()
+    sprite.material.map = tex
+    sprite.material.needsUpdate = true
+    sprite.visible = true
+  }
+  const timerKey = `speech_timer_${id}`
+  const existingTimer = (sprite as unknown as Record<string, number>)[timerKey]
+  if (existingTimer) window.clearTimeout(existingTimer)
+  ;(sprite as unknown as Record<string, number>)[timerKey] = window.setTimeout(() => {
+    if (sprite) sprite.visible = false
+  }, 4200)
+}
+
+function handleIncomingChat(id: string, name: string, text: string) {
+  if (!roomChatOptedIn || mutedIds.has(id)) return
+  if (id === presence.getOwnId()) {
+    triggerAvatarSpeech(avatar, text, 'self')
+  } else {
+    const model = remoteAvatars.get(id)
+    if (model) triggerAvatarSpeech(model, text, id)
+  }
+  const feed = $<HTMLElement>('chat-feed')
+  if (feed) {
+    const item = document.createElement('div')
+    item.className = 'chat-item'
+    item.innerHTML = `<b>${escapeHtml(name)}:</b> ${escapeHtml(text)}`
+    feed.appendChild(item)
+    while (feed.children.length > 4) feed.removeChild(feed.firstChild!)
+    window.setTimeout(() => { item.style.opacity = '0'; window.setTimeout(() => item.remove(), 400) }, 6500)
+  }
+}
+
+function renderPresence(players: PresencePlayer[], connected: boolean, reconnectAttempts: number) {
   connectedPlayers = players
   presenceConnected = connected
+  renderPeople(players, connected)
+  renderStageEventMetrics()
   const visible = new Set(players.filter(player => player.location === location).map(player => player.id))
-  for (const [id, model] of remoteAvatars) if (!visible.has(id)) { scene.remove(model); remoteAvatars.delete(id) }
+  for (const [id, model] of remoteAvatars) if (!visible.has(id)) {
+    const bubble = emoteBubbles.get(id)
+    if (bubble) { model.remove(bubble); disposeSpriteResources(bubble, false); emoteBubbles.delete(id) }
+    const speech = speechBubbles.get(id)
+    if (speech) { model.remove(speech); disposeSpriteResources(speech, true); speechBubbles.delete(id) }
+    const nameTag = nameTags.get(id)
+    if (nameTag) { model.remove(nameTag); disposeSpriteResources(nameTag, true); nameTags.delete(id) }
+    scene.remove(model)
+    remoteAvatars.delete(id)
+  }
   for (const player of players) {
     if (player.location !== location) continue
     let model = remoteAvatars.get(player.id)
-    if (!model) { model = avatar.clone(); model.name = 'Connected guest session'; scene.add(model); remoteAvatars.set(player.id, model) }
+    let newlySpawned = false
+    if (!model) {
+      model = avatar.clone()
+      for (const child of [...model.children]) { if (child instanceof THREE.Sprite) model.remove(child) }
+      // Keep the local avatar and plaza shadows; remote body parts skip the extra shadow-map pass.
+      model.traverse(child => { if (child instanceof THREE.Mesh) child.castShadow = false })
+      model.name = 'Connected guest session'
+      model.userData.avatarParts = {
+        body: model.getObjectByName('avatar-body') as THREE.Group,
+        leftArm: model.getObjectByName('avatar-left-arm') as THREE.Group,
+        rightArm: model.getObjectByName('avatar-right-arm') as THREE.Group,
+        leftElbow: model.getObjectByName('avatar-left-elbow') as THREE.Group,
+        rightElbow: model.getObjectByName('avatar-right-elbow') as THREE.Group,
+        leftLeg: model.getObjectByName('avatar-left-leg') as THREE.Group,
+        rightLeg: model.getObjectByName('avatar-right-leg') as THREE.Group,
+        leftKnee: model.getObjectByName('avatar-left-knee') as THREE.Group,
+        rightKnee: model.getObjectByName('avatar-right-knee') as THREE.Group,
+        leftFoot: model.getObjectByName('avatar-left-foot') as THREE.Group,
+        rightFoot: model.getObjectByName('avatar-right-foot') as THREE.Group,
+      }
+      scene.add(model)
+      remoteAvatars.set(player.id, model)
+      newlySpawned = true
+      // Apply mute dim if this session was already muted
+      if (mutedIds.has(player.id)) model.traverse(obj => { if ((obj as THREE.Mesh).isMesh && (obj as THREE.Mesh).material instanceof THREE.MeshStandardMaterial) ((obj as THREE.Mesh).material as THREE.MeshStandardMaterial).color.setScalar(0.35) })
+    }
+    model.userData.walking = !newlySpawned && Math.hypot(player.x - model.position.x, player.z - model.position.z) > .025
+    updateAvatarNameTag(model, player.name || 'Guest', player.id)
     model.position.set(player.x, 0, player.z)
     model.rotation.y = player.angle
   }
   const count = players.filter(player => player.location === location).length
-  const status = connected ? `${count} other connected ${count === 1 ? 'session' : 'sessions'} here` : 'Offline · reconnecting'
+  const status = connected
+    ? `${count} other connected ${count === 1 ? 'session' : 'sessions'} here`
+    : reconnectAttempts > 0
+      ? `Offline · reconnecting (attempt ${reconnectAttempts})…`
+      : 'Connecting to Music Square.'
   if ($<HTMLElement>('presence-status').textContent !== status) $<HTMLElement>('presence-status').textContent = status
 }
-const presence = connectPresence(renderPresence)
+
+function renderPeople(players: PresencePlayer[], connected: boolean) {
+  const view = peopleInLocation(players, location, connected)
+  const place = location === 'square' ? 'Music Square' : location === 'venue' ? 'Palm Room' : location === 'studio' ? 'City Studio' : 'Release House'
+  const status = $<HTMLElement>('people-status')
+  const list = $<HTMLElement>('people-list')
+  const wave = $<HTMLButtonElement>('people-wave')
+  status.textContent = view.availability === 'offline'
+    ? 'Live people are unavailable. Reconnecting…'
+    : view.availability === 'empty'
+      ? `No one else is in ${place} yet.`
+      : `${view.people.length} ${view.people.length === 1 ? 'person' : 'people'} here now`
+  list.innerHTML = view.people.map(person => `<div class="people-entry" role="listitem"><span class="people-dot" aria-hidden="true">●</span><span class="people-details"><b>${escapeHtml(person.name?.trim() || 'Guest')}</b><small>${person.dancing ? 'Dancing here now' : `In ${place}`}</small></span><span class="people-live">LIVE</span></div>`).join('')
+  wave.disabled = view.availability !== 'online'
+}
+const presence = connectPresence(renderPresence, handleIncomingEmote, handleIncomingChat)
 window.addEventListener('beforeunload', () => presence.close())
 
 const keys = new Set<string>()
@@ -212,7 +870,8 @@ const walkMarker = new THREE.Mesh(new THREE.RingGeometry(.45, .58, 28), new THRE
 walkMarker.rotation.x = -Math.PI / 2; walkMarker.visible = false; walkMarker.renderOrder = 20; scene.add(walkMarker)
 const routeMarker = new THREE.Mesh(new THREE.RingGeometry(.7, .84, 32), new THREE.MeshBasicMaterial({ color: '#f7d37d', side: THREE.DoubleSide, depthTest: false }))
 routeMarker.rotation.x = -Math.PI / 2; routeMarker.visible = false; routeMarker.renderOrder = 21; scene.add(routeMarker)
-const routePoints: Record<Hotspot, [number, number]> = { kiosk: [-8, 3.55], studio: [13, -8], palmEntrance: [10, 2], stage: [0, -7], venueExit: [-10, 9], studioDesk: [0, -4.05], studioExit: [-10, 9], releaseEntrance: [-13, -8], releaseIntake: [0, -3.9], releaseExit: [-10, 9] }
+const releaseRoute = (id: ReleaseStationId): [number, number] => { const { x, z } = releaseStation(id); return [x, z] }
+const routePoints: Record<Hotspot, [number, number]> = { kiosk: [-8, 3.55], studio: [13, -8], palmEntrance: [10, 2], stage: [0, -7], venueExit: [-10, 9], studioDesk: [0, -4.05], studioExit: [-10, 9], releaseEntrance: [-13, -8], releaseIntake: releaseRoute('intake'), releaseArtwork: releaseRoute('artwork'), releaseMetadata: releaseRoute('metadata'), releaseListening: releaseRoute('listening'), releaseRights: releaseRoute('rights'), releaseCalendar: releaseRoute('calendar'), releaseExit: [-10, 9] }
 const ground = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), raycaster = new THREE.Raycaster()
 function clearWalkTarget() { walkTarget = null; walkPath = []; walkMarker.visible = false }
 function beginWalkTo(x: number, z: number): boolean {
@@ -230,21 +889,76 @@ let routeTarget: Hotspot | null = null
 let onwardTarget: Hotspot | null = null
 let sheet: 'none' | 'desk' | 'action' = 'none'
 let deskTab: 'today' | 'ask' | 'plans' = 'today'
-let savedPreview = false, previewOpened = false, equipmentPreviewVisible = false, playing = false
+let deskAskQuery = ''
+let savedPreview = false, previewOpened = false, playing = false
+const savedStageTemplate = parseStageTemplate(localStorage.getItem('scene-stage-template'))
+let equipmentPreviewVisible = savedStageTemplate.floorLightPreview
+let stageLook: StageLook = savedStageTemplate.lightLook
 let dancing = false
 let beatPattern: BeatPattern = starterPattern(), beatPatternB: BeatPattern = toggleStep(starterPattern(), 0, 1)
+let beatKit: SoundKit = 'afrobeats', beatBpm = 104
 let beatSection: 'a' | 'b' = 'a', beatPlaying = false, beatTimer: number | undefined, beatStep = 0, beatBar = 0, beatDraftSaved = false
 let masterBlob: Blob | null = null, masterPlayer: HTMLAudioElement | null = null, masterAudioUrl: string | null = null, performingOnStage = false
+let releaseDraftSaved = false, releaseAuditionPlayed = false, stagePreviewPlayed = false
 let releaseDraft: ReleaseDraft = blankReleaseDraft()
+let activeReleaseStation: ReleaseStationId = 'intake'
+try { stagePreviewPlayed = localStorage.getItem('scene-stage-preview-played') === 'true' } catch { /* stage history is optional local progress */ }
+try { releaseAuditionPlayed = localStorage.getItem('scene-release-audition-played') === 'true' } catch { /* audition history is optional local progress */ }
 try { const saved = JSON.parse(localStorage.getItem('scene-beat-draft') || 'null'); if (validPattern(saved)) { beatPattern = saved; beatDraftSaved = true } } catch { /* invalid local draft starts fresh */ }
-try { const saved = JSON.parse(localStorage.getItem('scene-beat-arrangement') || 'null'); if (validPattern(saved?.a) && validPattern(saved?.b)) { beatPattern = saved.a; beatPatternB = saved.b; beatDraftSaved = true } } catch { /* invalid local arrangement starts fresh */ }
-try { const saved = JSON.parse(localStorage.getItem('scene-release-draft') || 'null'); if (validReleaseDraft(saved)) releaseDraft = saved } catch { /* invalid local draft starts fresh */ }
-try { savedPreview = localStorage.getItem('scene-saved-square-sketch') === '1'; previewOpened = savedPreview } catch { /* storage may be unavailable */ }
+try {
+  const saved = JSON.parse(localStorage.getItem('scene-beat-arrangement') || 'null')
+  if (validPattern(saved?.a) && validPattern(saved?.b)) {
+    beatPattern = saved.a; beatPatternB = saved.b; beatDraftSaved = true
+    if (saved?.kit && ['afrobeats', 'amapiano', 'highlife'].includes(saved.kit)) beatKit = saved.kit
+    if (saved?.bpm && Number.isFinite(saved.bpm)) beatBpm = clampBpm(saved.bpm)
+  }
+} catch { /* invalid local arrangement starts fresh */ }
+try { const saved = JSON.parse(localStorage.getItem('scene-release-draft') || 'null'); if (validReleaseDraft(saved)) { releaseDraft = saved; releaseDraftSaved = !!saved.title.trim() } } catch { /* invalid local draft starts fresh */ }
+let catalogue: CatalogueTrack[] = [
+  { id: 'square-sketch', title: 'Square Sketch', artist: 'THE SCENE Originals', genre: 'Afrobeats / Demo', duration: 30, released: true },
+  { id: 'lagos-golden-hour', title: 'Golden Hour Jam', artist: 'Victoria Island Collective', genre: 'Afro-fusion', duration: 30, released: true },
+]
+let currentTrackIndex = 0
+const savedTrackIds = new Set<string>()
+try { const saved = JSON.parse(localStorage.getItem('scene-saved-tracks') || '[]'); if (Array.isArray(saved)) saved.forEach(id => savedTrackIds.add(id)) } catch { /* ignore */ }
+if (localStorage.getItem('scene-saved-square-sketch') === '1') savedTrackIds.add('square-sketch')
+
+// Avatar appearance — loaded from localStorage, applied to prototype geometry only
+const SKIN_DEFAULT = '#70412f', SHIRT_DEFAULT = '#dfac5f', TROUSERS_DEFAULT = '#7758b0'
+let skinColour = localStorage.getItem('scene-skin') || SKIN_DEFAULT
+let shirtColour = localStorage.getItem('scene-shirt') || SHIRT_DEFAULT
+let trousersColour = localStorage.getItem('scene-trousers') || TROUSERS_DEFAULT
+let playerName = localStorage.getItem('scene-player-name') || 'Guest'
+function applyAppearance() {
+  skin.color.set(skinColour)
+  shirt.color.set(shirtColour)
+  trousers.color.set(trousersColour)
+  const nameInput = document.getElementById('avatar-name') as HTMLInputElement | null
+  if (nameInput && nameInput.value !== playerName) nameInput.value = playerName
+  updateAvatarNameTag(avatar, playerName, 'self')
+  // Update swatch selection indicators
+  document.querySelectorAll<HTMLButtonElement>('.swatch-row[data-option="skin"] button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.value === skinColour)))
+  document.querySelectorAll<HTMLButtonElement>('.swatch-row[data-option="shirt"] button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.value === shirtColour)))
+  document.querySelectorAll<HTMLButtonElement>('.swatch-row[data-option="trousers"] button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.value === trousersColour)))
+}
+
 void openGuest().then(async guest => {
-  if (savedPreview && !guest.saves.includes('square-sketch')) await saveGuestPreview()
-  if (guest.saves.includes('square-sketch')) { savedPreview = true; previewOpened = true; renderMiniPlayer() }
+  guest.saves.forEach(id => savedTrackIds.add(id))
+  for (const id of savedTrackIds) {
+    if (!guest.saves.includes(id)) await saveGuestPreview(id).catch(() => {})
+  }
+  presence.auth(guest.token)
+  renderMiniPlayer()
 }).catch(() => { /* offline guests retain the local demo save */ })
-void loadLocalMaster().then(blob => { masterBlob = blob; if (!$<HTMLElement>('release-sheet').hidden) renderReleaseDraft(false) }).catch(() => { /* private mode may block local storage */ })
+
+void fetchCatalogue().then(tracks => {
+  if (tracks.length) {
+    catalogue = tracks
+    renderMiniPlayer()
+  }
+}).catch(() => {})
+
+void loadLocalMaster().then(blob => { masterBlob = blob; if (!$<HTMLElement>('release-sheet').hidden) renderReleaseDraft(false); if (!$<HTMLElement>('desk-sheet').hidden) renderDesk() }).catch(() => { /* private mode may block local storage */ })
 let audio: AudioContext | null = null, audioTimer: number | undefined
 
 function toast(text: string) {
@@ -261,6 +975,9 @@ function hideSheets(keepMasterAudio: boolean) {
   $<HTMLElement>('beat-sheet').hidden = true
   $<HTMLElement>('release-sheet').hidden = true
   $<HTMLElement>('map-sheet').hidden = true
+  $<HTMLElement>('people-sheet').hidden = true
+  $<HTMLElement>('avatar-sheet').hidden = true
+  $<HTMLElement>('chat-menu').hidden = true
   stopBeat()
   if (!keepMasterAudio) stopMasterPreview()
   sheet = 'none'
@@ -291,7 +1008,8 @@ function setRoute(target: Hotspot) {
   routeMarker.position.set(x, .075, z)
   routeMarker.visible = true
   $<HTMLElement>('route').hidden = false
-  $<HTMLElement>('route-title').textContent = target === 'palmEntrance' ? 'PALM ROOM' : target === 'stage' ? 'STAGE SETUP' : target === 'studio' ? 'CITY STUDIO' : target === 'studioDesk' ? 'BEAT DESK' : target === 'studioExit' ? 'STUDIO EXIT' : target === 'releaseEntrance' ? 'RELEASE HOUSE' : target === 'releaseIntake' ? 'RECORD INTAKE' : target === 'releaseExit' ? 'RELEASE EXIT' : target === 'venueExit' ? 'VENUE EXIT' : 'LISTENING STATION'
+  const releaseTitle = RELEASE_JOURNEY.find(station => station.hotspot === target)?.title
+  $<HTMLElement>('route-title').textContent = releaseTitle?.toUpperCase() ?? (target === 'palmEntrance' ? 'PALM ROOM' : target === 'stage' ? 'STAGE SETUP' : target === 'studio' ? 'CITY STUDIO' : target === 'studioDesk' ? 'BEAT DESK' : target === 'studioExit' ? 'STUDIO EXIT' : target === 'releaseEntrance' ? 'RELEASE HOUSE' : target === 'releaseExit' ? 'RELEASE EXIT' : target === 'venueExit' ? 'VENUE EXIT' : 'LISTENING STATION')
   closeSheets()
   toast(beginWalkTo(x, z) ? 'Walking to the marked place · steer with WASD or the touch pad' : 'No clear walking route · move closer and try again')
 }
@@ -302,6 +1020,7 @@ const mapDestinations: { id: Hotspot; name: string; detail: string }[] = [
   { id: 'kiosk', name: 'Listening station', detail: 'Original music preview' },
   { id: 'palmEntrance', name: 'Palm Room', detail: 'Walkable venue preview' },
 ]
+const mapPins: Partial<Record<Hotspot, [number, number]>> = { releaseEntrance: [15, 18], studio: [84, 18], kiosk: [28, 54], palmEntrance: [76, 54] }
 function exitForLocation(): Hotspot { return location === 'venue' ? 'venueExit' : location === 'studio' ? 'studioExit' : 'releaseExit' }
 function mapRoute(target: Hotspot) {
   onwardTarget = location === 'square' ? null : target
@@ -321,24 +1040,42 @@ function renderMap() {
     avatarPin.style.left = `${Math.max(5, Math.min(95, (avatar.position.x + 18) / 37 * 100))}%`
     avatarPin.style.top = `${Math.max(6, Math.min(94, (avatar.position.z + 12) / 28 * 100))}%`
   }
+  const routeSvg = $<SVGSVGElement>('map-route-line')
+  const destination = routeTarget ? mapPins[routeTarget] : undefined
+  routeSvg.toggleAttribute('hidden', location !== 'square' || !destination)
+  if (destination) {
+    const line = $<SVGLineElement>('map-route-stroke')
+    line.setAttribute('x1', avatarPin.style.left.replace('%', ''))
+    line.setAttribute('y1', avatarPin.style.top.replace('%', ''))
+    line.setAttribute('x2', String(destination[0]))
+    line.setAttribute('y2', String(destination[1]))
+  }
   $<HTMLElement>('map-context').textContent = location === 'square' ? 'Choose a place to walk there. Interact at its entrance.' : `You are inside ${location === 'venue' ? 'Palm Room' : location === 'studio' ? 'City Studio' : 'Release House'}. A route to another place begins at this room’s exit.`
-  $<HTMLElement>('map-places').innerHTML = mapDestinations.map(item => `<button data-map-target="${item.id}"><b>${item.name}</b><small>${item.detail}</small><span>Walk there ↗</span></button>`).join('')
+  const selectedMapTarget = onwardTarget ?? routeTarget
+  $<HTMLElement>('map-places').innerHTML = mapDestinations.map(item => `<button data-map-target="${item.id}" ${selectedMapTarget === item.id ? 'class="active-route" aria-current="location"' : ''}><b>${item.name}</b><small>${item.detail}</small><span>${selectedMapTarget === item.id ? 'Route active ↗' : 'Walk there ↗'}</span></button>`).join('')
   $<HTMLElement>('map-sheet').querySelectorAll<HTMLButtonElement>('[data-map-target]').forEach(button => button.onclick = () => mapRoute(button.dataset.mapTarget as Hotspot))
 }
 
-function startPreview() {
+const trackMelodies: Record<string, number[]> = {
+  'square-sketch': [220, 261.63, 329.63, 392, 329.63, 261.63, 196, 246.94],
+  'lagos-golden-hour': [293.66, 369.99, 440, 523.25, 440, 369.99, 329.63, 293.66],
+}
+
+function startPreview(trackIdx = currentTrackIndex) {
   stopBeat()
   stopMasterPreview()
+  currentTrackIndex = trackIdx
+  const track = catalogue[currentTrackIndex] || catalogue[0]
   previewOpened = true
   audio ??= new AudioContext()
   void audio.resume()
   playing = true
   let step = 0
-  const notes = [220, 261.63, 329.63, 392, 329.63, 261.63, 196, 246.94]
+  const notes = trackMelodies[track.id] || trackMelodies['square-sketch']
   const note = () => {
     if (!playing || !audio) return
     const oscillator = audio.createOscillator(), gain = audio.createGain()
-    oscillator.type = 'sine'
+    oscillator.type = track.id === 'lagos-golden-hour' ? 'triangle' : 'sine'
     oscillator.frequency.value = notes[step++ % notes.length]
     gain.gain.setValueAtTime(.0001, audio.currentTime)
     gain.gain.exponentialRampToValueAtTime(.065, audio.currentTime + .02)
@@ -347,6 +1084,7 @@ function startPreview() {
     oscillator.start(); oscillator.stop(audio.currentTime + .3)
   }
   note()
+  if (audioTimer) window.clearInterval(audioTimer)
   audioTimer = window.setInterval(note, 350)
   $<HTMLButtonElement>('audio').innerHTML = '♫ <span>ON</span>'
   $<HTMLButtonElement>('audio').setAttribute('aria-label', 'Audio on')
@@ -356,48 +1094,102 @@ function startPreview() {
 function stopPreview() {
   playing = false
   window.clearInterval(audioTimer)
+  audioTimer = undefined
   $<HTMLButtonElement>('audio').innerHTML = '♫ <span>OFF</span>'
   $<HTMLButtonElement>('audio').setAttribute('aria-label', 'Audio off')
   renderMiniPlayer()
 }
 
-function savePreview() {
-  savedPreview = true
-  previewOpened = true
-  try { localStorage.setItem('scene-saved-square-sketch', '1') } catch { toast('Storage unavailable; saved for this session only') }
+async function toggleSaveCurrentTrack() {
+  const track = catalogue[currentTrackIndex] || catalogue[0]
+  const isSaved = savedTrackIds.has(track.id)
+  if (isSaved) {
+    savedTrackIds.delete(track.id)
+    try { localStorage.setItem('scene-saved-tracks', JSON.stringify([...savedTrackIds])) } catch { /* ignore */ }
+    toast(`Removed ${track.title} from saves`)
+    await removeGuestSave(track.id).catch(() => {})
+  } else {
+    savedTrackIds.add(track.id)
+    try { localStorage.setItem('scene-saved-tracks', JSON.stringify([...savedTrackIds])) } catch { /* ignore */ }
+    toast(`Saved ${track.title} privately`)
+    await saveGuestPreview(track.id).catch(() => toast('Saved locally; server sync unavailable'))
+  }
   renderMiniPlayer()
-  toast('Square Sketch saved privately')
-  void saveGuestPreview().catch(() => toast('Saved on this device; server sync unavailable'))
 }
 
 function renderMiniPlayer() {
+  const track = catalogue[currentTrackIndex] || catalogue[0]
   $<HTMLElement>('mini-player').hidden = !previewOpened
+  $<HTMLElement>('mini-title').textContent = track.title
+  $<HTMLElement>('mini-artist').textContent = `${track.artist} · ${track.genre}`
   $<HTMLButtonElement>('mini-play').textContent = playing ? 'Ⅱ' : '▶'
-  $<HTMLButtonElement>('mini-play').setAttribute('aria-label', playing ? 'Pause Square Sketch' : 'Play Square Sketch')
-  $<HTMLButtonElement>('mini-save').textContent = savedPreview ? '♥' : '♡'
-  $<HTMLButtonElement>('mini-save').setAttribute('aria-label', savedPreview ? 'Square Sketch saved' : 'Save Square Sketch')
-  $<HTMLButtonElement>('mini-save').disabled = savedPreview
+  $<HTMLButtonElement>('mini-play').setAttribute('aria-label', playing ? `Pause ${track.title}` : `Play ${track.title}`)
+  const isSaved = savedTrackIds.has(track.id)
+  $<HTMLButtonElement>('mini-save').textContent = isSaved ? '♥' : '♡'
+  $<HTMLButtonElement>('mini-save').setAttribute('aria-label', isSaved ? `Remove ${track.title} from saves` : `Save ${track.title}`)
+  $<HTMLButtonElement>('mini-save').disabled = false
 }
 
 function beatVoice(lane: number) {
   audio ??= new AudioContext()
   void audio.resume()
   const at = audio.currentTime, oscillator = audio.createOscillator(), gain = audio.createGain()
-  oscillator.type = lane === 2 ? 'square' : lane === 1 ? 'triangle' : 'sine'
-  oscillator.frequency.setValueAtTime([125, 240, 680, 164][lane], at)
-  oscillator.frequency.exponentialRampToValueAtTime([48, 120, 420, 150][lane], at + .14)
-  gain.gain.setValueAtTime(.0001, at)
-  gain.gain.exponentialRampToValueAtTime(lane === 2 ? .018 : .065, at + .008)
-  gain.gain.exponentialRampToValueAtTime(.0001, at + (lane === 3 ? .34 : .18))
+
+  if (lane === 0) {
+    // Kick
+    oscillator.type = 'sine'
+    const f0 = beatKit === 'amapiano' ? 45 : beatKit === 'highlife' ? 70 : 60
+    const sweep = beatKit === 'amapiano' ? 85 : 70
+    oscillator.frequency.setValueAtTime(f0 + sweep, at)
+    oscillator.frequency.exponentialRampToValueAtTime(f0, at + 0.12)
+    gain.gain.setValueAtTime(0.0001, at)
+    gain.gain.exponentialRampToValueAtTime(0.09, at + 0.005)
+    gain.gain.exponentialRampToValueAtTime(0.0001, at + 0.22)
+  } else if (lane === 1) {
+    // Snare / Rim / Clap
+    oscillator.type = beatKit === 'amapiano' ? 'triangle' : 'square'
+    oscillator.frequency.setValueAtTime(beatKit === 'amapiano' ? 320 : 220, at)
+    oscillator.frequency.exponentialRampToValueAtTime(110, at + 0.09)
+    gain.gain.setValueAtTime(0.0001, at)
+    gain.gain.exponentialRampToValueAtTime(0.045, at + 0.004)
+    gain.gain.exponentialRampToValueAtTime(0.0001, at + 0.15)
+  } else if (lane === 2) {
+    // Shaker / Hat
+    oscillator.type = 'square'
+    oscillator.frequency.setValueAtTime(beatKit === 'highlife' ? 880 : 640, at)
+    oscillator.frequency.exponentialRampToValueAtTime(420, at + 0.04)
+    gain.gain.setValueAtTime(0.0001, at)
+    gain.gain.exponentialRampToValueAtTime(0.016, at + 0.002)
+    gain.gain.exponentialRampToValueAtTime(0.0001, at + 0.06)
+  } else {
+    // Bass / Log Drum
+    oscillator.type = beatKit === 'amapiano' ? 'triangle' : 'sine'
+    const bassF = beatKit === 'amapiano' ? 80 : beatKit === 'highlife' ? 130 : 110
+    oscillator.frequency.setValueAtTime(bassF, at)
+    oscillator.frequency.exponentialRampToValueAtTime(bassF * 0.8, at + 0.2)
+    gain.gain.setValueAtTime(0.0001, at)
+    gain.gain.exponentialRampToValueAtTime(0.075, at + 0.01)
+    gain.gain.exponentialRampToValueAtTime(0.0001, at + 0.35)
+  }
+
   oscillator.connect(gain).connect(audio.destination)
-  oscillator.start(at); oscillator.stop(at + .36)
+  oscillator.start(at); oscillator.stop(at + 0.38)
 }
 
 function drawBeat() {
   const grid = $<HTMLDivElement>('beat-grid')
   const pattern = beatSection === 'a' ? beatPattern : beatPatternB
+  const kitInfo = SOUND_KITS[beatKit]
+
   document.querySelectorAll<HTMLButtonElement>('[data-section]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.section === beatSection)))
-  grid.innerHTML = pattern.map((lane, laneIndex) => `<div class="beat-row"><b>${['Kick', 'Snare', 'Hat', 'Bass'][laneIndex]}</b>${lane.map((on, step) => `<button aria-label="${['Kick', 'Snare', 'Hat', 'Bass'][laneIndex]} step ${step + 1}" aria-pressed="${on}" data-lane="${laneIndex}" data-step="${step}" class="${beatPlaying && beatStep === step ? 'current' : ''}"></button>`).join('')}</div>`).join('')
+  document.querySelectorAll<HTMLButtonElement>('[data-kit]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.kit === beatKit)))
+
+  const tempoInput = $<HTMLInputElement>('beat-tempo')
+  if (tempoInput && Number(tempoInput.value) !== beatBpm) tempoInput.value = String(beatBpm)
+  const tempoDisplay = $<HTMLElement>('tempo-display')
+  if (tempoDisplay) tempoDisplay.textContent = String(beatBpm)
+
+  grid.innerHTML = pattern.map((lane, laneIndex) => `<div class="beat-row"><b>${kitInfo.labels[laneIndex]}</b>${lane.map((on, step) => `<button aria-label="${kitInfo.labels[laneIndex]} step ${step + 1}" aria-pressed="${on}" data-lane="${laneIndex}" data-step="${step}" class="${beatPlaying && beatStep === step ? 'current' : ''}"></button>`).join('')}</div>`).join('')
   grid.querySelectorAll<HTMLButtonElement>('button').forEach(button => button.onclick = () => { if (beatSection === 'a') beatPattern = toggleStep(beatPattern, Number(button.dataset.lane), Number(button.dataset.step)); else beatPatternB = toggleStep(beatPatternB, Number(button.dataset.lane), Number(button.dataset.step)); drawBeat() })
 }
 
@@ -418,8 +1210,9 @@ function toggleBeat() {
   $<HTMLButtonElement>('beat-play').textContent = '■ Stop beat'
   $<HTMLButtonElement>('audio').innerHTML = '♫ <span>BEAT</span>'
   $<HTMLButtonElement>('audio').setAttribute('aria-label', 'Beat playing')
+  const stepMs = bpmToStepMs(beatBpm)
   const pulse = () => { const pattern = beatBar % 2 ? beatPatternB : beatPattern; pattern.forEach((row, lane) => { if (row[beatStep]) beatVoice(lane) }); drawBeat(); beatStep = (beatStep + 1) % 8; if (beatStep === 0) beatBar++ }
-  pulse(); beatTimer = window.setInterval(pulse, 312.5)
+  pulse(); beatTimer = window.setInterval(pulse, stepMs)
 }
 
 function openAction(title: string, copy: string, primary: string, onPrimary: () => void, secondary?: { label: string; action: () => void }, keepMasterAudio = false) {
@@ -439,25 +1232,31 @@ function openAction(title: string, copy: string, primary: string, onPrimary: () 
 
 function enterVenue() {
   if (getNearby('square', avatar.position.x, avatar.position.z) !== 'palmEntrance') { toast('Walk to the Palm Room entrance first'); return }
-  showVenue()
+  void showVenue()
 }
 
-function showVenue() {
+async function showVenue() {
   stopDance()
   clearWalkTarget()
-  if (!palmRoom) { palmRoom = makePalmRoom(); scene.add(palmRoom.root) }
+  if (!palmRoom) {
+    const { makePalmRoom } = await import('./palmWorld.ts')
+    palmRoom = makePalmRoom()
+    palmRoom.setStageLook(stageLook)
+    palmRoom.setEquipmentPreview(equipmentPreviewVisible)
+    scene.add(palmRoom.root)
+  }
   square.visible = false
   palmRoom.root.visible = true
   location = 'venue'
-  renderPresence(connectedPlayers, presenceConnected)
+  renderPresence(connectedPlayers, presenceConnected, 0)
   $<HTMLElement>('game').dataset.location = 'venue'
   avatar.position.set(0, 0, 8)
   yaw = 0
-  camera.position.set(0, 3.6, 15)
-  sun.intensity = 1.2
-  ambient.intensity = 1.35
-  scene.background = new THREE.Color('#211d26')
-  scene.fog = new THREE.Fog('#211d26', 24, 55)
+  camera.position.set(0, 4.9, 18.6)
+  sun.intensity = 1.45
+  ambient.intensity = 1.9
+  scene.background = new THREE.Color('#302631')
+  scene.fog = new THREE.Fog('#302631', 24, 55)
   routeTarget = null
   $<HTMLElement>('route').hidden = true
   closeSheets()
@@ -469,16 +1268,20 @@ function showVenue() {
 
 function enterStudio() {
   if (getNearby('square', avatar.position.x, avatar.position.z) !== 'studio') { toast('Walk to the City Studio door first'); return }
-  showStudio()
+  void showStudio()
 }
 
-function showStudio() {
+async function showStudio() {
   stopDance()
   clearWalkTarget()
-  if (!studioRoom) { studioRoom = makeStudio(); scene.add(studioRoom) }
+  if (!studioRoom) {
+    const { makeStudio } = await import('./studioWorld.ts')
+    studioRoom = makeStudio()
+    scene.add(studioRoom)
+  }
   square.visible = false; studioRoom.visible = true
   location = 'studio'; $<HTMLElement>('game').dataset.location = 'studio'
-  renderPresence(connectedPlayers, presenceConnected)
+  renderPresence(connectedPlayers, presenceConnected, 0)
   avatar.position.set(0, 0, 7); yaw = 0; camera.position.set(0, 3.7, 14)
   sun.intensity = 1.05; ambient.intensity = 1.45
   scene.background = new THREE.Color('#28202f'); scene.fog = new THREE.Fog('#28202f', 24, 56)
@@ -493,7 +1296,7 @@ function leaveStudio() {
   if (getNearby('studio', avatar.position.x, avatar.position.z) !== 'studioExit') { toast('Walk to the exit first'); return }
   clearWalkTarget(); stopBeat(); studioRoom!.visible = false; square.visible = true
   location = 'square'; $<HTMLElement>('game').dataset.location = 'square'
-  renderPresence(connectedPlayers, presenceConnected)
+  renderPresence(connectedPlayers, presenceConnected, 0)
   avatar.position.set(13, 0, -6.7); yaw = 0; camera.position.set(13, 3.8, .3)
   sun.intensity = 2; ambient.intensity = 1.9
   scene.background = new THREE.Color('#413243'); scene.fog = new THREE.Fog('#413243', 32, 72)
@@ -504,16 +1307,20 @@ function leaveStudio() {
 
 function enterReleaseHouse() {
   if (getNearby('square', avatar.position.x, avatar.position.z) !== 'releaseEntrance') { toast('Walk to the Release House entrance first'); return }
-  showReleaseHouse()
+  void showReleaseHouse()
 }
 
-function showReleaseHouse() {
+async function showReleaseHouse() {
   stopDance()
   clearWalkTarget()
-  if (!releaseRoom) { releaseRoom = makeReleaseHouse(); scene.add(releaseRoom) }
+  if (!releaseRoom) {
+    const { makeReleaseHouse } = await import('./releaseWorld.ts')
+    releaseRoom = makeReleaseHouse()
+    scene.add(releaseRoom)
+  }
   square.visible = false; releaseRoom.visible = true
   location = 'release'; $<HTMLElement>('game').dataset.location = 'release'
-  renderPresence(connectedPlayers, presenceConnected)
+  renderPresence(connectedPlayers, presenceConnected, 0)
   avatar.position.set(0, 0, 7); yaw = 0; camera.position.set(0, 3.7, 14)
   sun.intensity = 1.05; ambient.intensity = 1.45
   scene.background = new THREE.Color('#251d2e'); scene.fog = new THREE.Fog('#251d2e', 24, 56)
@@ -528,7 +1335,7 @@ function leaveReleaseHouse() {
   if (getNearby('release', avatar.position.x, avatar.position.z) !== 'releaseExit') { toast('Walk to the exit first'); return }
   clearWalkTarget(); releaseRoom!.visible = false; square.visible = true
   location = 'square'; $<HTMLElement>('game').dataset.location = 'square'
-  renderPresence(connectedPlayers, presenceConnected)
+  renderPresence(connectedPlayers, presenceConnected, 0)
   avatar.position.set(-13, 0, -6.7); yaw = 0; camera.position.set(-13, 3.8, .3)
   sun.intensity = 2; ambient.intensity = 1.9
   scene.background = new THREE.Color('#413243'); scene.fog = new THREE.Fog('#413243', 32, 72)
@@ -538,17 +1345,120 @@ function leaveReleaseHouse() {
 }
 
 function renderReleaseDraft(syncInputs = true) {
-  if (syncInputs) { $<HTMLInputElement>('release-title').value = releaseDraft.title; $<HTMLInputElement>('release-artist').value = releaseDraft.artist }
+  if (syncInputs) {
+    $<HTMLInputElement>('release-title').value = releaseDraft.title
+    $<HTMLInputElement>('release-artist').value = releaseDraft.artist
+    const genreSelect = $<HTMLSelectElement>('release-genre')
+    if (genreSelect) genreSelect.value = releaseDraft.genre
+    const rightMaster = $<HTMLInputElement>('right-master')
+    if (rightMaster) rightMaster.checked = releaseDraft.rights.masterOwnership
+    const rightComp = $<HTMLInputElement>('right-composition')
+    if (rightComp) rightComp.checked = releaseDraft.rights.originalComposition
+    const rightSamples = $<HTMLInputElement>('right-samples')
+    if (rightSamples) rightSamples.checked = releaseDraft.rights.sampleClearance
+    const rightConsent = $<HTMLInputElement>('right-consent')
+    if (rightConsent) rightConsent.checked = releaseDraft.rights.contributorConsent
+  }
   $<HTMLElement>('release-cover-title').textContent = releaseDraft.title || 'UNTITLED'
   $<HTMLElement>('release-cover-artist').textContent = releaseDraft.artist || 'ARTIST NAME'
+  $<HTMLElement>('release-cover-genre').textContent = RELEASE_GENRES[releaseDraft.genre] || 'Afrobeats'
   $<HTMLElement>('release-cover').dataset.art = releaseDraft.artwork
   document.querySelectorAll<HTMLButtonElement>('[data-art]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.art === releaseDraft.artwork)))
   $<HTMLElement>('release-blockers').replaceChildren(...releaseBlockers(releaseDraft, !!masterBlob).map(item => { const li = document.createElement('li'); li.textContent = item; return li }))
+  $<HTMLElement>('release-master-status').textContent = masterBlob ? 'A private 30-second master is ready on this device.' : 'No rendered master on this device.'
+  $<HTMLElement>('release-listen-status').textContent = masterBlob ? 'Your local master is ready to audition.' : 'Render a master in City Studio before auditioning.'
   $<HTMLButtonElement>('release-play').hidden = !masterBlob
+  $<HTMLButtonElement>('release-export-master').hidden = !masterBlob
+
+  const ready = canPreflight(releaseDraft, !!masterBlob)
+  const preflightBtn = $<HTMLButtonElement>('release-preflight')
+  if (preflightBtn) {
+    preflightBtn.disabled = !ready
+    preflightBtn.textContent = ready ? '✓ Ready for Preflight' : 'Validate Preflight'
+  }
 }
 
-function openReleaseDraft() {
-  closeSheets(); sheet = 'action'; $<HTMLElement>('release-sheet').hidden = false; renderReleaseDraft()
+$<HTMLButtonElement>('release-previous').onclick = () => {
+  const previous = previousReleaseStation(activeReleaseStation)
+  if (previous) walkToReleaseStation(previous)
+}
+$<HTMLButtonElement>('release-next').onclick = () => {
+  const next = nextReleaseStation(activeReleaseStation)
+  if (next) walkToReleaseStation(next)
+}
+
+function formatLagosReleaseTime(instant: string) {
+  const date = new Date(instant)
+  if (!Number.isFinite(date.getTime())) throw new TypeError('Invalid release calendar timestamp')
+  const dateLabel = new Intl.DateTimeFormat('en-NG', { timeZone: 'Africa/Lagos', weekday: 'short', day: 'numeric', month: 'short' }).format(date)
+  const timeLabel = new Intl.DateTimeFormat('en-NG', { timeZone: 'Africa/Lagos', hour: 'numeric', minute: '2-digit' }).format(date)
+  return `${dateLabel} · ${timeLabel}`
+}
+
+async function updateReleaseCalendar() {
+  const status = $<HTMLElement>('release-calendar-status')
+  status.textContent = 'Checking server time'
+  try {
+    const response = await fetch('/api/release-window', { cache: 'no-store' })
+    if (!response.ok) throw new Error('Release calendar unavailable')
+    const calendar = await response.json() as {
+      timezone: string
+      nextEligibleFriday: string
+      submissionDeadline: string
+      moderationCheckpoint: string
+      premiereAt: string
+    }
+    if (calendar.timezone !== 'Africa/Lagos' || calendar.nextEligibleFriday !== calendar.premiereAt) throw new Error('Unexpected release calendar')
+    $<HTMLElement>('release-next-friday').textContent = formatLagosReleaseTime(calendar.nextEligibleFriday)
+    $<HTMLElement>('release-submit-deadline').textContent = formatLagosReleaseTime(calendar.submissionDeadline)
+    $<HTMLElement>('release-moderation-checkpoint').textContent = formatLagosReleaseTime(calendar.moderationCheckpoint)
+    $<HTMLElement>('release-premiere-time').textContent = formatLagosReleaseTime(calendar.premiereAt)
+    status.textContent = 'Preview only · no date reserved; submission and approval are unavailable.'
+  } catch {
+    $<HTMLElement>('release-next-friday').textContent = 'Server calendar unavailable'
+    $<HTMLElement>('release-submit-deadline').textContent = '—'
+    $<HTMLElement>('release-moderation-checkpoint').textContent = '—'
+    $<HTMLElement>('release-premiere-time').textContent = '—'
+    status.textContent = 'No release date is reserved.'
+  }
+}
+
+function walkToReleaseStation(id: ReleaseStationId) {
+  activeReleaseStation = id
+  setRoute(releaseStation(id).hotspot)
+}
+
+function renderReleaseStation(id: ReleaseStationId) {
+  activeReleaseStation = id
+  const index = RELEASE_JOURNEY.findIndex(station => station.id === id)
+  const station = releaseStation(id)
+  $<HTMLElement>('release-step-count').textContent = `STATION ${index + 1} OF ${RELEASE_JOURNEY.length}`
+  $<HTMLElement>('release-station-title').textContent = station.title
+  $<HTMLElement>('release-station-instruction').textContent = station.instruction
+  $<HTMLOListElement>('release-steps').replaceChildren(...RELEASE_JOURNEY.map(item => {
+    const step = document.createElement('li')
+    step.textContent = item.title
+    if (item.id === id) { step.setAttribute('aria-current', 'step'); step.className = 'active' }
+    return step
+  }))
+  document.querySelectorAll<HTMLElement>('[data-release-panel]').forEach(panel => {
+    panel.hidden = panel.dataset.releasePanel !== id
+  })
+  const previous = previousReleaseStation(id)
+  const next = nextReleaseStation(id)
+  const previousButton = $<HTMLButtonElement>('release-previous')
+  previousButton.hidden = !previous
+  previousButton.textContent = previous ? `← Walk to ${releaseStation(previous).title}` : ''
+  const nextButton = $<HTMLButtonElement>('release-next')
+  nextButton.hidden = !next
+  nextButton.textContent = next ? `Walk to ${releaseStation(next).title} →` : ''
+}
+
+function openReleaseDraft(id: ReleaseStationId = 'intake') {
+  closeSheets(); sheet = 'action'; $<HTMLElement>('release-sheet').hidden = false
+  renderReleaseStation(id); renderReleaseDraft()
+  refreshContext()
+  if (id === 'calendar') void updateReleaseCalendar()
 }
 
 function leaveVenue() {
@@ -556,7 +1466,7 @@ function leaveVenue() {
   clearWalkTarget(); palmRoom!.root.visible = false
   square.visible = true
   location = 'square'
-  renderPresence(connectedPlayers, presenceConnected)
+  renderPresence(connectedPlayers, presenceConnected, 0)
   $<HTMLElement>('game').dataset.location = 'square'
   avatar.position.set(10, 0, 3.5)
   yaw = 0
@@ -573,14 +1483,81 @@ function leaveVenue() {
   continueMapRoute()
 }
 
+function saveStageTemplate() {
+  try {
+    localStorage.setItem('scene-stage-template', serializeStageTemplate({ version: 1, lightLook: stageLook, floorLightPreview: equipmentPreviewVisible }))
+    toast('Stage preview saved on this device')
+  } catch {
+    toast('Could not save this stage preview')
+  }
+}
+
+function renderStageEventMetrics() {
+  const copy = document.getElementById('action-copy')
+  if (!copy) return
+  let ledger = document.getElementById('stage-ledger')
+  if (!ledger) {
+    ledger = document.createElement('div')
+    ledger.id = 'stage-ledger'
+    ledger.className = 'stage-ledger'
+    ledger.setAttribute('aria-label', 'Palm Room rehearsal metrics')
+    ledger.innerHTML = '<small>REHEARSAL PREVIEW · NO EVENT SALES</small><div><b>Other live sessions</b><span id="stage-live-sessions"></span></div><div><b>Tickets sold</b><span>Not a ticketed event</span></div><div><b>Checked-in humans</b><span>Not recorded</span></div><div class="stage-look-picker"><small>LIGHTING TEST · LOCAL PREVIEW</small><div class="stage-look-grid"><button type="button" data-stage-look="warm">Warm wash</button><button type="button" data-stage-look="sunset">Sunset</button><button type="button" data-stage-look="spotlight">Spot</button></div><button type="button" class="stage-save" data-stage-save="true">Save preview on this device</button><small>Visual test only · no gear installed</small></div>'
+    ledger.hidden = location !== 'venue' || nearby !== 'stage'
+    ledger.addEventListener('click', event => {
+      const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-stage-look]')
+      const saveButton = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-stage-save]')
+      if (saveButton) { saveStageTemplate(); return }
+      const selected = button?.dataset.stageLook
+      if (selected !== 'warm' && selected !== 'sunset' && selected !== 'spotlight') return
+      stageLook = selected
+      palmRoom?.setStageLook(stageLook)
+      const stageLedger = event.currentTarget as HTMLElement
+      stageLedger.querySelectorAll<HTMLButtonElement>('[data-stage-look]').forEach(item => item.setAttribute('aria-pressed', String(item.dataset.stageLook === stageLook)))
+      toast(`${button!.textContent} · local lighting preview`)
+    })
+    copy.insertAdjacentElement('afterend', ledger)
+  }
+  ledger.querySelectorAll<HTMLButtonElement>('[data-stage-look]').forEach(item => item.setAttribute('aria-pressed', String(item.dataset.stageLook === stageLook)))
+  const count = new Set(connectedPlayers.filter(player => player.location === 'venue').map(player => player.id)).size
+  const live = document.getElementById('stage-live-sessions')
+  if (live) live.textContent = rehearsalMetrics(presenceConnected, count).liveSessions
+}
+
 function interact() {
+  const stageLedger = document.getElementById('stage-ledger')
+  if (stageLedger) stageLedger.hidden = location !== 'venue' || nearby !== 'stage'
+  renderStageEventMetrics()
   if (!nearby) return
-  if (nearby === 'kiosk') openAction('Square Sketch · listening station', 'An original synthesized demo for this prototype. Choose Play to hear it; saves stay private on this device and do not count toward charts.', playing ? 'Pause preview' : 'Play preview', () => { playing ? stopPreview() : startPreview(); interact() }, { label: savedPreview ? 'Saved ✓' : 'Save privately', action: () => { savePreview(); interact() } })
+  if (routeTarget === nearby) {
+    routeTarget = null
+    routeMarker.visible = false
+    $<HTMLElement>('route').hidden = true
+    clearWalkTarget()
+  }
+  if (nearby === 'kiosk') {
+    const track = catalogue[currentTrackIndex] || catalogue[0]
+    const isSaved = savedTrackIds.has(track.id)
+    openAction(
+      `${track.title} · ${track.artist}`,
+      `Original ${track.genre} discovery preview. Choose Play to hear this recording; saves stay private on this device and sync to your guest profile.`,
+      playing ? 'Pause preview' : 'Play preview',
+      () => { playing ? stopPreview() : startPreview(); interact() },
+      {
+        label: isSaved ? 'Saved ♥' : 'Save privately',
+        action: () => { void toggleSaveCurrentTrack().then(() => interact()) }
+      }
+    )
+  }
   if (nearby === 'studio') openAction('City Studio', 'Enter the free studio and walk to the producer desk. The local beat demo uses original synthesized sounds.', 'Enter studio', enterStudio)
   if (nearby === 'studioDesk') openBeat()
   if (nearby === 'studioExit') openAction('Exit City Studio', 'Walk back to Music Square. Your local beat draft stays on this device.', 'Return to square', leaveStudio)
   if (nearby === 'releaseEntrance') openAction('Release House', 'Enter the record intake and artwork room. Public release is unavailable until a finished rights-cleared master and server review exist.', 'Enter Release House', enterReleaseHouse)
-  if (nearby === 'releaseIntake') openReleaseDraft()
+  if (nearby === 'releaseIntake') openReleaseDraft('intake')
+  if (nearby === 'releaseArtwork') openReleaseDraft('artwork')
+  if (nearby === 'releaseMetadata') openReleaseDraft('metadata')
+  if (nearby === 'releaseListening') openReleaseDraft('listening')
+  if (nearby === 'releaseRights') openReleaseDraft('rights')
+  if (nearby === 'releaseCalendar') openReleaseDraft('calendar')
   if (nearby === 'releaseExit') openAction('Exit Release House', 'Walk back to Music Square. Your private sleeve draft remains on this device.', 'Return to square', leaveReleaseHouse)
   if (nearby === 'palmEntrance') openAction('Palm Room', 'Go through the door to inspect a small walkable music venue. No lease or purchase occurs.', 'Enter venue', enterVenue)
   if (nearby === 'stage') {
@@ -605,6 +1582,8 @@ function interact() {
             performingOnStage = true
             palmRoom?.setStagePerformance(true)
             void masterPlayer.play().then(() => {
+              stagePreviewPlayed = true
+              try { localStorage.setItem('scene-stage-preview-played', 'true') } catch { /* stage history is optional local progress */ }
               $<HTMLButtonElement>('audio').innerHTML = '♫ <span>ON</span>'
               $<HTMLButtonElement>('audio').setAttribute('aria-label', 'Audio on')
               toast('Stage preview · Playing locally')
@@ -632,7 +1611,7 @@ function interact() {
     } else {
       openAction(
         'Stage setup preview',
-        equipmentPreviewVisible ? 'A temporary floor light preview is visible at this snap point. It is not owned, installed, or saved.' : 'Preview a floor light at this snap point. You can also render a master at City Studio to perform here.',
+        equipmentPreviewVisible ? 'A temporary floor light preview is visible at this snap point. It is a local visual preview, not owned or installed equipment.' : 'Preview a floor light at this snap point. You can also render a master at City Studio to perform here.',
         equipmentPreviewVisible ? 'Hide preview' : 'Show floor light preview',
         () => {
           equipmentPreviewVisible = !equipmentPreviewVisible
@@ -658,6 +1637,11 @@ function refreshContext() {
     studioExit: ['MUSIC SQUARE', 'Leave City Studio'],
     releaseEntrance: ['RELEASE HOUSE', 'Enter the record intake'],
     releaseIntake: ['RECORD INTAKE', 'Prepare a private release sleeve'],
+    releaseArtwork: ['ARTWORK FRAME', 'Choose the release sleeve art'],
+    releaseMetadata: ['TITLE SLEEVE', 'Set the song title and credits'],
+    releaseListening: ['LISTENING BOOTH', 'Audition the saved local master'],
+    releaseRights: ['RIGHTS CONSOLE', 'Review rights and contributor declarations'],
+    releaseCalendar: ['RELEASE CALENDAR', 'Check local preflight and Friday timing'],
     releaseExit: ['MUSIC SQUARE', 'Leave Release House'],
     palmEntrance: ['PALM ROOM', 'Enter the music venue'],
     stage: [
@@ -674,24 +1658,49 @@ function refreshContext() {
 function renderDesk() {
   const cards = $<HTMLDivElement>('desk-cards')
   const intro = $<HTMLElement>('desk-intro')
-  intro.textContent = location === 'venue' ? (masterBlob ? 'Step up to the stage and preview your master.' : 'Inspect the space before making any commitment.') : location === 'studio' ? 'Make a private beat at the producer desk.' : location === 'release' ? 'Prepare a private sleeve at Record Intake.' : 'Your music journey, one step at a time.'
+  intro.textContent = location === 'venue' ? (masterBlob ? 'Step up to the stage and preview your master.' : 'Inspect the space before making any commitment.') : location === 'studio' ? 'Make a private beat at the producer desk.' : location === 'release' ? 'Walk between the six release preparation stations.' : 'Your music journey, one step at a time.'
   if (deskTab === 'today') {
+    const journey = nextMusicJourneyStep({ beatSaved: beatDraftSaved, masterRendered: !!masterBlob, releaseDraftSaved, releaseAuditionPlayed, stagePreviewPlayed }, location)
+    const progressPercent = Math.round(journey.completed / journey.total * 100)
+    const journeyCard = journey.current
+      ? `<article class="journey-card"><div class="card-icon">${String(journey.completed + 1).padStart(2, '0')}</div><div class="journey-copy"><small class="journey-kicker">FIRST TRACK · STEP ${journey.completed + 1} OF ${journey.total}</small><b>${journey.current.title}</b><p>${journey.current.instruction}</p><span class="journey-track" aria-label="${journey.completed} of ${journey.total} steps complete"><i style="width:${progressPercent}%"></i></span></div><button data-route="${journey.current.route}">Take me there ↗</button></article>`
+      : `<article class="journey-card"><div class="card-icon">✓</div><div class="journey-copy"><small class="journey-kicker">PRIVATE MUSIC PATH</small><b>Your first track path is ready</b><p>Your beat, master, sleeve and stage preview stay on this device.</p><span class="journey-track" aria-label="All ${journey.total} steps complete"><i style="width:100%"></i></span></div><button data-route="studio">Make another beat ↗</button></article>`
+    const releaseCurrent = releaseStation(activeReleaseStation)
+    const releaseNextId = nextReleaseStation(activeReleaseStation)
     cards.innerHTML = location === 'release'
-      ? `<article><div class="card-icon">▣</div><div><b>Prepare your release</b><p>Set a title, artist name and draft artwork at Record Intake.</p></div><button data-route="releaseIntake">Take me there ↗</button></article><article><div class="card-icon">⌂</div><div><b>Return to the square</b><p>Walk to the exit when finished.</p></div><button data-route="releaseExit">Show exit ↗</button></article>`
+      ? `<article><div class="card-icon">▣</div><div><b>${releaseCurrent.title}</b><p>${releaseCurrent.instruction}</p></div><button data-route="${releaseCurrent.hotspot}">Take me there ↗</button></article>${releaseNextId ? `<article><div class="card-icon">→</div><div><b>Next station · ${releaseStation(releaseNextId).title}</b><p>Follow the marker on foot. The route does not skip the room.</p></div><button data-route="${releaseStation(releaseNextId).hotspot}">Walk there ↗</button></article>` : ''}<article><div class="card-icon">⌂</div><div><b>Return to the square</b><p>Walk to the exit when finished.</p></div><button data-route="releaseExit">Show exit ↗</button></article>`
       : location === 'studio'
-      ? `<article><div class="card-icon">♫</div><div><b>Make a beat</b><p>Walk to the desk and arrange four original sounds.</p></div><button data-route="studioDesk">Take me there ↗</button></article><article><div class="card-icon">⌂</div><div><b>Return to the square</b><p>Your local pattern stays on this device.</p></div><button data-route="studioExit">Show exit ↗</button></article>`
+      ? journeyCard
       : location === 'venue'
-      ? masterBlob
-        ? `<article><div class="card-icon">♫</div><div><b>Preview on stage</b><p>Play your 30-second City Studio master on this device.</p></div><button data-route="stage">Take me to stage ↗</button></article><article><div class="card-icon">⌂</div><div><b>Return to square</b><p>Walk to the exit when ready.</p></div><button data-route="venueExit">Show exit ↗</button></article>`
-        : `<article><div class="card-icon">☼</div><div><b>Inspect the stage</b><p>Preview one floor-light snap point.</p></div><button data-route="stage">Take me there ↗</button></article><article><div class="card-icon">⌂</div><div><b>Explore freely</b><p>Walk the room, then return to the square.</p></div><button data-close>Keep exploring</button></article>`
-      : `<article><div class="card-icon">♫</div><div><b>Find a sound</b><p>${savedPreview ? 'Your preview is saved. Visit the station again anytime.' : 'Discover an original preview at the listening station.'}</p></div><button data-route="kiosk">Take me there ↗</button></article><article><div class="card-icon">▤</div><div><b>City Studio</b><p>Make a private beat.</p></div><button data-route="studio">Show route ↗</button></article><article><div class="card-icon">▣</div><div><b>Release House</b><p>Prepare a private sleeve draft.</p></div><button data-route="releaseEntrance">Show route ↗</button></article><article><div class="card-icon">♛</div><div><b>Explore Palm Room</b><p>${masterBlob ? 'Perform your master on stage.' : 'Inspect the venue stage.'}</p></div><button data-route="palmEntrance">Show route ↗</button></article>`
+      ? `${journeyCard}${journey.current?.id === 'preview-on-stage' ? '' : `<article><div class="card-icon">☼</div><div><b>Inspect the stage</b><p>Try a local floor-light preview.</p></div><button data-route="stage">Take me there ↗</button></article>`}<article><div class="card-icon">⌂</div><div><b>Return to Music Square</b><p>Walk to the exit when ready.</p></div><button data-route="venueExit">Show exit ↗</button></article>`
+      : `${journeyCard}<article><div class="card-icon">♫</div><div><b>Find a sound</b><p>${savedPreview ? 'Your preview is saved. Visit the station again anytime.' : 'Discover an original preview at the listening station.'}</p></div><button data-route="kiosk">Take me there ↗</button></article><article><div class="card-icon">♛</div><div><b>Explore Palm Room</b><p>Walk the venue and inspect the stage.</p></div><button data-route="palmEntrance">Show route ↗</button></article>`
   } else if (deskTab === 'ask') {
-    cards.innerHTML = `<div class="ask-panel"><b>What can I do here?</b><p>${location === 'venue' ? (masterBlob ? 'Step up to the stage to perform your master. Leasing needs a verified server quote.' : 'Inspect the venue and preview one floor light. Leasing needs a verified server quote.') : location === 'studio' ? 'Make a private beat at the producer desk, then walk to the exit.' : location === 'release' ? 'Prepare a private sleeve. A finished master and rights review are required before submission.' : 'Listen, make a beat, prepare a release draft, or inspect Palm Room. Routes require walking.'}</p><button data-route="${location === 'venue' ? 'stage' : location === 'studio' ? 'studioDesk' : location === 'release' ? 'releaseIntake' : 'studio'}">Show a next move ↗</button></div>`
+    const answer = deskAskQuery ? resolveDeskQuestion(deskAskQuery, location) : null
+    const answerMarkup = answer?.kind === 'action' && answer.route
+      ? `<div class="ask-answer" role="status"><b>${answer.title}</b><p>${answer.message}</p><button data-route="${answer.route}">${answer.label} ↗</button></div>`
+      : answer
+        ? `<div class="ask-answer" role="status"><b>${answer.title}</b><p>${answer.message}</p></div>`
+        : ''
+    cards.innerHTML = `<div class="ask-panel"><b>Ask Desk Bot</b><p>Ask about a known activity. Answers come from the local guide and routes stay physical.</p><form id="desk-question-form" class="ask-question"><label for="desk-question">What do you want to do?</label><div class="ask-input-row"><input id="desk-question" type="search" placeholder="e.g. How do I make a beat?" autocomplete="off" /><button type="submit">Ask</button></div></form>${answerMarkup}<div class="ask-quick-actions" aria-label="Suggested questions"><button type="button" data-ask-query="make a beat">Make a beat</button><button type="button" data-ask-query="prepare a release">Prepare a release</button><button type="button" data-ask-query="listen to music">Listen to music</button><button type="button" data-ask-query="visit Palm Room">Visit Palm Room</button></div></div>`
   } else {
     cards.innerHTML = `<div class="ask-panel"><b>Your local session</b><p>${savedPreview ? '♫ Tone preview saved for this session.' : 'No tone preview saved yet.'}</p><p>${beatDraftSaved ? '♫ A private beat pattern is saved on this device.' : 'No beat pattern saved yet.'}</p><p>${masterBlob ? '♫ 30-second master rendered and ready.' : 'No audio master rendered yet.'}</p><p>${releaseDraft.title ? '▣ Private sleeve: ' + releaseDraft.title.replaceAll('&', '&amp;').replaceAll('<', '&lt;') : 'No release sleeve saved yet.'}</p><p>${equipmentPreviewVisible ? '☼ Temporary floor-light preview is visible.' : 'No stage preview is shown.'}</p><p>${routeTarget ? '↗ A walking route is active.' : 'No walking route selected.'}</p></div>`
   }
   cards.querySelectorAll<HTMLButtonElement>('[data-route]').forEach(button => button.addEventListener('click', () => setRoute(button.dataset.route as Hotspot)))
   cards.querySelectorAll<HTMLButtonElement>('[data-close]').forEach(button => button.addEventListener('click', closeSheets))
+  if (deskTab === 'ask') {
+    const question = cards.querySelector<HTMLInputElement>('#desk-question')!
+    question.value = deskAskQuery
+    cards.querySelector<HTMLFormElement>('#desk-question-form')!.addEventListener('submit', event => {
+      event.preventDefault()
+      deskAskQuery = question.value
+      renderDesk()
+      cards.querySelector<HTMLInputElement>('#desk-question')?.focus()
+    })
+    cards.querySelectorAll<HTMLButtonElement>('[data-ask-query]').forEach(button => button.addEventListener('click', () => {
+      deskAskQuery = button.dataset.askQuery || ''
+      renderDesk()
+    }))
+  }
 }
 
 function openDesk(tab: 'today' | 'ask' | 'plans' = 'today') {
@@ -714,9 +1723,28 @@ function openMap() {
   refreshContext()
 }
 
-$<HTMLButtonElement>('audio').onclick = () => playing ? stopPreview() : masterPlayer ? stopMasterPreview() : toast('Choose Play at a listening station or music desk')
+$<HTMLButtonElement>('audio').onclick = () => {
+  if (playing) { stopPreview(); return }
+  if (masterPlayer) {
+    const privateAudition = !performingOnStage
+    stopMasterPreview()
+    if (privateAudition) $<HTMLElement>('release-status').textContent = 'Private audition stopped. Not submitted, scheduled, or counted as a public listen.'
+    return
+  }
+  toast('Choose Play at a listening station or music desk')
+}
 $<HTMLButtonElement>('mini-play').onclick = () => playing ? stopPreview() : startPreview()
-$<HTMLButtonElement>('mini-save').onclick = savePreview
+$<HTMLButtonElement>('mini-save').onclick = () => void toggleSaveCurrentTrack()
+$<HTMLButtonElement>('mini-prev').onclick = () => {
+  const nextIdx = (currentTrackIndex - 1 + catalogue.length) % catalogue.length
+  if (playing) startPreview(nextIdx)
+  else { currentTrackIndex = nextIdx; renderMiniPlayer() }
+}
+$<HTMLButtonElement>('mini-next').onclick = () => {
+  const nextIdx = (currentTrackIndex + 1) % catalogue.length
+  if (playing) startPreview(nextIdx)
+  else { currentTrackIndex = nextIdx; renderMiniPlayer() }
+}
 renderMiniPlayer()
 $<HTMLButtonElement>('dance').onclick = () => {
   dancing = !dancing
@@ -724,6 +1752,44 @@ $<HTMLButtonElement>('dance').onclick = () => {
   $<HTMLButtonElement>('dance').textContent = dancing ? '■ Stop dancing' : '♪ Dance'
   if (dancing) { clearWalkTarget(); toast('Your avatar is dancing') }
 }
+document.querySelectorAll<HTMLButtonElement>('[data-emote]').forEach(button => {
+  button.onclick = () => {
+    const emote = button.dataset.emote as EmoteType
+    if (!emote) return
+    presence.sendEmote(emote)
+    triggerAvatarEmote(avatar, emote, 'self')
+    toast(`Reacted with ${emote === 'cheer' ? 'cheer 🙌' : emote === 'wave' ? 'wave 👋' : emote === 'heart' ? 'love ❤️' : 'fire 🔥'}`)
+  }
+})
+$<HTMLButtonElement>('chat-toggle').onclick = () => {
+  const menu = $<HTMLElement>('chat-menu')
+  menu.hidden = !menu.hidden
+}
+$<HTMLButtonElement>('chat-channel-toggle').onclick = () => {
+  roomChatOptedIn = !roomChatOptedIn
+  presence.setChatOptIn(roomChatOptedIn)
+  const toggle = $<HTMLButtonElement>('chat-channel-toggle')
+  toggle.setAttribute('aria-pressed', String(roomChatOptedIn))
+  toggle.textContent = roomChatOptedIn ? 'Mute local chat' : 'Enable local chat'
+  $<HTMLElement>('chat-channel-copy').textContent = roomChatOptedIn
+    ? 'Local chat is on for this place. Turn it off at any time.'
+    : 'Local chat is off. Enable it to receive and send phrases in this place.'
+  document.querySelectorAll<HTMLButtonElement>('.chat-phrases [data-phrase]').forEach(button => { button.disabled = !roomChatOptedIn })
+  if (!roomChatOptedIn) {
+    $<HTMLElement>('chat-feed').replaceChildren()
+    for (const speech of speechBubbles.values()) speech.visible = false
+  }
+  toast(roomChatOptedIn ? 'Local chat enabled for this place' : 'Local chat muted on this device')
+}
+document.querySelectorAll<HTMLButtonElement>('.chat-phrases button').forEach(button => {
+  button.onclick = () => {
+    const phrase = button.dataset.phrase
+    if (phrase && roomChatOptedIn) {
+      presence.sendChat(phrase)
+      $<HTMLElement>('chat-menu').hidden = true
+    }
+  }
+})
 $<HTMLButtonElement>('desk-trigger').onclick = () => openDesk()
 $<HTMLButtonElement>('desk-close').onclick = closeSheets
 $<HTMLButtonElement>('action-close').onclick = closeSheets
@@ -735,37 +1801,170 @@ $<HTMLButtonElement>('nav-phone').onclick = () => { closeSheets(); $<HTMLElement
 $<HTMLButtonElement>('beat-close').onclick = closeSheets
 $<HTMLButtonElement>('beat-play').onclick = toggleBeat
 document.querySelectorAll<HTMLButtonElement>('[data-section]').forEach(button => button.onclick = () => { beatSection = button.dataset.section as 'a' | 'b'; drawBeat() })
-$<HTMLButtonElement>('beat-save').onclick = () => { localStorage.setItem('scene-beat-arrangement', JSON.stringify({ a: beatPattern, b: beatPatternB })); beatDraftSaved = true; $<HTMLElement>('beat-status').textContent = 'Two-section pattern saved on this device.'; toast('Local beat pattern saved') }
+document.querySelectorAll<HTMLButtonElement>('[data-kit]').forEach(button => button.onclick = () => {
+  const kit = button.dataset.kit as SoundKit
+  if (kit && SOUND_KITS[kit]) {
+    beatKit = kit
+    beatBpm = SOUND_KITS[kit].defaultBpm
+    if (beatPlaying) { stopBeat(); toggleBeat() }
+    drawBeat()
+    toast(`Kit: ${SOUND_KITS[kit].name} · ${beatBpm} BPM`)
+  }
+})
+const tempoSlider = $<HTMLInputElement>('beat-tempo')
+if (tempoSlider) {
+  tempoSlider.oninput = () => {
+    beatBpm = clampBpm(Number(tempoSlider.value))
+    const display = $<HTMLElement>('tempo-display')
+    if (display) display.textContent = String(beatBpm)
+    if (beatPlaying) { stopBeat(); toggleBeat() }
+  }
+}
+$<HTMLButtonElement>('beat-clear').onclick = () => {
+  if (beatSection === 'a') beatPattern = clearPattern()
+  else beatPatternB = clearPattern()
+  drawBeat()
+  toast(`Cleared Section ${beatSection.toUpperCase()}`)
+}
+$<HTMLButtonElement>('beat-save').onclick = () => {
+  localStorage.setItem('scene-beat-arrangement', JSON.stringify({ a: beatPattern, b: beatPatternB, kit: beatKit, bpm: beatBpm }))
+  beatDraftSaved = true
+  $<HTMLElement>('beat-status').textContent = `Saved ${SOUND_KITS[beatKit].name} arrangement (${beatBpm} BPM) on this device.`
+  toast('Local beat pattern saved')
+}
 $<HTMLButtonElement>('beat-render').onclick = async () => {
   if (!sectionsDiffer(beatPattern, beatPatternB)) { $<HTMLElement>('beat-status').textContent = 'Change Section B so the arrangement has two distinct sections.'; return }
   $<HTMLElement>('beat-status').textContent = 'Rendering your 30-second master…'
   try {
-    const wav = renderMasterWav(beatPattern, beatPatternB)
+    const { renderMasterWav } = await import('./renderMaster.ts')
+    const wav = renderMasterWav(beatPattern, beatPatternB, beatKit, beatBpm)
     const blob = new Blob([wav.buffer as ArrayBuffer], { type: 'audio/wav' })
     await saveLocalMaster(blob)
     masterBlob = blob
-    localStorage.setItem('scene-beat-arrangement', JSON.stringify({ a: beatPattern, b: beatPatternB }))
+    localStorage.setItem('scene-beat-arrangement', JSON.stringify({ a: beatPattern, b: beatPatternB, kit: beatKit, bpm: beatBpm }))
     beatDraftSaved = true
-    $<HTMLElement>('beat-status').textContent = '30-second private master saved on this device. Visit Release House.'
+    $<HTMLElement>('beat-status').textContent = `30-second ${SOUND_KITS[beatKit].name} master saved (${beatBpm} BPM). Visit Release House.`
     toast('Private master ready · visit Release House')
   } catch { $<HTMLElement>('beat-status').textContent = 'Could not save the master on this device. Try again.' }
 }
 $<HTMLButtonElement>('release-close').onclick = closeSheets
-$<HTMLButtonElement>('release-save').onclick = () => { localStorage.setItem('scene-release-draft', JSON.stringify(releaseDraft)); $<HTMLElement>('release-status').textContent = 'Private sleeve saved on this device. Not submitted or scheduled.'; toast('Private sleeve draft saved') }
+$<HTMLButtonElement>('release-save').onclick = () => {
+  localStorage.setItem('scene-release-draft', JSON.stringify(releaseDraft))
+  releaseDraftSaved = !!releaseDraft.title.trim()
+  $<HTMLElement>('release-status').textContent = 'Private sleeve saved on this device. Not submitted or scheduled.'
+  toast('Private sleeve draft saved')
+}
+$<HTMLButtonElement>('release-export-sleeve').onclick = () => {
+  const svgUrl = URL.createObjectURL(new Blob([createReleaseSleeveSvg(releaseDraft)], { type: 'image/svg+xml;charset=utf-8' }))
+  const image = new Image()
+  image.onload = () => {
+    const canvas = document.createElement('canvas')
+    canvas.width = canvas.height = 1200
+    const context = canvas.getContext('2d')
+    context?.drawImage(image, 0, 0, 1200, 1200)
+    URL.revokeObjectURL(svgUrl)
+    canvas.toBlob(blob => {
+      if (!blob) { toast('Could not export sleeve artwork'); return }
+      const link = document.createElement('a')
+      const slug = (releaseDraft.title || 'private-sleeve').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'private-sleeve'
+      link.href = URL.createObjectURL(blob)
+      link.download = `${slug}-sleeve.png`
+      link.click()
+      setTimeout(() => URL.revokeObjectURL(link.href), 1000)
+      $<HTMLElement>('release-status').textContent = 'Sleeve PNG downloaded to this device. Nothing was uploaded or submitted.'
+    }, 'image/png')
+  }
+  image.onerror = () => { URL.revokeObjectURL(svgUrl); toast('Could not render sleeve artwork on this device') }
+  image.src = svgUrl
+}
+$<HTMLButtonElement>('release-export-master').onclick = () => {
+  if (!masterBlob) return
+  const link = document.createElement('a')
+  link.href = URL.createObjectURL(masterBlob)
+  link.download = `${(releaseDraft.title || 'private-master').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'private-master'}.wav`
+  link.click()
+  setTimeout(() => URL.revokeObjectURL(link.href), 1000)
+  $<HTMLElement>('release-status').textContent = 'Private WAV downloaded to this device. Nothing was uploaded or submitted.'
+}
+$<HTMLButtonElement>('release-preflight').onclick = () => {
+  if (canPreflight(releaseDraft, !!masterBlob)) {
+    releaseDraft.status = 'PREFLIGHT_READY'
+    localStorage.setItem('scene-release-draft', JSON.stringify(releaseDraft))
+    $<HTMLElement>('release-status').textContent = 'Local checks passed. Server upload, rights review, date reservation and publication are unavailable; nothing was submitted.'
+    toast('Local preflight passed · not submitted')
+  } else {
+    toast('Complete all checklist requirements first')
+  }
+}
 $<HTMLButtonElement>('release-play').onclick = () => {
   if (!masterBlob) return
   stopMasterPreview()
   masterAudioUrl = URL.createObjectURL(masterBlob)
   masterPlayer = new Audio(masterAudioUrl)
-  masterPlayer.onended = stopMasterPreview
-  void masterPlayer.play().then(() => { $<HTMLButtonElement>('audio').innerHTML = '♫ <span>ON</span>'; $<HTMLButtonElement>('audio').setAttribute('aria-label', 'Audio on'); $<HTMLElement>('release-status').textContent = 'Playing your private master. Not submitted or scheduled.' }).catch(() => { $<HTMLElement>('release-status').textContent = 'Audio was blocked. Tap Play again.'; stopMasterPreview() })
+  masterPlayer.onended = () => {
+    stopMasterPreview()
+    $<HTMLElement>('release-status').textContent = 'Private audition complete. Not submitted, scheduled, or counted as a public listen.'
+  }
+  void masterPlayer.play().then(() => {
+    releaseAuditionPlayed = true
+    try { localStorage.setItem('scene-release-audition-played', 'true') } catch { /* audition history is optional local progress */ }
+    if (!$<HTMLElement>('desk-sheet').hidden) renderDesk()
+    $<HTMLButtonElement>('audio').innerHTML = '♫ <span>ON</span>'
+    $<HTMLButtonElement>('audio').setAttribute('aria-label', 'Audio on')
+    $<HTMLElement>('release-status').textContent = 'Playing your private master. Not submitted, scheduled, or counted as a public listen.'
+  }).catch(() => { $<HTMLElement>('release-status').textContent = 'Audio was blocked. Tap Play again.'; stopMasterPreview() })
 }
 for (const field of ['title', 'artist'] as const) $<HTMLInputElement>(`release-${field}`).oninput = event => { releaseDraft[field] = (event.target as HTMLInputElement).value; renderReleaseDraft(false) }
-document.querySelectorAll<HTMLButtonElement>('[data-art]').forEach(button => button.onclick = () => { releaseDraft.artwork = button.dataset.art as ReleaseDraft['artwork']; renderReleaseDraft(false) })
+const genreSelector = $<HTMLSelectElement>('release-genre')
+if (genreSelector) {
+  genreSelector.onchange = event => {
+    releaseDraft.genre = (event.target as HTMLSelectElement).value as ReleaseGenre
+    renderReleaseDraft(false)
+  }
+}
+$<HTMLInputElement>('right-master').onchange = e => { releaseDraft.rights.masterOwnership = (e.target as HTMLInputElement).checked; renderReleaseDraft(false) }
+$<HTMLInputElement>('right-composition').onchange = e => { releaseDraft.rights.originalComposition = (e.target as HTMLInputElement).checked; renderReleaseDraft(false) }
+$<HTMLInputElement>('right-samples').onchange = e => { releaseDraft.rights.sampleClearance = (e.target as HTMLInputElement).checked; renderReleaseDraft(false) }
+$<HTMLInputElement>('right-consent').onchange = e => { releaseDraft.rights.contributorConsent = (e.target as HTMLInputElement).checked; renderReleaseDraft(false) }
+document.querySelectorAll<HTMLButtonElement>('[data-art]').forEach(button => button.onclick = () => { releaseDraft.artwork = button.dataset.art as ArtworkVariant; renderReleaseDraft(false) })
 $<HTMLButtonElement>('display-close').onclick = closeSheets
 document.querySelectorAll<HTMLButtonElement>('[data-quality]').forEach(button => button.onclick = () => { quality = button.dataset.quality as Quality; localStorage.setItem('scene-quality', quality); applyQuality(); updateMetrics() })
+document.querySelectorAll<HTMLButtonElement>('[data-lighting]').forEach(button => button.onclick = () => {
+  const mode = button.dataset.lighting as LightingMode
+  applyLighting(mode)
+  toast(`Atmosphere: ${LIGHTING_PRESETS[mode].label} ${LIGHTING_PRESETS[mode].icon}`)
+})
+const timeToggle = document.getElementById('time-toggle')
+if (timeToggle) {
+  timeToggle.onclick = () => {
+    const nextMode = getNextLightingMode(lightingMode)
+    applyLighting(nextMode)
+    toast(`Atmosphere: ${LIGHTING_PRESETS[nextMode].label} ${LIGHTING_PRESETS[nextMode].icon}`)
+  }
+}
 $<HTMLButtonElement>('nav-create').onclick = () => location === 'studio' ? setRoute('studioDesk') : location === 'release' ? setRoute('releaseIntake') : location === 'square' ? setRoute('studio') : toast('Walk to City Studio from Music Square')
-$<HTMLButtonElement>('nav-people').onclick = () => toast($<HTMLElement>('presence-status').textContent || 'Presence unavailable')
+$<HTMLButtonElement>('nav-people').onclick = () => { closeSheets(); $<HTMLElement>('people-sheet').hidden = false; renderPeople(connectedPlayers, presenceConnected) }
+$<HTMLButtonElement>('people-close').onclick = closeSheets
+$<HTMLButtonElement>('people-wave').onclick = () => { if (presenceConnected && connectedPlayers.some(player => player.location === location)) presence.sendEmote('wave') }
+$<HTMLButtonElement>('people-edit-avatar').onclick = () => { $<HTMLElement>('people-sheet').hidden = true; $<HTMLElement>('avatar-sheet').hidden = false; applyAppearance() }
+$<HTMLButtonElement>('avatar-close').onclick = closeSheets
+$<HTMLInputElement>('avatar-name').oninput = event => {
+  playerName = (event.target as HTMLInputElement).value.trim().slice(0, 16) || 'Guest'
+  localStorage.setItem('scene-player-name', playerName)
+  updateAvatarNameTag(avatar, playerName, 'self')
+  presence.send({ x: avatar.position.x, z: avatar.position.z, angle: avatar.rotation.y, dancing, location, name: playerName })
+}
+document.querySelectorAll<HTMLButtonElement>('.swatch-row button').forEach(button => {
+  button.onclick = () => {
+    const option = (button.closest('.swatch-row') as HTMLElement).dataset.option
+    const value = button.dataset.value!
+    if (option === 'skin') { skinColour = value; localStorage.setItem('scene-skin', value) }
+    else if (option === 'shirt') { shirtColour = value; localStorage.setItem('scene-shirt', value) }
+    else if (option === 'trousers') { trousersColour = value; localStorage.setItem('scene-trousers', value) }
+    applyAppearance()
+  }
+})
+applyAppearance()
 $<HTMLButtonElement>('home').onclick = () => { closeSheets(); $<HTMLElement>('venue-card').hidden = true }
 $<HTMLButtonElement>('route-close').onclick = () => { routeTarget = null; onwardTarget = null; $<HTMLElement>('route').hidden = true; clearWalkTarget() }
 $<HTMLButtonElement>('venue-close').onclick = () => { $<HTMLElement>('venue-card').hidden = true; refreshContext() }
@@ -789,8 +1988,21 @@ world.addEventListener('pointermove', event => { if (dragging) { if (Math.hypot(
 world.addEventListener('pointerup', event => {
   dragging = false
   if (pointerMoved || sheet !== 'none') return
+  if (!mutePopover.hidden) { mutePopover.hidden = true; return }
   const bounds = renderer.domElement.getBoundingClientRect()
   raycaster.setFromCamera(new THREE.Vector2((event.clientX - bounds.left) / bounds.width * 2 - 1, -(event.clientY - bounds.top) / bounds.height * 2 + 1), camera)
+  // Check remote avatars first — tap to show mute option
+  const avatarMeshes: THREE.Object3D[] = []
+  for (const model of remoteAvatars.values()) model.traverse(obj => { if ((obj as THREE.Mesh).isMesh) avatarMeshes.push(obj) })
+  const avatarHits = raycaster.intersectObjects(avatarMeshes, false)
+  if (avatarHits.length > 0) {
+    // Find which remote avatar group was hit
+    for (const [id, model] of remoteAvatars) {
+      let found = false
+      model.traverse(obj => { if (obj === avatarHits[0].object) found = true })
+      if (found) { showMutePopover(id, event.clientX, event.clientY); return }
+    }
+  }
   const hit = new THREE.Vector3()
   if (raycaster.ray.intersectPlane(ground, hit)) {
     const bounds = BOUNDARIES[location]
@@ -842,6 +2054,7 @@ let readyMs: number | null = null
 function updateMetrics() {
   const summary = summarizeFrames(frameSamples)
   $<HTMLElement>('frame-metric').textContent = summary ? `${summary.medianMs.toFixed(1)} ms median · ${summary.p95Ms.toFixed(1)} ms p95 · ~${summary.fps} FPS` : 'Measuring…'
+  $<HTMLElement>('scene-metric').textContent = `${renderer.info.render.calls} draws · ${renderer.info.render.triangles.toLocaleString()} triangles · ${renderer.info.memory.textures} textures`
   $<HTMLElement>('transfer-metric').textContent = `${(reportedTransferBytes() / 1024).toFixed(0)} KiB reported`
   $<HTMLElement>('ready-metric').textContent = readyMs === null ? 'Measuring…' : `${(readyMs / 1000).toFixed(2)} s · first rendered avatar`
 }
@@ -874,32 +2087,85 @@ function frame() {
     const targetY = location === 'venue' && avatar.position.z <= -6.4 && avatar.position.z >= -10.8 && Math.abs(avatar.position.x) <= 6.8 ? 0.78 : 0
     avatar.position.y += (targetY - avatar.position.y) * Math.min(1, dt * 10)
     avatar.rotation.y = angle
-    leftLeg.rotation.x = Math.sin(elapsed * 11) * .38; rightLeg.rotation.x = -leftLeg.rotation.x
-    leftArm.rotation.x = -leftLeg.rotation.x * .6; rightArm.rotation.x = -rightLeg.rotation.x * .6
+    const gait = walkingPose(elapsed * 11, walkTarget ? 1 : speed)
+    leftArm.rotation.z = -.15; rightArm.rotation.z = .15
+    leftElbow.rotation.z = rightElbow.rotation.z = 0
+    leftLeg.rotation.x = gait.leftLeg; rightLeg.rotation.x = gait.rightLeg
+    leftArm.rotation.x = gait.leftArm; rightArm.rotation.x = gait.rightArm
+    leftElbow.rotation.x = gait.leftElbow; rightElbow.rotation.x = gait.rightElbow
+    leftKnee.rotation.x = gait.leftKnee; rightKnee.rotation.x = gait.rightKnee
+    leftFoot.rotation.x = -gait.leftKnee * .6; rightFoot.rotation.x = -gait.rightKnee * .6
+    avatarBody.position.y = gait.bob
   } else if (dancing && sheet === 'none') {
+    avatarBody.position.y = Math.abs(Math.sin(elapsed * 5)) * .045
     avatar.rotation.y = Math.sin(elapsed * 2.5) * .32
     leftArm.rotation.x = Math.sin(elapsed * 6) * .6
     rightArm.rotation.x = -leftArm.rotation.x
+    leftElbow.rotation.x = .14 + Math.max(0, Math.sin(elapsed * 6)) * .2
+    rightElbow.rotation.x = .14 + Math.max(0, -Math.sin(elapsed * 6)) * .2
     leftArm.rotation.z = -.45 - Math.sin(elapsed * 4) * .2
     rightArm.rotation.z = .45 + Math.sin(elapsed * 4) * .2
+    leftElbow.rotation.z = rightElbow.rotation.z = 0
     leftLeg.rotation.x = Math.sin(elapsed * 6) * .17
     rightLeg.rotation.x = -leftLeg.rotation.x
-  } else { leftLeg.rotation.x = rightLeg.rotation.x = leftArm.rotation.x = rightArm.rotation.x = 0; leftArm.rotation.z = -.15; rightArm.rotation.z = .15 }
-  const desired = avatar.position.clone().add(new THREE.Vector3(Math.sin(yaw) * 7.1, 3.85, Math.cos(yaw) * 7.1))
+    leftKnee.rotation.x = Math.max(0, Math.sin(elapsed * 6)) * .35
+    rightKnee.rotation.x = Math.max(0, -Math.sin(elapsed * 6)) * .35
+    leftFoot.rotation.x = -leftKnee.rotation.x * .6; rightFoot.rotation.x = -rightKnee.rotation.x * .6
+  } else {
+    avatarBody.position.y = 0
+    leftLeg.rotation.x = rightLeg.rotation.x = leftArm.rotation.x = rightArm.rotation.x = 0
+    leftElbow.rotation.x = rightElbow.rotation.x = .08
+    leftElbow.rotation.z = rightElbow.rotation.z = 0
+    leftKnee.rotation.x = rightKnee.rotation.x = leftFoot.rotation.x = rightFoot.rotation.x = 0
+    leftArm.rotation.z = -.15; rightArm.rotation.z = .15
+  }
+  applyActiveAvatarEmote(avatar, { body: avatarBody, leftArm, rightArm, leftElbow, rightElbow })
+  const cameraDistance = location === 'venue' ? 10.6 : 7.1
+  const cameraHeight = location === 'venue' ? 4.9 : 3.85
+  const desired = avatar.position.clone().add(new THREE.Vector3(Math.sin(yaw) * cameraDistance, cameraHeight, Math.cos(yaw) * cameraDistance))
   const b = BOUNDARIES[location]
-  const camPad = location === 'square' ? 3.5 : 1.2
+  const camPad = location === 'square' ? 3.5 : location === 'venue' ? 7.5 : 1.2
   desired.x = THREE.MathUtils.clamp(desired.x, b.minX - camPad, b.maxX + camPad)
   desired.z = THREE.MathUtils.clamp(desired.z, b.minZ - camPad, b.maxZ + camPad)
   camera.position.lerp(desired, 1 - Math.exp(-5 * dt))
   camera.lookAt(avatar.position.x, avatar.position.y + 1.52, avatar.position.z)
   const next = getNearby(location, avatar.position.x, avatar.position.z)
   if (now - lastPresenceSend > 125) {
-    presence.send({ x: avatar.position.x, z: avatar.position.z, angle: avatar.rotation.y, dancing, location })
+    presence.send({ x: avatar.position.x, z: avatar.position.z, angle: avatar.rotation.y, dancing, location, name: playerName })
     lastPresenceSend = now
   }
   for (const player of connectedPlayers) {
     const model = remoteAvatars.get(player.id)
-    if (model && player.dancing) model.rotation.y = player.angle + Math.sin(elapsed * 2.5) * .32
+    if (!model) continue
+    const parts = model.userData.avatarParts as {
+      body: THREE.Group; leftArm: THREE.Group; rightArm: THREE.Group; leftElbow: THREE.Group; rightElbow: THREE.Group
+      leftLeg: THREE.Group; rightLeg: THREE.Group; leftKnee: THREE.Group; rightKnee: THREE.Group; leftFoot: THREE.Group; rightFoot: THREE.Group
+    }
+    if (player.dancing) {
+      model.rotation.y = player.angle + Math.sin(elapsed * 2.5) * .32
+      parts.body.position.y = Math.abs(Math.sin(elapsed * 5)) * .045
+      parts.leftArm.rotation.x = Math.sin(elapsed * 6) * .6; parts.rightArm.rotation.x = -parts.leftArm.rotation.x
+      parts.leftElbow.rotation.x = .14 + Math.max(0, Math.sin(elapsed * 6)) * .2
+      parts.rightElbow.rotation.x = .14 + Math.max(0, -Math.sin(elapsed * 6)) * .2
+      parts.leftArm.rotation.z = -.45 - Math.sin(elapsed * 4) * .2; parts.rightArm.rotation.z = .45 + Math.sin(elapsed * 4) * .2
+      parts.leftElbow.rotation.z = parts.rightElbow.rotation.z = 0
+      parts.leftLeg.rotation.x = Math.sin(elapsed * 6) * .17; parts.rightLeg.rotation.x = -parts.leftLeg.rotation.x
+      parts.leftKnee.rotation.x = Math.max(0, Math.sin(elapsed * 6)) * .35
+      parts.rightKnee.rotation.x = Math.max(0, -Math.sin(elapsed * 6)) * .35
+      parts.leftFoot.rotation.x = -parts.leftKnee.rotation.x * .6; parts.rightFoot.rotation.x = -parts.rightKnee.rotation.x * .6
+    } else {
+      model.rotation.y = player.angle
+      const gait = walkingPose(elapsed * 11, model.userData.walking ? 1 : 0)
+      parts.body.position.y = gait.bob
+      parts.leftArm.rotation.x = gait.leftArm; parts.rightArm.rotation.x = gait.rightArm
+      parts.leftElbow.rotation.x = gait.leftElbow; parts.rightElbow.rotation.x = gait.rightElbow
+      parts.leftArm.rotation.z = -.15; parts.rightArm.rotation.z = .15
+      parts.leftElbow.rotation.z = parts.rightElbow.rotation.z = 0
+      parts.leftLeg.rotation.x = gait.leftLeg; parts.rightLeg.rotation.x = gait.rightLeg
+      parts.leftKnee.rotation.x = gait.leftKnee; parts.rightKnee.rotation.x = gait.rightKnee
+      parts.leftFoot.rotation.x = -gait.leftKnee * .6; parts.rightFoot.rotation.x = -gait.rightKnee * .6
+    }
+    applyActiveAvatarEmote(model, parts)
   }
   if (next !== nearby) { nearby = next; refreshContext() }
   if (routeTarget) {
@@ -912,6 +2178,8 @@ function frame() {
     else $<HTMLElement>('route').classList.remove('arrived')
   }
   routeMarker.visible = !!routeTarget
+  if (location === 'venue') palmRoom?.update(elapsed)
+  if (location === 'studio') (studioRoom?.userData.updateServiceNpc as ((time: number) => void) | undefined)?.(elapsed)
   renderer.render(scene, camera)
   if (readyMs === null) readyMs = performance.now()
   if (Math.floor(elapsed * 2) !== Math.floor((elapsed - dt) * 2) && !$<HTMLElement>('display-sheet').hidden) updateMetrics()

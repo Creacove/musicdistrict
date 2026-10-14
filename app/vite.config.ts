@@ -1,12 +1,14 @@
 import { defineConfig } from 'vite'
 import { attachPresence } from './server/presence.mjs'
 import { createGuestStore, guestApi } from './server/guestStore.mjs'
+import { releaseWindowApi } from './server/releaseCalendar.mjs'
 import { resolve } from 'node:path'
 
 const store = createGuestStore(resolve(process.cwd(), 'data', 'scene-dev.sqlite'))
 const attach = (server: { httpServer: import('node:http').Server | null; middlewares: { use: (middleware: ReturnType<typeof guestApi>) => void } }) => {
+  server.middlewares.use(releaseWindowApi)
   server.middlewares.use(guestApi(store))
-  if (server.httpServer) attachPresence(server.httpServer)
+  if (server.httpServer) attachPresence(server.httpServer, { store })
 }
 
 export default defineConfig({
@@ -15,4 +17,15 @@ export default defineConfig({
     configureServer: attach,
     configurePreviewServer: attach,
   }],
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes('node_modules/three')) {
+            return 'three'
+          }
+        },
+      },
+    },
+  },
 })

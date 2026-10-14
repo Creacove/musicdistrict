@@ -9,7 +9,14 @@ export type Hotspot =
   | 'studioExit'
   | 'releaseEntrance'
   | 'releaseIntake'
+  | 'releaseArtwork'
+  | 'releaseMetadata'
+  | 'releaseListening'
+  | 'releaseRights'
+  | 'releaseCalendar'
   | 'releaseExit'
+
+import { RELEASE_JOURNEY } from './releaseJourney.ts'
 
 export interface ObstacleBox {
   minX: number
@@ -90,6 +97,10 @@ export const OBSTACLES: Record<Location, { boxes: ObstacleBox[]; circles: Obstac
       { minX: -4.4, maxX: 4.4, minZ: -7.5, maxZ: -4.5 },
       // Listening booth
       { minX: 8.1, maxX: 10.9, minZ: -6.5, maxZ: -5.1 },
+      // Sleeve writing desk, rights console and calendar machine
+      { minX: -7.3, maxX: -3.7, minZ: -4.4, maxZ: -3.1 },
+      { minX: 9.9, maxX: 12, minZ: .7, maxZ: 3.1 },
+      { minX: -.45, maxX: 2.05, minZ: 5.2, maxZ: 6.3 },
     ],
     circles: [],
   },
@@ -111,7 +122,7 @@ const hotspots: Record<Location, { id: Hotspot; x: number; z: number; radius: nu
     { id: 'studioExit', x: -10, z: 9, radius: 3 },
   ],
   release: [
-    { id: 'releaseIntake', x: 0, z: -5.5, radius: 3.5 },
+    ...RELEASE_JOURNEY.map(({ hotspot: id, x, z, radius }) => ({ id, x, z, radius })),
     { id: 'releaseExit', x: -10, z: 9, radius: 3 },
   ],
 }

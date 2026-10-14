@@ -4,6 +4,7 @@ import { resolve, extname, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { attachPresence } from './presence.mjs'
 import { createGuestStore, guestApi } from './guestStore.mjs'
+import { releaseWindowApi } from './releaseCalendar.mjs'
 
 const appRoot = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const distRoot = resolve(appRoot, 'dist')
@@ -16,7 +17,7 @@ export function createSceneServer({ databasePath = dataPath, staticRoot = distRo
   const store = createGuestStore(databasePath)
   const api = guestApi(store)
   const server = createServer((req, res) => {
-    api(req, res, () => {
+    releaseWindowApi(req, res, () => api(req, res, () => {
       if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405).end(); return }
       let pathname
       try { pathname = decodeURIComponent(new URL(req.url || '/', 'http://localhost').pathname) } catch { res.writeHead(400).end(); return }
@@ -32,9 +33,9 @@ export function createSceneServer({ databasePath = dataPath, staticRoot = distRo
       res.setHeader('Cache-Control', file.endsWith('index.html') ? 'no-cache' : 'public, max-age=31536000, immutable')
       if (req.method === 'HEAD') { res.writeHead(200).end(); return }
       createReadStream(file).on('error', () => { if (!res.headersSent) res.writeHead(500); res.end() }).pipe(res)
-    })
+    }))
   })
-  const presence = attachPresence(server)
+  const presence = attachPresence(server, { store })
   return { server, close: () => new Promise((resolveClose, reject) => {
     for (const client of presence.clients) client.terminate()
     presence.close(() => server.close(error => {
