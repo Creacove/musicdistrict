@@ -20,6 +20,8 @@ import { nextMusicJourneyStep } from './musicJourney.ts'
 import { resolveDeskQuestion } from './deskQuery.ts'
 import './style.css'
 
+const SOLO_PREVIEW = import.meta.env?.VITE_SCENE_DEMO_MODE === 'true'
+
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
 <main id="game">
   <div id="world" aria-label="Interactive 3D THE SCENE world"></div>
@@ -210,7 +212,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
   <section id="people-sheet" class="avatar-sheet people-sheet" hidden aria-labelledby="people-title">
     <button id="people-close" class="icon-close" aria-label="Close people">×</button>
     <small class="eyebrow">LIVE IN THE WORLD</small><h2 id="people-title">People in this place</h2>
-    <p>Only other connected players are shown. Wave to the people sharing this space.</p>
+    <p id="people-description">Only other connected players are shown. Wave to the people sharing this space.</p>
     <p id="people-status" class="people-status" role="status" aria-live="polite">Connecting to the world…</p>
     <div id="people-list" class="people-list" role="list" aria-live="polite"></div>
     <div class="people-actions"><button id="people-wave" class="green-button" disabled>👋 Wave to everyone here</button><button id="people-edit-avatar" class="people-edit">Customize avatar</button></div>
@@ -837,7 +839,9 @@ function renderPresence(players: PresencePlayer[], connected: boolean, reconnect
     model.rotation.y = player.angle
   }
   const count = players.filter(player => player.location === location).length
-  const status = connected
+  const status = SOLO_PREVIEW
+    ? 'Solo preview · progress saves on this device.'
+    : connected
     ? `${count} other connected ${count === 1 ? 'session' : 'sessions'} here`
     : reconnectAttempts > 0
       ? `Offline · reconnecting (attempt ${reconnectAttempts})…`
@@ -849,9 +853,14 @@ function renderPeople(players: PresencePlayer[], connected: boolean) {
   const view = peopleInLocation(players, location, connected)
   const place = location === 'square' ? 'Music Square' : location === 'venue' ? 'Palm Room' : location === 'studio' ? 'City Studio' : 'Release House'
   const status = $<HTMLElement>('people-status')
+  $<HTMLElement>('people-description').textContent = SOLO_PREVIEW
+    ? 'This solo preview runs on this device. Your movement and creations stay local.'
+    : 'Only other connected players are shown. Wave to the people sharing this space.'
   const list = $<HTMLElement>('people-list')
   const wave = $<HTMLButtonElement>('people-wave')
-  status.textContent = view.availability === 'offline'
+  status.textContent = SOLO_PREVIEW
+    ? 'Other players and live chat are unavailable in this solo preview.'
+    : view.availability === 'offline'
     ? 'Live people are unavailable. Reconnecting…'
     : view.availability === 'empty'
       ? `No one else is in ${place} yet.`

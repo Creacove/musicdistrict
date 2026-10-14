@@ -4,3 +4,10 @@
 
 [build.environment]
   NODE_VERSION = "22"
+  VITE_SCENE_DEMO_MODE = "true"
+
+[[redirects]]
+  from = "/api/release-window"
+  to = "/.netlify/functions/release-window"
+  status = 200
+  force = true

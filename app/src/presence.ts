@@ -7,6 +7,8 @@ type Message =
   | { type: 'emote'; id: string; emote: EmoteType }
   | { type: 'chat'; id: string; name: string; text: string }
 
+const SOLO_PREVIEW = import.meta.env?.VITE_SCENE_DEMO_MODE === 'true'
+
 export function connectPresence(
   onPlayers: (players: PresencePlayer[], connected: boolean, reconnectAttempts: number) => void,
   onEmote?: (id: string, emote: EmoteType) => void,
@@ -14,6 +16,18 @@ export function connectPresence(
   token?: string,
 ) {
   const players = new Map<string, PresencePlayer>()
+  if (SOLO_PREVIEW) {
+    onPlayers([], false, 0)
+    return {
+      send(_player: Omit<PresencePlayer, 'id'>) {},
+      sendEmote(_emote: EmoteType) {},
+      setChatOptIn(_enabled: boolean) {},
+      sendChat(_text: string) {},
+      auth(_authToken: string) {},
+      getOwnId() { return '' },
+      close() {},
+    }
+  }
   let socket: WebSocket | null = null
   let ownId = ''
   let closed = false
