@@ -2,6 +2,12 @@ export type CatalogueTrack = { id: string; title: string; artist: string; genre:
 type Guest = { id: string; token: string; saves: string[] }
 export type GuestReportReason = 'harassment' | 'spam' | 'inappropriate_name' | 'other'
 export type GuestReportReceipt = { id: string; status: 'received'; createdAt: string }
+export type GuestFriendState = {
+  friends: { guestId: string; createdAt: string }[]
+  incoming: { requestId: string; guestId: string; createdAt: string; expiresAt: string }[]
+  outgoing: { requestId: string; guestId: string; createdAt: string; expiresAt: string }[]
+}
+export type FriendRequestReceipt = { requestId: string; status: 'pending'; expiresAt: string; duplicate: boolean }
 let token = ''
 const SOLO_PREVIEW = import.meta.env?.VITE_SCENE_DEMO_MODE === 'true'
 const PREVIEW_CATALOGUE: CatalogueTrack[] = [
@@ -73,6 +79,46 @@ export async function fetchGuestBlocks(): Promise<string[]> {
   if (!response.ok) throw new Error('Blocked sessions unavailable')
   const data = await response.json() as { blockedIds?: unknown }
   return Array.isArray(data.blockedIds) ? data.blockedIds.filter((id): id is string => typeof id === 'string') : []
+}
+
+export async function fetchGuestFriends(): Promise<GuestFriendState> {
+  if (SOLO_PREVIEW) return { friends: [], incoming: [], outgoing: [] }
+  const response = await guestRequest('/api/friends')
+  if (!response.ok) throw new Error('Friend list unavailable')
+  return response.json() as Promise<GuestFriendState>
+}
+
+export async function requestGuestFriend(targetGuestId: string): Promise<FriendRequestReceipt> {
+  const response = await guestRequest('/api/friend-requests', { method: 'POST', body: JSON.stringify({ targetGuestId }) })
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({})) as { error?: string }
+    const messages: Record<string, string> = {
+      limit: 'You already have 20 pending friend requests.',
+      declined: 'This player has already declined that request.',
+      incoming_pending: 'This player has a request waiting for you.',
+      already_friends: 'You are already friends.',
+    }
+    throw new Error(messages[body.error || ''] || 'Could not send friend request')
+  }
+  return response.json() as Promise<FriendRequestReceipt>
+}
+
+async function updateFriendRequest(requestId: string, action: 'accept' | 'decline'): Promise<void> {
+  const response = await guestRequest(`/api/friend-requests/${encodeURIComponent(requestId)}/${action}`, { method: 'POST' })
+  if (!response.ok) throw new Error(action === 'accept' ? 'Could not accept this friend request' : 'Could not decline this friend request')
+}
+
+export async function acceptGuestFriendRequest(requestId: string): Promise<void> { return updateFriendRequest(requestId, 'accept') }
+export async function declineGuestFriendRequest(requestId: string): Promise<void> { return updateFriendRequest(requestId, 'decline') }
+
+export async function cancelGuestFriendRequest(requestId: string): Promise<void> {
+  const response = await guestRequest(`/api/friend-requests/${encodeURIComponent(requestId)}`, { method: 'DELETE' })
+  if (!response.ok) throw new Error('Could not cancel this friend request')
+}
+
+export async function unfriendGuest(targetGuestId: string): Promise<void> {
+  const response = await guestRequest(`/api/friends/${encodeURIComponent(targetGuestId)}`, { method: 'DELETE' })
+  if (!response.ok) throw new Error('Could not remove this friendship')
 }
 
 export async function blockGuest(targetGuestId: string): Promise<void> {

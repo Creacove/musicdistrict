@@ -8,11 +8,11 @@ import { loadLocalMaster, saveLocalMaster } from './localMaster.ts'
 import { blankReleaseDraft, releaseBlockers, validReleaseDraft, canPreflight, RELEASE_GENRES, type ReleaseDraft, type ArtworkVariant, type ReleaseGenre } from './releaseDraft.ts'
 import { createReleaseSleeveSvg } from './releaseArtwork.ts'
 import { rehearsalMetrics } from './eventPreview.ts'
-import { connectPresence, type EmoteType, type PresencePlayer } from './presence.ts'
+import { connectPresence, type EmoteType, type FriendUpdateKind, type PresencePlayer } from './presence.ts'
 import { peopleInLocation } from './people.ts'
 import { emotePose, walkingPose } from './avatarMotion.ts'
 import { disposeSpriteResources } from './avatarLifecycle.ts'
-import { blockGuest, fetchCatalogue, fetchGuestBlocks, openGuest, removeGuestSave, saveGuestPreview, submitGuestReport, unblockGuest, type CatalogueTrack, type GuestReportReason } from './guest.ts'
+import { acceptGuestFriendRequest, blockGuest, cancelGuestFriendRequest, declineGuestFriendRequest, fetchCatalogue, fetchGuestBlocks, fetchGuestFriends, openGuest, removeGuestSave, requestGuestFriend, saveGuestPreview, submitGuestReport, unfriendGuest, unblockGuest, type CatalogueTrack, type GuestFriendState, type GuestReportReason } from './guest.ts'
 import { LIGHTING_PRESETS, getNextLightingMode, type LightingMode } from './lighting.ts'
 import { parseStageTemplate, serializeStageTemplate, type StageLook } from './stageTemplate.ts'
 import { RELEASE_JOURNEY, nextReleaseStation, previousReleaseStation, releaseStation, type ReleaseStationId } from './releaseJourney.ts'
@@ -215,6 +215,13 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
     <p id="people-description">Only other connected players are shown. Wave to the people sharing this space.</p>
     <p id="people-status" class="people-status" role="status" aria-live="polite">Connecting to the world…</p>
     <div id="people-list" class="people-list" role="list" aria-live="polite"></div>
+    <section id="friend-section" class="friend-section" hidden aria-labelledby="friend-section-title">
+      <h3 id="friend-section-title">Friends & requests</h3>
+      <p id="friend-empty" class="friend-empty">Friends are mutual. You choose whether to accept each request.</p>
+      <div id="friends-list" class="social-list" role="list" aria-label="Friends"></div>
+      <div id="incoming-friends" class="social-list" role="list" aria-label="Received friend requests"></div>
+      <div id="outgoing-friends" class="social-list" role="list" aria-label="Sent friend requests"></div>
+    </section>
     <section id="blocked-section" class="blocked-section" hidden aria-labelledby="blocked-title"><h3 id="blocked-title">Blocked sessions</h3><div id="blocked-list" role="list"></div></section>
     <div class="people-actions"><button id="people-wave" class="green-button" disabled>👋 Wave to everyone here</button><button id="people-edit-avatar" class="people-edit">Customize avatar</button></div>
   </section>
@@ -604,6 +611,7 @@ function updateAvatarNameTag(targetGroup: THREE.Group, name: string, id: string)
 const mutedIds = new Set<string>()
 const blockedIds = new Set<string>()
 const blockedNames = new Map<string, string>()
+let friendState: GuestFriendState = { friends: [], incoming: [], outgoing: [] }
 let guestSessionReady = false
 let reportTargetId = ''
 let roomChatOptedIn = false
@@ -614,12 +622,22 @@ mutePopover.setAttribute('aria-label', 'Player options')
 mutePopover.hidden = true
 document.getElementById('game')!.appendChild(mutePopover)
 let mutePopoverTarget = ''
+function friendStatusFor(id: string): 'friends' | 'outgoing' | 'incoming' | 'available' | 'blocked' {
+  if (blockedIds.has(id)) return 'blocked'
+  if (friendState.friends.some(friend => friend.guestId === id)) return 'friends'
+  if (friendState.outgoing.some(request => request.guestId === id)) return 'outgoing'
+  if (friendState.incoming.some(request => request.guestId === id)) return 'incoming'
+  return 'available'
+}
+
 function showMutePopover(id: string, screenX: number, screenY: number) {
   mutePopoverTarget = id
   const targetPlayer = connectedPlayers.find(p => p.id === id)
   const targetName = targetPlayer?.name || 'Guest'
   const muted = mutedIds.has(id)
   const safetyEnabled = guestSessionReady && targetPlayer?.authenticated === true
+  const friendStatus = friendStatusFor(id)
+  const friendLabel = friendStatus === 'friends' ? 'Friends' : friendStatus === 'outgoing' ? 'Request sent' : friendStatus === 'incoming' ? 'Respond in People' : 'Add friend'
   mutePopover.innerHTML = `
     <small class="eyebrow">CONNECTED SESSION</small>
     <div class="mute-player-name">${escapeHtml(targetName)}</div>
@@ -629,6 +647,7 @@ function showMutePopover(id: string, screenX: number, screenY: number) {
       <button id="block-toggle" type="button" ${safetyEnabled ? '' : 'disabled'}>Block</button>
       <button id="report-toggle" type="button" ${safetyEnabled ? '' : 'disabled'}>Report</button>
     </div>
+    <button id="friend-toggle" class="friend-toggle" type="button" ${safetyEnabled && friendStatus === 'available' ? '' : 'disabled'}>${friendLabel}</button>
     <button id="mute-cancel" class="mute-cancel" type="button">Done</button>
     <small class="mute-note">Mute is local. Block is stored on this prototype server. Reports enter a private queue; no moderation team is connected.</small>`
   mutePopover.hidden = false
@@ -663,6 +682,20 @@ function showMutePopover(id: string, screenX: number, screenY: number) {
     openReportDialog(id, targetName)
     mutePopover.hidden = true
   }
+  document.getElementById('friend-toggle')!.onclick = async () => {
+    if (!safetyEnabled || friendStatus !== 'available') return
+    const button = document.getElementById('friend-toggle') as HTMLButtonElement
+    button.disabled = true
+    try {
+      const result = await requestGuestFriend(id)
+      await refreshFriendState()
+      toast(result.duplicate ? 'Friend request is already waiting' : 'Friend request sent · awaiting their choice')
+      mutePopover.hidden = true
+    } catch (error) {
+      button.disabled = false
+      toast(error instanceof Error ? error.message : 'Could not send friend request')
+    }
+  }
   document.getElementById('mute-cancel')!.onclick = () => { mutePopover.hidden = true }
 }
 
@@ -672,6 +705,7 @@ async function setPlayerBlocked(id: string, blocked: boolean) {
     renderPresence(connectedPlayers, presenceConnected, 0)
     try {
       await blockGuest(id)
+      await refreshFriendState()
       toast('Player blocked · contact and visibility are restricted')
     } catch {
       blockedIds.delete(id)
@@ -686,6 +720,7 @@ async function setPlayerBlocked(id: string, blocked: boolean) {
     blockedIds.delete(id)
     blockedNames.delete(id)
     renderPresence(connectedPlayers, presenceConnected, 0)
+    await refreshFriendState()
     toast('Player unblocked')
   } catch { toast('Could not remove this block · try again when connected') }
 }
@@ -700,6 +735,63 @@ function openReportDialog(id: string, name: string) {
   $<HTMLButtonElement>('report-submit').textContent = 'Send report'
   $<HTMLDialogElement>('report-dialog').showModal()
 }
+
+function socialDisplayName(id: string) {
+  const current = connectedPlayers.find(player => player.id === id)
+  return current?.name?.trim() || `Guest · ${id.slice(0, 8)}`
+}
+
+async function refreshFriendState() {
+  if (!guestSessionReady) return
+  try {
+    friendState = await fetchGuestFriends()
+    renderPeople(connectedPlayers, presenceConnected)
+  } catch { /* keep the last known list when the connection drops */ }
+}
+
+function handleFriendUpdate(kind: FriendUpdateKind, otherId: string) {
+  void refreshFriendState()
+  if (kind === 'request') toast(`${socialDisplayName(otherId)} sent you a friend request`)
+  else if (kind === 'accepted') toast(`${socialDisplayName(otherId)} accepted your friend request`)
+}
+
+async function handleFriendAction(action: 'accept' | 'decline' | 'cancel' | 'unfriend', id: string) {
+  try {
+    if (action === 'accept') await acceptGuestFriendRequest(id)
+    else if (action === 'decline') await declineGuestFriendRequest(id)
+    else if (action === 'cancel') await cancelGuestFriendRequest(id)
+    else await unfriendGuest(id)
+    await refreshFriendState()
+    toast(action === 'accept' ? 'Friend request accepted' : action === 'decline' ? 'Friend request declined' : action === 'cancel' ? 'Friend request cancelled' : 'Friend removed')
+  } catch (error) { toast(error instanceof Error ? error.message : 'Could not update friend request') }
+}
+
+function renderSocialState() {
+  const section = $<HTMLElement>('friend-section')
+  const friendsList = $<HTMLElement>('friends-list')
+  const incomingList = $<HTMLElement>('incoming-friends')
+  const outgoingList = $<HTMLElement>('outgoing-friends')
+  const empty = $<HTMLElement>('friend-empty')
+  section.hidden = SOLO_PREVIEW || !guestSessionReady
+  if (section.hidden) return
+  const friends = friendState.friends.filter(friend => !blockedIds.has(friend.guestId))
+  const incoming = friendState.incoming.filter(request => !blockedIds.has(request.guestId))
+  const outgoing = friendState.outgoing.filter(request => !blockedIds.has(request.guestId))
+  empty.hidden = Boolean(friends.length || incoming.length || outgoing.length)
+  empty.textContent = 'No friends yet. Send a request from a player’s Options menu.'
+  friendsList.innerHTML = friends.map(friend => `<div class="social-entry" role="listitem"><span><b>${escapeHtml(socialDisplayName(friend.guestId))}</b><small>Friend</small></span><button type="button" class="social-action" data-social-action="unfriend" data-target-id="${escapeHtml(friend.guestId)}">Unfriend</button></div>`).join('')
+  incomingList.innerHTML = incoming.map(request => `<div class="social-entry social-request" role="listitem"><span><b>${escapeHtml(socialDisplayName(request.guestId))}</b><small>Sent a friend request · expires ${new Date(request.expiresAt).toLocaleDateString()}</small></span><button type="button" class="social-action accept" data-social-action="accept" data-target-id="${escapeHtml(request.requestId)}">Accept</button><button type="button" class="social-action decline" data-social-action="decline" data-target-id="${escapeHtml(request.requestId)}">Decline</button></div>`).join('')
+  outgoingList.innerHTML = outgoing.map(request => `<div class="social-entry" role="listitem"><span><b>${escapeHtml(socialDisplayName(request.guestId))}</b><small>Request sent · expires ${new Date(request.expiresAt).toLocaleDateString()}</small></span><button type="button" class="social-action" data-social-action="cancel" data-target-id="${escapeHtml(request.requestId)}">Cancel</button></div>`).join('')
+  section.querySelectorAll<HTMLButtonElement>('[data-social-action]').forEach(button => {
+    button.onclick = () => {
+      const action = button.dataset.socialAction as 'accept' | 'decline' | 'cancel' | 'unfriend'
+      const id = button.dataset.targetId || ''
+      button.disabled = true
+      void handleFriendAction(action, id).finally(() => { button.disabled = false })
+    }
+  })
+}
+
 function createEmoteTexture(emoji: string): THREE.Texture {
   const canvas = document.createElement('canvas')
   canvas.width = canvas.height = 128
@@ -951,9 +1043,10 @@ function renderPeople(players: PresencePlayer[], connected: boolean) {
   blockedList.querySelectorAll<HTMLButtonElement>('.unblock-button').forEach(button => {
     button.onclick = () => { button.disabled = true; void setPlayerBlocked(button.dataset.playerId || '', false).finally(() => { button.disabled = false }) }
   })
+  renderSocialState()
   wave.disabled = view.availability !== 'online' || view.people.length === 0
 }
-const presence = connectPresence(renderPresence, handleIncomingEmote, handleIncomingChat)
+const presence = connectPresence(renderPresence, handleIncomingEmote, handleIncomingChat, handleFriendUpdate)
 window.addEventListener('beforeunload', () => presence.close())
 
 const keys = new Set<string>()
@@ -1046,6 +1139,7 @@ void openGuest().then(async guest => {
   const savedBlocks = await fetchGuestBlocks().catch(() => [])
   blockedIds.clear()
   for (const id of savedBlocks) blockedIds.add(id)
+  friendState = await fetchGuestFriends().catch(() => friendState)
   renderPresence(connectedPlayers, presenceConnected, 0)
   renderMiniPlayer()
 }).catch(() => { /* offline guests retain the local demo save */ })
@@ -2042,7 +2136,7 @@ if (timeToggle) {
   }
 }
 $<HTMLButtonElement>('nav-create').onclick = () => location === 'studio' ? setRoute('studioDesk') : location === 'release' ? setRoute('releaseIntake') : location === 'square' ? setRoute('studio') : toast('Walk to City Studio from Music Square')
-$<HTMLButtonElement>('nav-people').onclick = () => { closeSheets(); $<HTMLElement>('people-sheet').hidden = false; renderPeople(connectedPlayers, presenceConnected) }
+$<HTMLButtonElement>('nav-people').onclick = () => { closeSheets(); $<HTMLElement>('people-sheet').hidden = false; renderPeople(connectedPlayers, presenceConnected); void refreshFriendState() }
 $<HTMLButtonElement>('people-close').onclick = closeSheets
 $<HTMLButtonElement>('people-wave').onclick = () => { if (presenceConnected && connectedPlayers.some(player => player.location === location)) presence.sendEmote('wave') }
 $<HTMLButtonElement>('people-edit-avatar').onclick = () => { $<HTMLElement>('people-sheet').hidden = true; $<HTMLElement>('avatar-sheet').hidden = false; applyAppearance() }

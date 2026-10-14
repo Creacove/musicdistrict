@@ -30,6 +30,26 @@ export function createGuestStore(path) {
       details TEXT NOT NULL,
       status TEXT NOT NULL CHECK (status = 'received'),
       created_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS friend_requests (
+      id TEXT PRIMARY KEY,
+      requester_guest_id TEXT NOT NULL REFERENCES guests(id),
+      recipient_guest_id TEXT NOT NULL REFERENCES guests(id),
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('pending', 'accepted', 'declined', 'cancelled', 'expired', 'blocked')),
+      CHECK (requester_guest_id <> recipient_guest_id)
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS friend_request_one_pending_pair
+      ON friend_requests (requester_guest_id, recipient_guest_id) WHERE status = 'pending';
+    CREATE INDEX IF NOT EXISTS friend_request_outgoing_pending
+      ON friend_requests (requester_guest_id, status, expires_at);
+    CREATE TABLE IF NOT EXISTS friend_edges (
+      guest_low_id TEXT NOT NULL REFERENCES guests(id),
+      guest_high_id TEXT NOT NULL REFERENCES guests(id),
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (guest_low_id, guest_high_id),
+      CHECK (guest_low_id < guest_high_id)
     );`)
   const find = db.prepare('SELECT id FROM guests WHERE token_hash = ?')
   const create = db.prepare('INSERT INTO guests (id, token_hash, created_at) VALUES (?, ?, ?)')
@@ -48,6 +68,37 @@ export function createGuestStore(path) {
   const reportById = db.prepare(`SELECT id, reporter_guest_id, target_guest_id, reason, details, status, created_at
     FROM moderation_reports WHERE id = ?`)
   const blockListeners = new Set()
+  const friendEventListeners = new Set()
+  const expireFriendRequests = db.prepare("UPDATE friend_requests SET status = 'expired' WHERE status = 'pending' AND expires_at <= ?")
+  const friendEdgesFor = db.prepare(`SELECT CASE WHEN guest_low_id = ? THEN guest_high_id ELSE guest_low_id END AS guest_id, created_at
+    FROM friend_edges WHERE guest_low_id = ? OR guest_high_id = ? ORDER BY created_at, guest_id`)
+  const incomingFriendRequests = db.prepare(`SELECT id, requester_guest_id AS guest_id, created_at, expires_at
+    FROM friend_requests WHERE recipient_guest_id = ? AND status = 'pending' AND expires_at > ? ORDER BY created_at, id`)
+  const outgoingFriendRequests = db.prepare(`SELECT id, recipient_guest_id AS guest_id, created_at, expires_at
+    FROM friend_requests WHERE requester_guest_id = ? AND status = 'pending' AND expires_at > ? ORDER BY created_at, id`)
+  const existingFriend = db.prepare('SELECT 1 AS found FROM friend_edges WHERE guest_low_id = ? AND guest_high_id = ?')
+  const pendingPair = db.prepare("SELECT id, created_at, expires_at FROM friend_requests WHERE requester_guest_id = ? AND recipient_guest_id = ? AND status = 'pending'")
+  const reciprocalPending = db.prepare("SELECT id FROM friend_requests WHERE requester_guest_id = ? AND recipient_guest_id = ? AND status = 'pending'")
+  const declinedPair = db.prepare("SELECT id FROM friend_requests WHERE requester_guest_id = ? AND recipient_guest_id = ? AND status = 'declined' ORDER BY created_at DESC LIMIT 1")
+  const outgoingPendingCount = db.prepare("SELECT count(*) AS count FROM friend_requests WHERE requester_guest_id = ? AND status = 'pending' AND expires_at > ?")
+  const insertFriendRequest = db.prepare("INSERT INTO friend_requests (id, requester_guest_id, recipient_guest_id, created_at, expires_at, status) VALUES (?, ?, ?, ?, ?, 'pending')")
+  const friendRequestById = db.prepare('SELECT id, requester_guest_id, recipient_guest_id, created_at, expires_at, status FROM friend_requests WHERE id = ?')
+  const setFriendRequestStatus = db.prepare('UPDATE friend_requests SET status = ? WHERE id = ?')
+  const insertFriendEdge = db.prepare('INSERT OR IGNORE INTO friend_edges (guest_low_id, guest_high_id, created_at) VALUES (?, ?, ?)')
+  const removeFriendEdge = db.prepare('DELETE FROM friend_edges WHERE guest_low_id = ? AND guest_high_id = ?')
+  const blockPendingRequests = db.prepare("UPDATE friend_requests SET status = 'blocked' WHERE status = 'pending' AND ((requester_guest_id = ? AND recipient_guest_id = ?) OR (requester_guest_id = ? AND recipient_guest_id = ?))")
+  const removeFriendRequests = db.prepare('DELETE FROM friend_requests WHERE requester_guest_id = ? AND recipient_guest_id = ?')
+  const friendPair = (a, b) => a < b ? [a, b] : [b, a]
+  const friendState = (id, now) => {
+    const nowIso = new Date(now).toISOString()
+    expireFriendRequests.run(nowIso)
+    return {
+      friends: friendEdgesFor.all(id, id, id).map(row => ({ guestId: row.guest_id, createdAt: row.created_at })),
+      incoming: incomingFriendRequests.all(id, nowIso).map(row => ({ requestId: row.id, guestId: row.guest_id, createdAt: row.created_at, expiresAt: row.expires_at })),
+      outgoing: outgoingFriendRequests.all(id, nowIso).map(row => ({ requestId: row.id, guestId: row.guest_id, createdAt: row.created_at, expiresAt: row.expires_at })),
+    }
+  }
+  const notifyFriendEvent = event => { for (const listener of friendEventListeners) { try { listener(event) } catch { /* notification failures do not undo a stored relationship */ } } }
   return {
     resume(token) { return typeof token === 'string' && /^[a-f0-9]{64}$/.test(token) ? find.get(hash(token))?.id ?? null : null },
     create() { const id = randomUUID(), token = randomBytes(32).toString('hex'); create.run(id, hash(token), new Date().toISOString()); return { id, token } },
@@ -66,10 +117,17 @@ export function createGuestStore(path) {
     block(blockerId, blockedId) {
       if (blockerId === blockedId || !hasGuest.get(blockerId) || !hasGuest.get(blockedId)) return false
       const result = insertBlock.run(blockerId, blockedId, new Date().toISOString())
-      if (result.changes) for (const listener of blockListeners) listener({ blockerId, blockedId })
+      if (result.changes) {
+        const [low, high] = friendPair(blockerId, blockedId)
+        removeFriendEdge.run(low, high)
+        blockPendingRequests.run(blockerId, blockedId, blockedId, blockerId)
+        for (const listener of blockListeners) { try { listener({ blockerId, blockedId }) } catch { /* safety state remains stored */ } }
+        notifyFriendEvent({ kind: 'blocked', actorId: blockerId, targetId: blockedId })
+      }
       return true
     },
     onBlock(listener) { blockListeners.add(listener); return () => blockListeners.delete(listener) },
+    onFriendEvent(listener) { friendEventListeners.add(listener); return () => friendEventListeners.delete(listener) },
     unblock(blockerId, blockedId) {
       deleteBlock.run(blockerId, blockedId)
       return true
@@ -78,6 +136,84 @@ export function createGuestStore(path) {
       return typeof blockerId === 'string' && typeof blockedId === 'string' && isBlocked.get(blockerId, blockedId) !== undefined
     },
     isBlockedBetween(a, b) { return this.isBlocked(a, b) || this.isBlocked(b, a) },
+    friendState(id, now = Date.now()) { return friendState(id, now) },
+    requestFriend(requesterId, recipientId, now = Date.now()) {
+      if (requesterId === recipientId) return { error: 'self' }
+      if (!hasGuest.get(requesterId) || !hasGuest.get(recipientId)) return { error: 'target' }
+      if (this.isBlockedBetween(requesterId, recipientId)) return { error: 'blocked' }
+      const [low, high] = friendPair(requesterId, recipientId)
+      if (existingFriend.get(low, high)) return { error: 'already_friends' }
+      const createdAt = new Date(now).toISOString()
+      expireFriendRequests.run(createdAt)
+      const existing = pendingPair.get(requesterId, recipientId)
+      if (existing) return { requestId: existing.id, status: 'pending', createdAt: existing.created_at, expiresAt: existing.expires_at, duplicate: true }
+      if (reciprocalPending.get(recipientId, requesterId)) return { error: 'incoming_pending' }
+      if (declinedPair.get(requesterId, recipientId)) return { error: 'declined' }
+      if (outgoingPendingCount.get(requesterId, createdAt).count >= 20) return { error: 'limit' }
+      const requestId = randomUUID()
+      const expiresAt = new Date(now + 7 * 24 * 60 * 60 * 1000).toISOString()
+      insertFriendRequest.run(requestId, requesterId, recipientId, createdAt, expiresAt)
+      notifyFriendEvent({ kind: 'request', actorId: requesterId, targetId: recipientId, requestId })
+      return { requestId, status: 'pending', createdAt, expiresAt, duplicate: false }
+    },
+    acceptFriendRequest(requestId, recipientId, now = Date.now()) {
+      let request = friendRequestById.get(requestId)
+      if (!request) return { error: 'not_found' }
+      if (request.recipient_guest_id !== recipientId) return { error: 'not_recipient' }
+      const nowIso = new Date(now).toISOString()
+      expireFriendRequests.run(nowIso)
+      request = friendRequestById.get(requestId)
+      if (request.status === 'accepted') return { status: 'accepted', guestId: request.requester_guest_id, duplicate: true }
+      if (request.status === 'expired') return { error: 'expired' }
+      if (request.status !== 'pending') return { error: request.status === 'blocked' ? 'blocked' : 'invalid_state' }
+      if (this.isBlockedBetween(request.requester_guest_id, request.recipient_guest_id)) {
+        setFriendRequestStatus.run('blocked', requestId)
+        return { error: 'blocked' }
+      }
+      const [low, high] = friendPair(request.requester_guest_id, request.recipient_guest_id)
+      insertFriendEdge.run(low, high, nowIso)
+      setFriendRequestStatus.run('accepted', requestId)
+      notifyFriendEvent({ kind: 'accepted', actorId: recipientId, targetId: request.requester_guest_id, requestId })
+      return { status: 'accepted', guestId: request.requester_guest_id, duplicate: false }
+    },
+    declineFriendRequest(requestId, recipientId, now = Date.now()) {
+      let request = friendRequestById.get(requestId)
+      if (!request) return { error: 'not_found' }
+      if (request.recipient_guest_id !== recipientId) return { error: 'not_recipient' }
+      const nowIso = new Date(now).toISOString()
+      expireFriendRequests.run(nowIso)
+      request = friendRequestById.get(requestId)
+      if (request.status === 'declined') return { status: 'declined', guestId: request.requester_guest_id, duplicate: true }
+      if (request.status === 'expired') return { error: 'expired' }
+      if (request.status !== 'pending') return { error: request.status === 'blocked' ? 'blocked' : 'invalid_state' }
+      if (this.isBlockedBetween(request.requester_guest_id, request.recipient_guest_id)) {
+        setFriendRequestStatus.run('blocked', requestId)
+        return { error: 'blocked' }
+      }
+      setFriendRequestStatus.run('declined', requestId)
+      notifyFriendEvent({ kind: 'declined', actorId: recipientId, targetId: request.requester_guest_id, requestId })
+      return { status: 'declined', guestId: request.requester_guest_id, duplicate: false }
+    },
+    cancelFriendRequest(requestId, requesterId) {
+      const request = friendRequestById.get(requestId)
+      if (!request) return { error: 'not_found' }
+      if (request.requester_guest_id !== requesterId) return { error: 'not_requester' }
+      if (request.status === 'cancelled') return { status: 'cancelled', guestId: request.recipient_guest_id, duplicate: true }
+      if (request.status !== 'pending') return { error: request.status === 'expired' ? 'expired' : 'invalid_state' }
+      setFriendRequestStatus.run('cancelled', requestId)
+      notifyFriendEvent({ kind: 'cancelled', actorId: requesterId, targetId: request.recipient_guest_id, requestId })
+      return { status: 'cancelled', guestId: request.recipient_guest_id, duplicate: false }
+    },
+    unfriend(guestId, otherGuestId) {
+      if (!hasGuest.get(otherGuestId)) return { error: 'target' }
+      const [low, high] = friendPair(guestId, otherGuestId)
+      const result = removeFriendEdge.run(low, high)
+      if (!result.changes) return { error: 'not_friends' }
+      removeFriendRequests.run(guestId, otherGuestId)
+      removeFriendRequests.run(otherGuestId, guestId)
+      notifyFriendEvent({ kind: 'unfriended', actorId: guestId, targetId: otherGuestId })
+      return { status: 'unfriended' }
+    },
     submitReport(reporterId, input) {
       if (!input || typeof input !== 'object' || Array.isArray(input)) return { error: 'invalid' }
       const { targetGuestId, reason, details = '' } = input
@@ -121,7 +257,7 @@ export function guestApi(store) {
       res.setHeader('Cache-Control', 'no-store')
       return res.end(JSON.stringify({ tracks: CATALOGUE }))
     }
-    if (!['/api/guest', '/api/saves', '/api/reports', '/api/blocks'].some(route => pathname === route || pathname.startsWith(`${route}/`))) return next()
+    if (!['/api/guest', '/api/saves', '/api/reports', '/api/blocks', '/api/friends', '/api/friend-requests'].some(route => pathname === route || pathname.startsWith(`${route}/`))) return next()
     res.setHeader('Content-Type', 'application/json; charset=utf-8')
     res.setHeader('Cache-Control', 'no-store')
     const reply = (status, body) => { res.statusCode = status; res.end(JSON.stringify(body)) }
@@ -161,6 +297,50 @@ export function guestApi(store) {
     if (unblockMatch && req.method === 'DELETE') {
       store.unblock(id, unblockMatch[1])
       return reply(200, { blockedIds: store.blocks(id) })
+    }
+
+    if (pathname === '/api/friends' && req.method === 'GET') return reply(200, store.friendState(id))
+    if (pathname === '/api/friends' && req.method === 'POST') return reply(405, { error: 'Use a friend request' })
+    const unfriendMatch = pathname.match(/^\/api\/friends\/([0-9a-f-]{36})$/i)
+    if (unfriendMatch && req.method === 'DELETE') {
+      const result = store.unfriend(id, unfriendMatch[1])
+      if (result.error === 'target') return reply(404, { error: 'Guest not found' })
+      if (result.error) return reply(404, { error: 'Friend not found' })
+      return reply(200, result)
+    }
+
+    if (pathname === '/api/friend-requests' && req.method === 'POST') {
+      const parsed = await readJsonBody(req)
+      if (parsed.error) return reply(parsed.error === 'too_large' ? 413 : 400, { error: 'Invalid friend request' })
+      const targetId = parsed.value?.targetGuestId
+      if (!UUID.test(targetId || '') || targetId === id) return reply(400, { error: 'Invalid friend request target' })
+      const result = store.requestFriend(id, targetId)
+      if (result.error === 'target') return reply(404, { error: 'Guest not found' })
+      if (result.error === 'blocked') return reply(403, { error: 'Friend request unavailable' })
+      if (result.error === 'limit') return reply(429, { error: 'Pending request limit reached' })
+      if (result.error === 'self') return reply(400, { error: 'Invalid friend request target' })
+      if (result.error) return reply(409, { error: result.error })
+      return reply(result.duplicate ? 200 : 201, result)
+    }
+    const friendRequestAction = pathname.match(/^\/api\/friend-requests\/([0-9a-f-]{36})\/(accept|decline)$/i)
+    if (friendRequestAction && req.method === 'POST') {
+      const result = friendRequestAction[2].toLowerCase() === 'accept'
+        ? store.acceptFriendRequest(friendRequestAction[1], id)
+        : store.declineFriendRequest(friendRequestAction[1], id)
+      if (result.error === 'not_found') return reply(404, { error: 'Friend request not found' })
+      if (result.error === 'not_recipient' || result.error === 'blocked') return reply(403, { error: 'Friend request unavailable' })
+      if (result.error === 'expired') return reply(410, { error: 'Friend request expired' })
+      if (result.error) return reply(409, { error: 'Friend request is no longer pending' })
+      return reply(200, result)
+    }
+    const cancelFriendRequest = pathname.match(/^\/api\/friend-requests\/([0-9a-f-]{36})$/i)
+    if (cancelFriendRequest && req.method === 'DELETE') {
+      const result = store.cancelFriendRequest(cancelFriendRequest[1], id)
+      if (result.error === 'not_found') return reply(404, { error: 'Friend request not found' })
+      if (result.error === 'not_requester') return reply(403, { error: 'Friend request unavailable' })
+      if (result.error === 'expired') return reply(410, { error: 'Friend request expired' })
+      if (result.error) return reply(409, { error: 'Friend request is no longer pending' })
+      return reply(200, result)
     }
 
     if (pathname === '/api/reports' && req.method === 'POST') {

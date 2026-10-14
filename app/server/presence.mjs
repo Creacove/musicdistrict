@@ -51,9 +51,21 @@ export function attachPresence(httpServer, { store } = {}) {
       else if (player.id === blockedId) send(socket, { type: 'leave', id: blockerId })
     }
   })
-  wss.on('close', () => { closing = true; stopBlockListener?.() })
+  const stopFriendEventListener = store?.onFriendEvent?.(event => {
+    for (const [socket, player] of players) {
+      if (player.id !== event.actorId && player.id !== event.targetId) continue
+      send(socket, {
+        type: 'friend-update',
+        kind: event.kind,
+        otherId: player.id === event.actorId ? event.targetId : event.actorId,
+        requestId: event.requestId,
+      })
+    }
+  })
+  const stopListeners = () => { closing = true; stopBlockListener?.(); stopFriendEventListener?.() }
+  wss.on('close', stopListeners)
   const closeWebSocketServer = wss.close.bind(wss)
-  wss.close = callback => { closing = true; stopBlockListener?.(); return closeWebSocketServer(callback) }
+  wss.close = callback => { stopListeners(); return closeWebSocketServer(callback) }
   wss.on('connection', (socket, req) => {
     let id = randomUUID()
     let authenticated = false

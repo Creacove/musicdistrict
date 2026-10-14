@@ -125,6 +125,39 @@ test('blocked guests do not receive each other’s chat or emotes', async t => {
   } finally { a.terminate(); b.terminate(); hub.close(); server.close(); store.close() }
 })
 
+test('friend request and acceptance notify the two connected guests', async () => {
+  const store = createGuestStore(':memory:')
+  const requester = store.create(), recipient = store.create()
+  const server = createServer()
+  const hub = attachPresence(server, { store })
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  const port = server.address().port
+  const a = new WebSocket(`ws://127.0.0.1:${port}/presence?token=${requester.token}`)
+  let b
+  try {
+    assert.equal((await nextMessageWithin(a, 'requester welcome')).type, 'welcome')
+    const joined = nextMessageWithin(a, 'recipient join')
+    b = new WebSocket(`ws://127.0.0.1:${port}/presence?token=${recipient.token}`)
+    const recipientWelcome = await nextMessageWithin(b, 'recipient welcome')
+    assert.equal(recipientWelcome.authenticated, true)
+    assert.equal((await joined).type, 'join')
+
+    const requestNotification = nextMessageWithin(b, 'friend request notification')
+    const request = store.requestFriend(requester.id, recipient.id)
+    const requested = await requestNotification
+    assert.equal(requested.type, 'friend-update')
+    assert.equal(requested.kind, 'request')
+    assert.equal(requested.otherId, requester.id)
+    assert.equal(requested.requestId, request.requestId)
+    const acceptNotification = nextMessageWithin(a, 'friend acceptance notification')
+    store.acceptFriendRequest(request.requestId, recipient.id)
+    const accepted = await acceptNotification
+    assert.equal(accepted.type, 'friend-update')
+    assert.equal(accepted.kind, 'accepted')
+    assert.equal(accepted.otherId, recipient.id)
+  } finally { a.terminate(); b?.terminate(); hub.close(); server.close(); store.close() }
+})
+
 test('exponential backoff doubles delay up to 30 s cap', () => {
   // Pure logic test — no WebSocket needed
   let backoffMs = 1500

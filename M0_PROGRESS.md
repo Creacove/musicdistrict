@@ -408,6 +408,17 @@ Added an integration test that connects 20 real WebSocket test clients to an iso
 
 ## Current next slices
 
-1. Implement the documented mutual friend-request flow with expiry, pending-request caps, anti-repeat rules, idempotent acceptance and block precedence before enabling friend DMs.
-2. Continue M1 device/performance validation; the embedded Chromium mobile viewport is not a physical Android/iPhone test.
-3. Keep public chat and reports gated until age policy, moderation staffing, emergency escalation and appeals have real owners.
+## M1 mutual friend requests — 14 October 2026
+
+- **Friend requests:** Added authenticated SQLite-backed friend requests and mutual friend edges. Only a recipient can accept or decline; the sender can cancel; either friend can unfriend. Acceptance is idempotent. Pending requests expire after seven days, outgoing requests cap at 20, repeated requests after decline are rejected, and a block removes friendship and overrides pending requests. Unblocking never recreates friendship.
+- **People UI:** Added friends, incoming requests, sent requests, accept/decline/cancel, and unfriend actions. Connected clients receive updates when a request is sent or accepted.
+- **GDD trace:** Fan & Social Chapter 05 §§10–11; FS-016, FS-017 and FS-019. Follow, friendship, and fan-community membership remain separate actions.
+- **Live browser:** Tested two authenticated sessions against an isolated local Node/SQLite server at 390 × 844. Sent a request, confirmed it appeared to the recipient, accepted it, and confirmed both sessions showed the friendship over live updates. Browser console errors: 0. Capture: `docs/evidence/m1-friends-accepted.png`.
+- **Verification:** Full suite passes 74 tests. Production TypeScript/Vite build succeeds; `git diff --check` succeeds. App JS is 127.10 kB (42.15 kB gzip), CSS 40.54 kB (9.31 kB gzip), Three.js vendor 567.38 kB (140.97 kB gzip). Vite's existing >500 kB vendor-chunk warning remains nonfatal.
+- **Hosting boundary:** Netlify is a static solo preview and does not run the guest database or WebSocket server. Friend requests and live updates work on the self-hosted prototype server, not on the static phone-testing URL.
+
+## Current next slices — updated 14 October 2026
+
+1. Implement mutual-friend direct messages with block checks, authenticated delivery, privacy controls, and explicit reporting/safety boundaries before enabling unsolicited contact.
+2. Continue M1 physical-device and performance validation; the embedded Chromium mobile viewport is not a physical Android/iPhone test.
+3. Keep public chat and reports gated until age policy, moderation staffing, emergency escalation, and appeals have real owners.
