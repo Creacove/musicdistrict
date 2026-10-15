@@ -131,7 +131,7 @@ export function createAmbientPedestrian(variant: 0 | 1): THREE.Group {
   const label = new THREE.Sprite(new THREE.SpriteMaterial({ map: passerbyPlate, depthWrite: false }))
   label.name = 'NPC · PASSERBY role label'
   label.position.set(0, 2.22, 0)
-  label.scale.set(.92, .23, 1)
+  label.scale.set(1.12, .28, 1)
   actor.add(label)
   actor.userData.walkPose = { torso, legs, arms, phase: variant * Math.PI }
   return actor
