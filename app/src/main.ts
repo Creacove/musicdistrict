@@ -2711,6 +2711,7 @@ function resize() { camera.aspect = world.clientWidth / world.clientHeight; came
 window.addEventListener('resize', resize)
 resize()
 let previousFrame = performance.now(), elapsed = 0
+let frameRequest = 0
 let lastPresenceSend = 0
 const frameSamples: number[] = []
 let readyMs: number | null = null
@@ -2721,8 +2722,21 @@ function updateMetrics() {
   $<HTMLElement>('transfer-metric').textContent = `${(reportedTransferBytes() / 1024).toFixed(0)} KiB reported`
   $<HTMLElement>('ready-metric').textContent = readyMs === null ? 'Measuring…' : `${(readyMs / 1000).toFixed(2)} s · first rendered avatar`
 }
+function scheduleFrame() {
+  if (!frameRequest && !document.hidden) frameRequest = requestAnimationFrame(frame)
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    if (frameRequest) cancelAnimationFrame(frameRequest)
+    frameRequest = 0
+    return
+  }
+  previousFrame = performance.now()
+  scheduleFrame()
+})
 function frame() {
-  requestAnimationFrame(frame)
+  frameRequest = 0
+  if (document.hidden) return
   const now = performance.now(), dt = Math.min((now - previousFrame) / 1000, .05)
   if (readyMs !== null && now - previousFrame < 250) { frameSamples.push(now - previousFrame); if (frameSamples.length > 300) frameSamples.shift() }
   previousFrame = now; elapsed += dt
@@ -2846,5 +2860,6 @@ function frame() {
   renderer.render(scene, camera)
   if (readyMs === null) readyMs = performance.now()
   if (Math.floor(elapsed * 2) !== Math.floor((elapsed - dt) * 2) && !$<HTMLElement>('display-sheet').hidden) updateMetrics()
+  scheduleFrame()
 }
-frame()
+scheduleFrame()
