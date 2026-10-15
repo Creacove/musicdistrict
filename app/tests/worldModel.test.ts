@@ -4,7 +4,7 @@ import { getNearby, type Location } from '../src/worldModel.ts'
 
 test('a player reaches an entrance by walking to its physical hotspot', () => {
   const location: Location = 'square'
-  assert.equal(getNearby(location, -4, 6), null)
+  assert.equal(getNearby(location, -4, 3), null)
   assert.equal(getNearby(location, 10, 2), 'palmEntrance')
   assert.equal(getNearby(location, 17, 2), null)
 })

@@ -2868,7 +2868,10 @@ function frame() {
   }
   routeMarker.visible = !!routeTarget
   if (location === 'venue') palmRoom?.update(elapsed)
-  if (location === 'square') (square.userData.updateConcierge as ((time: number) => void) | undefined)?.(elapsed)
+  if (location === 'square') {
+    (square.userData.updateConcierge as ((time: number) => void) | undefined)?.(elapsed);
+    (square.userData.updateAmbientPedestrians as ((time: number, enabled: boolean) => void) | undefined)?.(elapsed, quality !== 'saver')
+  }
   if (location === 'studio') (studioRoom?.userData.updateServiceNpc as ((time: number) => void) | undefined)?.(elapsed)
   renderer.render(scene, camera)
   if (readyMs === null) readyMs = performance.now()

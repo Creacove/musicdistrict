@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import { instanceStaticBoxes } from './instanceBoxes.ts'
-import { createServiceNpc, updateServiceNpc } from './serviceNpc.ts'
+import { createAmbientPedestrian, createServiceNpc, updateAmbientPedestrian, updateServiceNpc } from './serviceNpc.ts'
+import { MUSIC_SQUARE_AMBIENT_WALKERS, sampleAmbientWalker } from './ambientNpcMotion.ts'
 
 const mat = (color: string, metalness = 0, emissive = '#000000') =>
   new THREE.MeshStandardMaterial({ color, roughness: .78, metalness, emissive, emissiveIntensity: .45 })
@@ -356,6 +357,23 @@ export function makeSquare() {
   concierge.rotation.y = Math.atan2(2.6, 1.6)
   root.add(concierge)
   root.userData.updateConcierge = (time: number) => updateServiceNpc(concierge, time)
+  const crowd = new THREE.Group()
+  crowd.name = 'Music Square ambient pedestrians · NPC only'
+  const walkers = MUSIC_SQUARE_AMBIENT_WALKERS.map(route => {
+    const actor = createAmbientPedestrian(route.variant)
+    crowd.add(actor)
+    return { actor, route }
+  })
+  root.add(crowd)
+  root.userData.updateAmbientPedestrians = (time: number, enabled: boolean) => {
+    crowd.visible = enabled
+    for (const { actor, route } of walkers) {
+      const pose = sampleAmbientWalker(route, time)
+      actor.position.set(pose.x, 0, pose.z)
+      actor.rotation.y = pose.heading
+      if (enabled) updateAmbientPedestrian(actor, time)
+    }
+  }
   instanceStaticBoxes(root)
   return root
 }

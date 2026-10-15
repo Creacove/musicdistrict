@@ -464,6 +464,13 @@ Added an integration test that connects 20 real WebSocket test clients to an iso
 - **Map:** Replaced the straight connector with an SVG polyline projected from the same collision-checked `findWalkPath` used by tap-to-walk. The route now bends around blocked objects and keeps destination pins in front.
 - **Verification:** TypeScript/Vite build passes and navigation tests pass 4/4. The live 390 × 844 browser selected City Studio from the map and showed a four-vertex route with the active destination; the walking guidance remained active and the browser reported zero console errors. Deploy `6ad09d3f5afcde2c75a55529` is live.
 
+## M1 City Concierge and Music Square ambience — 15 October 2026
+
+- **Concierge:** Added the Chapter 09 §11.1 City Concierge at the spawn plaza. Its labeled interaction explains movement and opens the real free-destination map; it does not grant money, change reputation, or move the avatar. The action was confirmed in the production 390 × 844 browser.
+- **Ambient life:** Added two distinctly dressed, clearly labeled `NPC · PASSERBY` figures on slow looping routes along the outer plaza. Their paths stay clear of world obstacles and all interaction hotspots. They are nonblocking cosmetic actors with no finance, attendance, presence, or analytics effect. Data Saver hides them.
+- **References:** Chapter 09 §11.1–11.2 and Master GDD §9; the Music Square composition follows V26 while authored characters remain original geometry and clothing.
+- **Verification:** Full suite passes 96/96, including three ambient-actor/motion tests and five navigation tests. Netlify-mode TypeScript/Vite production build passes. (The live deployment and mobile viewport check are recorded after publication.)
+
 ## Current next slices — updated 15 October 2026
 
 1. Continue M1 phone-device and performance validation; embedded Chromium mobile viewport checks do not replace physical Android/iPhone testing.

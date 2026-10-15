@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { AMBIENT_ACTOR_TRUTH } from './ambientNpcMotion.ts'
 
 export type ServiceNpcRole = 'venue-usher' | 'studio-technician' | 'city-concierge'
 
@@ -76,6 +77,75 @@ function rolePlateTexture(label: string, accent: string) {
   const texture = new THREE.CanvasTexture(canvas)
   texture.colorSpace = THREE.SRGBColorSpace
   return texture
+}
+
+let passerbyPlate: THREE.Texture | undefined
+
+export function createAmbientPedestrian(variant: 0 | 1): THREE.Group {
+  const palettes = [
+    { top: '#267566', bottom: '#3e4141', accent: '#e7c98c', skin: '#805038', hair: '#211713' },
+    { top: '#d18b43', bottom: '#634a91', accent: '#f2d49a', skin: '#633c2d', hair: '#171411' },
+  ] as const
+  const colors = palettes[variant]
+  const actor = new THREE.Group()
+  actor.name = 'NPC · PASSERBY'
+  Object.assign(actor.userData, { ...AMBIENT_ACTOR_TRUTH, npcRole: 'ambient-pedestrian', visibleBadge: 'NPC · PASSERBY' })
+  const top = new THREE.MeshStandardMaterial({ color: colors.top, roughness: .9 })
+  const bottom = new THREE.MeshStandardMaterial({ color: colors.bottom, roughness: .94 })
+  const skin = new THREE.MeshStandardMaterial({ color: colors.skin, roughness: .93 })
+  const hair = new THREE.MeshStandardMaterial({ color: colors.hair, roughness: 1 })
+  const accent = new THREE.MeshStandardMaterial({ color: colors.accent, roughness: .83 })
+  const add = (geometry: THREE.BufferGeometry, material: THREE.Material, parent: THREE.Group, x = 0, y = 0, z = 0) => {
+    const mesh = new THREE.Mesh(geometry, material)
+    mesh.position.set(x, y, z)
+    mesh.castShadow = false
+    mesh.receiveShadow = false
+    parent.add(mesh)
+    return mesh
+  }
+  const torso = new THREE.Group()
+  torso.position.y = 1.14
+  actor.add(torso)
+  add(new THREE.CapsuleGeometry(.205, .43, 3, 7), top, torso)
+  add(new THREE.BoxGeometry(.025, .34, .018), accent, torso, -.16, .01, .18)
+  add(new THREE.SphereGeometry(.17, 9, 7), skin, torso, 0, .61, .005)
+  const hairCap = add(new THREE.SphereGeometry(.176, 8, 6), hair, torso, 0, .68, -.008)
+  hairCap.scale.set(1.04, .52, 1.02)
+  const legs: THREE.Group[] = []
+  const arms: THREE.Group[] = []
+  for (const side of [-1, 1] as const) {
+    const leg = new THREE.Group()
+    leg.position.set(side * .105, .83, 0)
+    actor.add(leg)
+    legs.push(leg)
+    add(new THREE.CapsuleGeometry(.083, .36, 3, 6), bottom, leg, 0, -.24, 0)
+    add(new THREE.BoxGeometry(.16, .09, .23), hair, leg, 0, -.48, .045)
+    const arm = new THREE.Group()
+    arm.position.set(side * .22, 1.34, 0)
+    actor.add(arm)
+    arms.push(arm)
+    add(new THREE.CapsuleGeometry(.065, .32, 3, 6), top, arm, 0, -.18, 0)
+    add(new THREE.SphereGeometry(.052, 6, 5), skin, arm, 0, -.4, .01)
+  }
+  if (!passerbyPlate) passerbyPlate = rolePlateTexture('NPC · PASSERBY', colors.accent)
+  const label = new THREE.Sprite(new THREE.SpriteMaterial({ map: passerbyPlate, depthWrite: false }))
+  label.name = 'NPC · PASSERBY role label'
+  label.position.set(0, 2.22, 0)
+  label.scale.set(.92, .23, 1)
+  actor.add(label)
+  actor.userData.walkPose = { torso, legs, arms, phase: variant * Math.PI }
+  return actor
+}
+
+export function updateAmbientPedestrian(actor: THREE.Group, time: number) {
+  const pose = actor.userData.walkPose as { torso: THREE.Group; legs: THREE.Group[]; arms: THREE.Group[]; phase: number } | undefined
+  if (!pose) return
+  const stride = Math.sin(time * 5.4 + pose.phase)
+  pose.torso.position.y = 1.14 + Math.abs(stride) * .018
+  pose.legs[0].rotation.x = stride * .25
+  pose.legs[1].rotation.x = -stride * .25
+  pose.arms[0].rotation.x = -stride * .19
+  pose.arms[1].rotation.x = stride * .19
 }
 
 function makeMesh(geometry: THREE.BufferGeometry, material: THREE.Material, parent: THREE.Group) {
