@@ -480,6 +480,13 @@ Added an integration test that connects 20 real WebSocket test clients to an iso
 - **Verification:** Full test suite passes 98/98; the final route adjustment passes the four focused ambient-motion tests. Netlify-mode TypeScript/Vite production build passes. Production deploy `6ad0ad164d74f55ec58d8f30` serves `index-Bj8owLO1.js` at [musicdistrict.netlify.app](https://musicdistrict.netlify.app/). At 390 × 844, the live browser shows the avatar from behind with both labeled passersby visible and zero browser console errors. Screenshot: `docs/evidence/m1-avatar-heading-staging-live.png`.
 - **Device caveat:** This is desktop Chromium at a mobile viewport. Physical Android/iPhone FPS, thermal behavior, touch comfort, and network recovery remain untested.
 
+## M1 avatar idle motion — 15 October 2026
+
+- **Animation:** Added subtle breathing, weight shift, arm drift, and a small facing glance. The idle pose preserves the avatar's last travel direction, stays within small bounds, and resets cleanly for walking, dancing, and room transitions.
+- **References:** Chapter 09 §5.2's readable idle and walk states; original procedural animation, with no third-party rig or motion clip.
+- **Verification:** Full suite passes 99/99; focused avatar motion tests pass 9/9. Netlify-mode production build succeeds. Production deploy `6ad0af4a20f6a5e5cee7c5a1` serves `index-DtTz3ju2.js` at [musicdistrict.netlify.app](https://musicdistrict.netlify.app/). The 390 × 844 browser shows the latest build with zero console errors. Screenshot: `docs/evidence/m1-avatar-idle-live.png`.
+- **Device caveat:** Idle timing and physical-device battery/thermal behavior still need Android/iPhone testing.
+
 ## Current next slices — updated 15 October 2026
 
 1. Add a server-backed destination-instance, capacity, and ticket-entitlement resolver before any proposal can claim a room or event slot. Preserve physical travel and accessible routes.
