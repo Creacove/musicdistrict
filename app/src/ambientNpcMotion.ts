@@ -18,13 +18,13 @@ export const AMBIENT_ACTOR_TRUTH = {
   nonBlocking: true,
 } as const
 
-function makeRoute(centerZ: number, radiusZ: number, lapSeconds: number, direction: 1 | -1, variant: 0 | 1): AmbientWalkerRoute {
-  return { centerX: 1.8, centerZ, radiusX: .45, radiusZ, lapSeconds, direction, variant }
+function makeRoute(centerX: number, centerZ: number, radiusX: number, radiusZ: number, lapSeconds: number, direction: 1 | -1, variant: 0 | 1): AmbientWalkerRoute {
+  return { centerX, centerZ, radiusX, radiusZ, lapSeconds, direction, variant }
 }
 
 export const MUSIC_SQUARE_AMBIENT_WALKERS: readonly AmbientWalkerRoute[] = [
-  makeRoute(7, .2, 8, 1, 0),
-  makeRoute(5.25, .2, 9, -1, 1),
+  makeRoute(-.85, 9.45, .3, .15, 12, 1, 0),
+  makeRoute(1.05, 10.5, .18, .12, 14, -1, 1),
 ]
 
 export function sampleAmbientWalker(route: AmbientWalkerRoute, time: number) {
