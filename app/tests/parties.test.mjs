@@ -148,3 +148,75 @@ test('a pending invite survives leadership transfer when friendship with its sen
     assert.equal(store.partyState(member.id, now + 8).party.members.length, 2)
   } finally { store.close() }
 })
+
+test('party chat is private to accepted members and history starts at each member join', async () => {
+  const app = await makeApi()
+  const [leader, first, later, outsider] = app.guests
+  const { base, auth, json, makeFriends, invite } = app
+  try {
+    const created = await fetch(`${base}/api/parties`, { method: 'POST', headers: auth(leader) })
+    const { partyId } = await created.json()
+    await makeFriends(leader, first)
+    const firstInvite = await (await invite(partyId, leader, first)).json()
+    await fetch(`${base}/api/party-invitations/${firstInvite.invitationId}/accept`, { method: 'POST', headers: auth(first) })
+
+    const send = (guest, text) => fetch(`${base}/api/parties/${partyId}/messages`, {
+      method: 'POST', headers: { ...auth(guest), ...json }, body: JSON.stringify({ text }),
+    })
+    const sent = await send(leader, 'Meet by the studio door')
+    assert.equal(sent.status, 201)
+    const message = (await sent.json()).message
+    assert.equal(message.text, 'Meet by the studio door')
+    const history = await fetch(`${base}/api/parties/${partyId}/messages`, { headers: auth(first) })
+    assert.deepEqual((await history.json()).messages.map(item => item.id), [message.id])
+    assert.equal((await fetch(`${base}/api/parties/${partyId}/messages`, { headers: auth(outsider) })).status, 403)
+    assert.equal((await send(outsider, 'I am not in this party')).status, 403)
+
+    await makeFriends(leader, later)
+    const laterInvite = await (await invite(partyId, leader, later)).json()
+    await fetch(`${base}/api/party-invitations/${laterInvite.invitationId}/accept`, { method: 'POST', headers: auth(later) })
+    const laterHistory = await fetch(`${base}/api/parties/${partyId}/messages`, { headers: auth(later) })
+    assert.deepEqual((await laterHistory.json()).messages, [])
+    assert.equal((await fetch(`${base}/api/parties/${partyId}/messages`, { headers: auth(first) })).status, 200)
+    assert.equal((await fetch(`${base}/api/parties/${partyId}/leave`, { method: 'POST', headers: auth(first) })).status, 200)
+    assert.equal((await fetch(`${base}/api/parties/${partyId}/messages`, { headers: auth(first) })).status, 403)
+    await fetch(`${base}/api/parties/${partyId}/leave`, { method: 'POST', headers: auth(later) })
+    await fetch(`${base}/api/parties/${partyId}/leave`, { method: 'POST', headers: auth(leader) })
+    assert.equal((await fetch(`${base}/api/parties/${partyId}/messages`, { headers: auth(leader) })).status, 404)
+  } finally { app.close() }
+})
+
+test('party chat trims and caps message text and throttles rapid sends', async () => {
+  const app = await makeApi()
+  const [leader] = app.guests
+  const { base, auth, json } = app
+  try {
+    const created = await fetch(`${base}/api/parties`, { method: 'POST', headers: auth(leader) })
+    const { partyId } = await created.json()
+    const send = text => fetch(`${base}/api/parties/${partyId}/messages`, {
+      method: 'POST', headers: { ...auth(leader), ...json }, body: JSON.stringify({ text }),
+    })
+    assert.equal((await send('   ')).status, 400)
+    assert.equal((await send('x'.repeat(281))).status, 400)
+    for (let index = 0; index < 20; index++) assert.equal((await send(`note ${index}`)).status, 201)
+    assert.equal((await send('one too many')).status, 429)
+  } finally { app.close() }
+})
+
+test('blocking a party member removes them and hides their earlier chat', () => {
+  const store = createGuestStore(':memory:')
+  try {
+    const leader = store.create(), member = store.create()
+    const friendship = store.requestFriend(leader.id, member.id)
+    store.acceptFriendRequest(friendship.requestId, member.id)
+    const party = store.createParty(leader.id)
+    const invitation = store.inviteToParty(party.partyId, leader.id, member.id)
+    store.acceptPartyInvitation(invitation.invitationId, member.id)
+    assert.equal(store.sendPartyMessage(party.partyId, member.id, 'private party note').status, 'sent')
+    assert.equal(store.partyMessages(leader.id, party.partyId).messages.length, 1)
+    store.block(leader.id, member.id)
+    assert.deepEqual(store.partyMessages(leader.id, party.partyId).messages, [])
+    assert.equal(store.partyState(leader.id).party.members.length, 1)
+    assert.equal(store.sendPartyMessage(party.partyId, member.id, 'blocked follow-up').error, 'not_member')
+  } finally { store.close() }
+})

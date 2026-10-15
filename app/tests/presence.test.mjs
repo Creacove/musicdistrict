@@ -205,6 +205,49 @@ test('friend messages notify only the two permitted sessions without broadcastin
   } finally { a.terminate(); b.terminate(); c.terminate(); hub.close(); server.close(); store.close() }
 })
 
+test('party chat messages stream only to accepted current members', async () => {
+  const store = createGuestStore(':memory:')
+  const leader = store.create(), member = store.create(), outsider = store.create()
+  const friendship = store.requestFriend(leader.id, member.id)
+  store.acceptFriendRequest(friendship.requestId, member.id)
+  const party = store.createParty(leader.id)
+  const invitation = store.inviteToParty(party.partyId, leader.id, member.id)
+  store.acceptPartyInvitation(invitation.invitationId, member.id)
+  const server = createServer((req, res) => guestApi(store)(req, res, () => { res.statusCode = 404; res.end() }))
+  const hub = attachPresence(server, { store })
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  const port = server.address().port
+  const base = `http://127.0.0.1:${port}`
+  const a = new WebSocket(`ws://127.0.0.1:${port}/presence?token=${leader.token}`)
+  let b, c
+  try {
+    assert.equal((await nextMessageWithin(a, 'leader welcome')).id, leader.id)
+    const leaderSeesMember = nextMessageWithin(a, 'member join')
+    b = new WebSocket(`ws://127.0.0.1:${port}/presence?token=${member.token}`)
+    assert.equal((await nextMessageWithin(b, 'member welcome')).id, member.id)
+    assert.equal((await leaderSeesMember).type, 'join')
+    const memberSeesOutsider = nextMessageWithin(b, 'outsider join')
+    const leaderSeesOutsider = nextMessageWithin(a, 'outsider join')
+    c = new WebSocket(`ws://127.0.0.1:${port}/presence?token=${outsider.token}`)
+    assert.equal((await nextMessageWithin(c, 'outsider welcome')).id, outsider.id)
+    assert.equal((await memberSeesOutsider).type, 'join')
+    assert.equal((await leaderSeesOutsider).type, 'join')
+
+    const leaderMessage = nextMessageWithin(a, 'leader party message')
+    const memberMessage = nextMessageWithin(b, 'member party message')
+    const outsiderReceivesNothing = receivesNoMessage(c, 250)
+    const response = await fetch(`${base}/api/parties/${party.partyId}/messages`, {
+      method: 'POST', headers: { Authorization: `Bearer ${leader.token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: 'Meet at the studio' }),
+    })
+    assert.equal(response.status, 201)
+    const saved = (await response.json()).message
+    assert.deepEqual((await leaderMessage).message, saved)
+    assert.deepEqual((await memberMessage).message, saved)
+    assert.equal(await outsiderReceivesNothing, true)
+  } finally { a.terminate(); b?.terminate(); c?.terminate(); hub.close(); server.close(); store.close() }
+})
+
 test('exponential backoff doubles delay up to 30 s cap', () => {
   // Pure logic test — no WebSocket needed
   let backoffMs = 1500

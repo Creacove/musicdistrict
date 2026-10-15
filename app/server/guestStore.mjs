@@ -11,6 +11,9 @@ const REPORT_LIMIT_PER_WINDOW = 5
 const DIRECT_MESSAGE_WINDOW_MS = 60 * 1000
 const DIRECT_MESSAGE_LIMIT_PER_WINDOW = 20
 const DIRECT_MESSAGE_MAX_LENGTH = 500
+const PARTY_MESSAGE_WINDOW_MS = 60 * 1000
+const PARTY_MESSAGE_LIMIT_PER_WINDOW = 20
+const PARTY_MESSAGE_MAX_LENGTH = 280
 const PARTY_MAX_MEMBERS = 4
 const PARTY_INVITATION_TTL_MS = 10 * 60 * 1000
 const PARTY_IDLE_TTL_MS = 30 * 60 * 1000
@@ -86,6 +89,7 @@ export function createGuestStore(path) {
       joined_at TEXT NOT NULL,
       left_at TEXT,
       state TEXT NOT NULL CHECK (state IN ('active', 'left')),
+      joined_message_seq INTEGER NOT NULL DEFAULT 0,
       PRIMARY KEY (party_id, guest_id)
     );
     CREATE UNIQUE INDEX IF NOT EXISTS party_one_active_membership
@@ -105,7 +109,19 @@ export function createGuestStore(path) {
     CREATE UNIQUE INDEX IF NOT EXISTS party_invitation_one_pending_target
       ON party_invitations (party_id, recipient_guest_id) WHERE status = 'pending';
     CREATE INDEX IF NOT EXISTS party_invitation_pending_expiry
-      ON party_invitations (recipient_guest_id, status, expires_at);`)
+      ON party_invitations (recipient_guest_id, status, expires_at);
+    CREATE TABLE IF NOT EXISTS party_messages (
+      seq INTEGER PRIMARY KEY AUTOINCREMENT,
+      id TEXT NOT NULL UNIQUE,
+      party_id TEXT NOT NULL REFERENCES parties(id),
+      sender_guest_id TEXT NOT NULL REFERENCES guests(id),
+      text TEXT NOT NULL CHECK (length(text) BETWEEN 1 AND 280),
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS party_messages_order ON party_messages (party_id, seq);
+    CREATE INDEX IF NOT EXISTS party_messages_sender_recent ON party_messages (sender_guest_id, created_at);`)
+  const partyMemberColumns = db.prepare('PRAGMA table_info(party_members)').all().map(column => column.name)
+  if (!partyMemberColumns.includes('joined_message_seq')) db.exec('ALTER TABLE party_members ADD COLUMN joined_message_seq INTEGER NOT NULL DEFAULT 0')
   const find = db.prepare('SELECT id FROM guests WHERE token_hash = ?')
   const create = db.prepare('INSERT INTO guests (id, token_hash, created_at) VALUES (?, ?, ?)')
   const save = db.prepare('INSERT OR IGNORE INTO saved_items (guest_id, item_id, saved_at) VALUES (?, ?, ?)')
@@ -155,6 +171,7 @@ export function createGuestStore(path) {
     ORDER BY created_at DESC, id DESC LIMIT ?`)
   const messageEventListeners = new Set()
   const partyEventListeners = new Set()
+  const partyMessageEventListeners = new Set()
   const partyConnectionCounts = new Map()
   const restartTime = new Date().toISOString()
   db.prepare("UPDATE parties SET all_offline_since = COALESCE(all_offline_since, ?) WHERE state = 'active'").run(restartTime)
@@ -162,6 +179,8 @@ export function createGuestStore(path) {
   const activePartyForMember = db.prepare(`SELECT p.id, p.leader_guest_id, p.created_at, p.state, p.all_offline_since
     FROM party_members m JOIN parties p ON p.id = m.party_id
     WHERE m.guest_id = ? AND m.state = 'active' AND p.state = 'active' LIMIT 1`)
+  const activePartyMembership = db.prepare(`SELECT joined_at, joined_message_seq FROM party_members
+    WHERE party_id = ? AND guest_id = ? AND state = 'active'`)
   const activePartyMembers = db.prepare(`SELECT guest_id, joined_at FROM party_members
     WHERE party_id = ? AND state = 'active' ORDER BY joined_at, guest_id`)
   const partyIncomingInvitations = db.prepare(`SELECT i.id, i.party_id, i.sender_guest_id, i.created_at, i.expires_at, p.leader_guest_id
@@ -178,8 +197,9 @@ export function createGuestStore(path) {
     (SELECT count(*) FROM party_invitations WHERE party_id = ? AND status = 'pending' AND expires_at > ?) AS count`)
   const activeFriendMembership = db.prepare('SELECT 1 AS found FROM friend_edges WHERE guest_low_id = ? AND guest_high_id = ?')
   const insertParty = db.prepare("INSERT INTO parties (id, leader_guest_id, created_at, state, all_offline_since) VALUES (?, ?, ?, 'active', ?)")
-  const insertPartyMember = db.prepare(`INSERT INTO party_members (party_id, guest_id, joined_at, state) VALUES (?, ?, ?, 'active')
-    ON CONFLICT (party_id, guest_id) DO UPDATE SET joined_at = excluded.joined_at, state = 'active', left_at = NULL`)
+  const insertPartyMember = db.prepare(`INSERT INTO party_members (party_id, guest_id, joined_at, state, joined_message_seq)
+    VALUES (?, ?, ?, 'active', COALESCE((SELECT MAX(seq) FROM party_messages WHERE party_id = ?), 0))
+    ON CONFLICT (party_id, guest_id) DO UPDATE SET joined_at = excluded.joined_at, state = 'active', left_at = NULL, joined_message_seq = excluded.joined_message_seq`)
   const insertPartyInvitation = db.prepare("INSERT INTO party_invitations (id, party_id, sender_guest_id, recipient_guest_id, created_at, expires_at, status) VALUES (?, ?, ?, ?, ?, ?, 'pending')")
   const setPartyLeader = db.prepare("UPDATE parties SET leader_guest_id = ?, all_offline_since = ? WHERE id = ? AND state = 'active'")
   const leavePartyMember = db.prepare("UPDATE party_members SET state = 'left', left_at = ? WHERE party_id = ? AND guest_id = ? AND state = 'active'")
@@ -193,7 +213,9 @@ export function createGuestStore(path) {
   const areBlocked = (a, b) => isBlocked.get(a, b) !== undefined || isBlocked.get(b, a) !== undefined
   const allowFriendMessages = id => friendMessagePreference.get(id)?.allow_friend_messages !== 0
   const directMessageDto = row => ({ id: row.id, senderGuestId: row.sender_guest_id, recipientGuestId: row.recipient_guest_id, text: row.text, sentAt: row.created_at })
+  const partyMessageDto = row => ({ id: row.id, senderGuestId: row.sender_guest_id, text: row.text, sentAt: row.created_at })
   const notifyPartyEvent = event => { for (const listener of partyEventListeners) { try { listener(event) } catch { /* notification failures do not undo party state */ } } }
+  const notifyPartyMessageEvent = event => { for (const listener of partyMessageEventListeners) { try { listener(event) } catch { /* delivery failures do not undo a stored message */ } } }
   const partyMemberIds = partyId => activePartyMembers.all(partyId).map(row => row.guest_id)
   const updatePartyOfflineState = (partyId, now) => {
     const members = partyMemberIds(partyId)
@@ -208,6 +230,7 @@ export function createGuestStore(path) {
     if (!changed) return false
     db.prepare("UPDATE party_members SET state = 'left', left_at = ? WHERE party_id = ? AND state = 'active'").run(nowIso, partyId)
     cancelPartyInvitations.run(partyId)
+    db.prepare('DELETE FROM party_messages WHERE party_id = ?').run(partyId)
     notifyPartyEvent({ kind, partyId, memberIds, actorId: null })
     return true
   }
@@ -240,6 +263,7 @@ export function createGuestStore(path) {
     if (!remaining.length) {
       closePartyRow.run(nowIso, partyId)
       cancelPartyInvitations.run(partyId)
+      db.prepare('DELETE FROM party_messages WHERE party_id = ?').run(partyId)
       notifyPartyEvent({ kind: 'closed', partyId, memberIds: members, actorId: guestId })
       return { state: 'closed', newLeaderId: null }
     }
@@ -261,6 +285,21 @@ export function createGuestStore(path) {
         .filter(invite => !areBlocked(guestId, invite.sender_guest_id))
         .map(invite => ({ invitationId: invite.id, partyId: invite.party_id, senderId: invite.sender_guest_id, leaderId: invite.leader_guest_id, createdAt: invite.created_at, expiresAt: invite.expires_at })),
     }
+  }
+  const partyMessages = (viewerId, partyId, now, limit = 100) => {
+    expireParties(now)
+    const party = partyById.get(partyId)
+    if (!party || party.state !== 'active') return { error: 'party' }
+    const membership = activePartyMembership.get(partyId, viewerId)
+    if (!membership) return { error: 'not_member' }
+    const rows = db.prepare(`SELECT id, sender_guest_id, text, created_at FROM party_messages
+      WHERE party_id = ? AND seq > ?
+        AND NOT EXISTS (SELECT 1 FROM blocked_guests b WHERE
+          (b.blocker_guest_id = ? AND b.blocked_guest_id = party_messages.sender_guest_id) OR
+          (b.blocker_guest_id = party_messages.sender_guest_id AND b.blocked_guest_id = ?))
+      ORDER BY seq DESC LIMIT ?`)
+      .all(partyId, membership.joined_message_seq, viewerId, viewerId, Math.max(1, Math.min(100, limit)))
+    return { messages: rows.reverse().map(partyMessageDto) }
   }
   const friendState = (id, now) => {
     const nowIso = new Date(now).toISOString()
@@ -309,6 +348,7 @@ export function createGuestStore(path) {
     onFriendEvent(listener) { friendEventListeners.add(listener); return () => friendEventListeners.delete(listener) },
     onMessageEvent(listener) { messageEventListeners.add(listener); return () => messageEventListeners.delete(listener) },
     onPartyEvent(listener) { partyEventListeners.add(listener); return () => partyEventListeners.delete(listener) },
+    onPartyMessageEvent(listener) { partyMessageEventListeners.add(listener); return () => partyMessageEventListeners.delete(listener) },
     partySessionConnected(guestId, now = Date.now()) {
       // A reconnect past the idle deadline must not clear the evidence used to expire the party.
       expireParties(now)
@@ -324,6 +364,26 @@ export function createGuestStore(path) {
       if (party) updatePartyOfflineState(party.id, now)
     },
     partyState(guestId, now = Date.now()) { return partyState(guestId, now) },
+    partyMessages(guestId, partyId, now = Date.now(), limit = 100) { return partyMessages(guestId, partyId, now, limit) },
+    sendPartyMessage(partyId, senderId, text, now = Date.now()) {
+      expireParties(now)
+      const party = partyById.get(partyId)
+      if (!party || party.state !== 'active') return { error: 'party' }
+      const memberIds = partyMemberIds(partyId)
+      if (!memberIds.includes(senderId)) return { error: 'not_member' }
+      if (memberIds.some(memberId => memberId !== senderId && areBlocked(senderId, memberId))) return { error: 'blocked' }
+      if (typeof text !== 'string' || !text.trim() || text.trim().length > PARTY_MESSAGE_MAX_LENGTH) return { error: 'invalid' }
+      const createdAt = new Date(now).toISOString()
+      const cutoff = new Date(now - PARTY_MESSAGE_WINDOW_MS).toISOString()
+      const recentCount = db.prepare('SELECT count(*) AS count FROM party_messages WHERE sender_guest_id = ? AND created_at >= ?').get(senderId, cutoff).count
+      if (recentCount >= PARTY_MESSAGE_LIMIT_PER_WINDOW) return { error: 'rate_limited' }
+      const row = { id: randomUUID(), sender_guest_id: senderId, text: text.trim(), created_at: createdAt }
+      db.prepare('INSERT INTO party_messages (id, party_id, sender_guest_id, text, created_at) VALUES (?, ?, ?, ?, ?)')
+        .run(row.id, partyId, senderId, row.text, createdAt)
+      const message = partyMessageDto(row)
+      notifyPartyMessageEvent({ partyId, memberIds, message })
+      return { status: 'sent', message }
+    },
     createParty(leaderId, now = Date.now()) {
       expireParties(now)
       if (!hasGuest.get(leaderId)) return { error: 'guest' }
@@ -331,7 +391,7 @@ export function createGuestStore(path) {
       const partyId = randomUUID()
       const nowIso = new Date(now).toISOString()
       insertParty.run(partyId, leaderId, nowIso, partyConnectionCounts.get(leaderId) ? null : nowIso)
-      insertPartyMember.run(partyId, leaderId, nowIso)
+      insertPartyMember.run(partyId, leaderId, nowIso, partyId)
       notifyPartyEvent({ kind: 'created', partyId, actorId: leaderId, memberIds: [leaderId] })
       return { partyId, status: 'active', leaderId }
     },
@@ -386,7 +446,7 @@ export function createGuestStore(path) {
       if (!activeFriendMembership.get(low, high)) return { error: 'not_friends' }
       if (members.length >= PARTY_MAX_MEMBERS) return { error: 'full' }
       const nowIso = new Date(now).toISOString()
-      insertPartyMember.run(invitation.party_id, recipientId, nowIso)
+      insertPartyMember.run(invitation.party_id, recipientId, nowIso, invitation.party_id)
       updatePartyInvitation.run('accepted', invitationId)
       db.prepare("UPDATE parties SET all_offline_since = NULL WHERE id = ? AND state = 'active'").run(invitation.party_id)
       const memberIds = [...members, recipientId]
@@ -691,6 +751,23 @@ export function guestApi(store) {
     }
 
     if (pathname === '/api/parties/me' && req.method === 'GET') return reply(200, store.partyState(id))
+    const partyMessagesPath = pathname.match(/^\/api\/parties\/([0-9a-f-]{36})\/messages$/i)
+    if (partyMessagesPath && req.method === 'GET') {
+      const result = store.partyMessages(id, partyMessagesPath[1])
+      if (result.error === 'party') return reply(404, { error: 'Party chat is no longer available' })
+      if (result.error) return reply(403, { error: 'Party chat is only for current members' })
+      return reply(200, result)
+    }
+    if (partyMessagesPath && req.method === 'POST') {
+      const parsed = await readJsonBody(req)
+      if (parsed.error) return reply(parsed.error === 'too_large' ? 413 : 400, { error: 'Invalid party message' })
+      const result = store.sendPartyMessage(partyMessagesPath[1], id, parsed.value?.text)
+      if (result.error === 'party') return reply(404, { error: 'Party chat is no longer available' })
+      if (result.error === 'not_member' || result.error === 'blocked') return reply(403, { error: 'Party chat is only for current members' })
+      if (result.error === 'rate_limited') return reply(429, { error: 'Please slow down before sending another party message' })
+      if (result.error) return reply(400, { error: 'Message must be 1 to 280 characters' })
+      return reply(201, { message: result.message })
+    }
     if (pathname === '/api/parties' && req.method === 'POST') {
       const result = store.createParty(id)
       if (result.error === 'already_in_party') return reply(409, { error: 'Already in a party' })

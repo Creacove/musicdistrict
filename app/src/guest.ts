@@ -10,6 +10,7 @@ export type GuestFriendState = {
 }
 export type FriendRequestReceipt = { requestId: string; status: 'pending'; expiresAt: string; duplicate: boolean }
 export type GuestDirectMessage = { id: string; senderGuestId: string; recipientGuestId: string; text: string; sentAt: string }
+export type GuestPartyMessage = { id: string; senderGuestId: string; text: string; sentAt: string }
 export type GuestParty = {
   partyId: string
   leaderId: string
@@ -162,6 +163,25 @@ export async function fetchGuestParty(): Promise<GuestPartyState> {
   const response = await guestRequest('/api/parties/me')
   if (!response.ok) throw new Error('Party state unavailable')
   return response.json() as Promise<GuestPartyState>
+}
+
+export async function fetchGuestPartyMessages(partyId: string): Promise<GuestPartyMessage[]> {
+  const response = await guestRequest(`/api/parties/${encodeURIComponent(partyId)}/messages`)
+  if (!response.ok) throw new Error('Party chat is only available to current members')
+  const data = await response.json() as { messages?: GuestPartyMessage[] }
+  return Array.isArray(data.messages) ? data.messages : []
+}
+
+export async function sendGuestPartyMessage(partyId: string, text: string): Promise<GuestPartyMessage> {
+  const response = await guestRequest(`/api/parties/${encodeURIComponent(partyId)}/messages`, { method: 'POST', body: JSON.stringify({ text }) })
+  if (!response.ok) {
+    if (response.status === 429) throw new Error('Please wait a moment before sending another message')
+    if (response.status === 403) throw new Error('Party chat is only available to current members')
+    if (response.status === 400) throw new Error('Keep party messages between 1 and 280 characters')
+    throw new Error('Could not send this party message')
+  }
+  const data = await response.json() as { message: GuestPartyMessage }
+  return data.message
 }
 
 export async function createGuestParty(): Promise<{ partyId: string }> {

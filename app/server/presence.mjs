@@ -86,7 +86,14 @@ export function attachPresence(httpServer, { store } = {}) {
       })
     }
   })
-  const stopListeners = () => { closing = true; stopBlockListener?.(); stopFriendEventListener?.(); stopMessageListener?.(); stopPartyListener?.() }
+  const stopPartyMessageListener = store?.onPartyMessageEvent?.(event => {
+    for (const [socket, player] of players) {
+      if (!event.memberIds?.includes(player.id)) continue
+      if (isBlockedBetween(event.message.senderGuestId, player.id)) continue
+      send(socket, { type: 'party-message', partyId: event.partyId, message: event.message })
+    }
+  })
+  const stopListeners = () => { closing = true; stopBlockListener?.(); stopFriendEventListener?.(); stopMessageListener?.(); stopPartyListener?.(); stopPartyMessageListener?.() }
   wss.on('close', stopListeners)
   const closeWebSocketServer = wss.close.bind(wss)
   wss.close = callback => { stopListeners(); return closeWebSocketServer(callback) }

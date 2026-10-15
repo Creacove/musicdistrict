@@ -8,11 +8,11 @@ import { loadLocalMaster, saveLocalMaster } from './localMaster.ts'
 import { blankReleaseDraft, releaseBlockers, validReleaseDraft, canPreflight, RELEASE_GENRES, type ReleaseDraft, type ArtworkVariant, type ReleaseGenre } from './releaseDraft.ts'
 import { createReleaseSleeveSvg } from './releaseArtwork.ts'
 import { rehearsalMetrics } from './eventPreview.ts'
-import { connectPresence, type EmoteType, type FriendUpdateKind, type PartyUpdateKind, type PresencePlayer } from './presence.ts'
+import { connectPresence, type EmoteType, type FriendUpdateKind, type PartyUpdateKind, type PresencePartyMessage, type PresencePlayer } from './presence.ts'
 import { peopleInLocation } from './people.ts'
 import { emotePose, walkingPose } from './avatarMotion.ts'
 import { disposeSpriteResources } from './avatarLifecycle.ts'
-import { acceptGuestFriendRequest, acceptGuestPartyInvitation, blockGuest, cancelGuestFriendRequest, createGuestParty, declineGuestFriendRequest, declineGuestPartyInvitation, fetchCatalogue, fetchGuestBlocks, fetchGuestFriends, fetchGuestMessages, fetchGuestParty, inviteGuestToParty, leaveGuestParty, openGuest, removeGuestSave, requestGuestFriend, saveGuestPreview, sendGuestMessage, setGuestMessagePreference, submitGuestReport, unfriendGuest, unblockGuest, type CatalogueTrack, type GuestDirectMessage, type GuestFriendState, type GuestPartyState, type GuestReportReason } from './guest.ts'
+import { acceptGuestFriendRequest, acceptGuestPartyInvitation, blockGuest, cancelGuestFriendRequest, createGuestParty, declineGuestFriendRequest, declineGuestPartyInvitation, fetchCatalogue, fetchGuestBlocks, fetchGuestFriends, fetchGuestMessages, fetchGuestParty, fetchGuestPartyMessages, inviteGuestToParty, leaveGuestParty, openGuest, removeGuestSave, requestGuestFriend, saveGuestPreview, sendGuestMessage, sendGuestPartyMessage, setGuestMessagePreference, submitGuestReport, unfriendGuest, unblockGuest, type CatalogueTrack, type GuestDirectMessage, type GuestFriendState, type GuestPartyMessage, type GuestPartyState, type GuestReportReason } from './guest.ts'
 import { LIGHTING_PRESETS, getNextLightingMode, type LightingMode } from './lighting.ts'
 import { parseStageTemplate, serializeStageTemplate, type StageLook } from './stageTemplate.ts'
 import { RELEASE_JOURNEY, nextReleaseStation, previousReleaseStation, releaseStation, type ReleaseStationId } from './releaseJourney.ts'
@@ -230,7 +230,8 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
       <div id="party-overview"></div>
       <div id="party-incoming" class="social-list" role="list" aria-label="Party invitations"></div>
       <button id="party-create" class="social-action party-create" data-party-action="create" type="button">Start a party</button>
-      <small class="party-note">Group chat and travel are not available in this preview yet.</small>
+      <div id="party-chat"></div>
+      <small class="party-note">Travel proposals will require each member’s approval. No one can be moved without opting in.</small>
     </section>
     <section id="blocked-section" class="blocked-section" hidden aria-labelledby="blocked-title"><h3 id="blocked-title">Blocked sessions</h3><div id="blocked-list" role="list"></div></section>
     <div class="people-actions"><button id="people-wave" class="green-button" disabled>👋 Wave to everyone here</button><button id="people-edit-avatar" class="people-edit">Customize avatar</button></div>
@@ -635,6 +636,9 @@ const blockedIds = new Set<string>()
 const blockedNames = new Map<string, string>()
 let friendState: GuestFriendState = { friends: [], incoming: [], outgoing: [], allowFriendMessages: true }
 let partyState: GuestPartyState = { party: null, incoming: [] }
+let partyMessages: GuestPartyMessage[] = []
+let partyChatPartyId = ''
+let partyChatMessageKey = ''
 let partyRefreshTimer: number | undefined
 let guestSessionReady = false
 let reportTargetId = ''
@@ -778,7 +782,14 @@ async function refreshFriendState() {
 async function refreshPartyState() {
   if (!guestSessionReady) return
   try {
+    const previousPartyId = partyState.party?.partyId || ''
     partyState = await fetchGuestParty()
+    const partyId = partyState.party?.partyId || ''
+    if (!partyId) partyMessages = []
+    else if (partyId !== previousPartyId || !$<HTMLElement>('people-sheet').hidden) {
+      const messages = await fetchGuestPartyMessages(partyId).catch(() => null)
+      if (messages && partyState.party?.partyId === partyId) partyMessages = messages
+    }
     renderPeople(connectedPlayers, presenceConnected)
   } catch { /* keep the last known party state while the service reconnects */ }
 }
@@ -789,6 +800,12 @@ function handlePartyUpdate(kind: PartyUpdateKind, _partyId: string, otherId?: st
   else if (kind === 'joined' && otherId !== presence.getOwnId()) toast(`${socialDisplayName(otherId || '')} joined the party`)
   else if (kind === 'left' && otherId !== presence.getOwnId()) toast(`${socialDisplayName(otherId || '')} left the party`)
   else if (kind === 'expired') toast('Party closed after everyone disconnected')
+}
+
+function handlePartyMessage(partyId: string, message: PresencePartyMessage) {
+  if (partyState.party?.partyId !== partyId || partyMessages.some(item => item.id === message.id)) return
+  partyMessages = [...partyMessages, message].slice(-100)
+  renderPartyChat()
 }
 
 async function handlePartyAction(action: 'create' | 'invite' | 'accept' | 'decline' | 'leave', id = '') {
@@ -834,6 +851,123 @@ function wirePartyActions(root: HTMLElement) {
   })
 }
 
+function renderPartyChat() {
+  const root = $<HTMLElement>('party-chat')
+  const partyId = partyState.party?.partyId || ''
+  if (!partyId) {
+    if (partyChatPartyId || root.childElementCount) root.replaceChildren()
+    partyChatPartyId = ''
+    partyChatMessageKey = ''
+    return
+  }
+  if (partyChatPartyId !== partyId) {
+    root.replaceChildren()
+    partyChatPartyId = partyId
+    partyChatMessageKey = ''
+    const heading = document.createElement('h4')
+    heading.className = 'party-chat-title'
+    heading.textContent = 'Party chat'
+    const note = document.createElement('small')
+    note.className = 'party-chat-note'
+    note.textContent = 'Current members only; history starts when you join and closes with the party. Reports enter a private queue; no moderation team is connected.'
+    const history = document.createElement('ol')
+    history.id = 'party-chat-history'
+    history.className = 'party-chat-history'
+    history.setAttribute('aria-label', 'Party conversation')
+    history.setAttribute('aria-live', 'polite')
+    const empty = document.createElement('li')
+    empty.className = 'party-chat-empty'
+    empty.textContent = 'Say hello to your party.'
+    history.append(empty)
+    const form = document.createElement('form')
+    form.className = 'party-chat-form'
+    const label = document.createElement('label')
+    label.htmlFor = 'party-chat-input'
+    label.textContent = 'Message your party'
+    const input = document.createElement('textarea')
+    input.id = 'party-chat-input'
+    input.maxLength = 280
+    input.rows = 2
+    input.required = true
+    input.placeholder = 'Meet me at the studio…'
+    const footer = document.createElement('div')
+    footer.className = 'party-chat-footer'
+    const status = document.createElement('small')
+    status.className = 'party-chat-status'
+    status.setAttribute('role', 'status')
+    status.setAttribute('aria-live', 'polite')
+    const count = document.createElement('small')
+    count.textContent = '0 / 280'
+    const send = document.createElement('button')
+    send.type = 'submit'
+    send.className = 'social-action accept'
+    send.textContent = 'Send'
+    input.addEventListener('input', () => { count.textContent = `${input.value.length} / 280` })
+    form.addEventListener('submit', event => {
+      event.preventDefault()
+      const text = input.value.trim()
+      if (!text || !partyState.party || partyState.party.partyId !== partyId) return
+      send.disabled = true
+      status.textContent = 'Sending…'
+      void sendGuestPartyMessage(partyId, text).then(message => {
+        if (partyState.party?.partyId !== partyId) return
+        if (!partyMessages.some(item => item.id === message.id)) partyMessages = [...partyMessages, message].slice(-100)
+        input.value = ''
+        count.textContent = '0 / 280'
+        status.textContent = ''
+        renderPartyChat()
+      }).catch(error => {
+        status.textContent = error instanceof Error ? error.message : 'Could not send this message'
+      }).finally(() => { send.disabled = false })
+    })
+    footer.append(status, count, send)
+    form.append(label, input, footer)
+    root.append(heading, note, history, form)
+  }
+  const key = `${partyMessages.map(message => message.id).join('|')}#${[...blockedIds].sort().join('|')}`
+  if (key === partyChatMessageKey) return
+  partyChatMessageKey = key
+  const history = $<HTMLOListElement>('party-chat-history')
+  history.replaceChildren()
+  if (!partyMessages.length) {
+    const empty = document.createElement('li')
+    empty.className = 'party-chat-empty'
+    empty.textContent = 'Say hello to your party.'
+    history.append(empty)
+    return
+  }
+  for (const message of partyMessages.slice(-100)) {
+    if (blockedIds.has(message.senderGuestId)) continue
+    const item = document.createElement('li')
+    item.className = `party-chat-message${message.senderGuestId === presence.getOwnId() ? ' own' : ''}`
+    const sender = document.createElement('b')
+    sender.textContent = message.senderGuestId === presence.getOwnId() ? 'You' : socialDisplayName(message.senderGuestId)
+    const text = document.createElement('p')
+    text.textContent = message.text
+    const meta = document.createElement('div')
+    meta.className = 'party-chat-meta'
+    const time = document.createElement('time')
+    time.dateTime = message.sentAt
+    time.textContent = new Date(message.sentAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+    meta.append(time)
+    if (message.senderGuestId !== presence.getOwnId()) {
+      const report = document.createElement('button')
+      report.type = 'button'
+      report.className = 'party-chat-report'
+      report.textContent = 'Report'
+      report.setAttribute('aria-label', `Report message from ${socialDisplayName(message.senderGuestId)}`)
+      report.onclick = () => {
+        openReportDialog(message.senderGuestId, socialDisplayName(message.senderGuestId))
+        $<HTMLTextAreaElement>('report-details').value = `Party chat message: ${message.text}`
+      }
+      meta.append(report)
+    }
+    item.append(sender, text, meta)
+    history.append(item)
+  }
+  history.scrollTop = history.scrollHeight
+}
+
 function renderPartyState() {
   const section = $<HTMLElement>('party-section')
   const overview = $<HTMLElement>('party-overview')
@@ -846,6 +980,7 @@ function renderPartyState() {
   const party = partyState.party
   create.hidden = Boolean(party || partyState.incoming.length)
   const ownId = presence.getOwnId()
+  renderPartyChat()
   if (!party) overview.replaceChildren()
   else {
     const memberRows = party.members.map(member => `<div class="party-member" role="listitem"><span>${member.guestId === ownId ? 'You' : escapeHtml(socialDisplayName(member.guestId))}</span><small>${member.leader ? 'Leader' : 'Member'}</small></div>`).join('')
@@ -1277,7 +1412,7 @@ function renderPeople(players: PresencePlayer[], connected: boolean) {
   renderPartyState()
   wave.disabled = view.availability !== 'online' || view.people.length === 0
 }
-const presence = connectPresence(renderPresence, handleIncomingEmote, handleIncomingChat, handleFriendUpdate, handleDirectMessageNotice, handlePartyUpdate)
+const presence = connectPresence(renderPresence, handleIncomingEmote, handleIncomingChat, handleFriendUpdate, handleDirectMessageNotice, handlePartyUpdate, undefined, handlePartyMessage)
 window.addEventListener('beforeunload', () => presence.close())
 
 const keys = new Set<string>()

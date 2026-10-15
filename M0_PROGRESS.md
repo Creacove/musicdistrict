@@ -434,8 +434,17 @@ Added an integration test that connects 20 real WebSocket test clients to an iso
 - **Verification:** Full suite passes 84/84; all six focused party tests pass, including friend-only invitations, the four-member limit, ten-minute expiry, leadership transfer, dissolution, 30-minute idle expiry/late reconnect, rejoin after a fresh invite, and pending invites across leadership transfer. TypeScript/Vite production build and `git diff --check` succeed. App JS is 138.54 kB (45.17 kB gzip), CSS 44.11 kB (9.87 kB gzip), and Three.js vendor 567.38 kB (140.97 kB gzip); Vite retains its existing nonfatal vendor-chunk warning. Capture: `docs/evidence/m1-party-membership.png`.
 - **Hosting boundary:** Netlify remains a static solo preview; this social loop requires the self-hosted Node/SQLite/WebSocket server.
 
+## M1 temporary party group chat — 15 October 2026
+
+- **Server:** Added authenticated party-only message history and sending. Only accepted current members can read or send; each member's history begins at their latest join and closes when the party dissolves. Text is limited to 280 characters and 20 sends per minute. Blocked messages are hidden, rate limits are server-enforced, and chat events are sent only to current members.
+- **People UI:** Added a mobile party thread with safe `textContent` rendering, live messages, a character count, and report actions that open the existing report flow with the message context. The interface states that the preview has no connected moderation team.
+- **GDD trace:** Fan & Social Chapter 05 §§11.2 and 12. History boundaries, current membership, visible join/leave changes and block precedence follow the temporary-group requirements. Chat messages are removed when a party closes.
+- **Live browser:** Two authenticated local guests at 390 × 844 joined the same party. Sent a message in one client and confirmed live delivery in the other. A markup-shaped message appeared literally with zero `<img>` elements. Opened Report and verified it targets the sender and includes the message context. Capture: `docs/evidence/m1-party-chat-scrolled.png`.
+- **Verification:** Full suite passes 88/88; focused party/presence suite passes 21/21. TypeScript/Vite production build and `git diff --check` succeed. Main app JS is 142.90 kB (46.31 kB gzip), CSS 45.97 kB (10.18 kB gzip), and Three.js vendor 567.38 kB (140.97 kB gzip); the existing vendor-chunk warning remains nonfatal.
+- **Hosting boundary:** Netlify remains a static solo preview. Party chat and live updates require the self-hosted Node/SQLite/WebSocket server and are not available at the phone-testing URL.
+
 ## Current next slices — updated 15 October 2026
 
-1. Implement Chapter 05 §12 party group chat and consent-based destination proposals. Each member must opt in before travel; check destination availability and event capacity on the server; never force-teleport a member or clone sold-out inventory.
+1. Implement Chapter 05 §12 consent-based destination proposals. Each current member must explicitly approve; check destination availability and event capacity on the server; never force-teleport a member or clone sold-out inventory. Preserve physical travel and accessible routes.
 2. Continue M1 physical-device and performance validation; the embedded Chromium mobile viewport is not a physical Android/iPhone test.
 3. Keep public chat and reports gated until age policy, moderation staffing, emergency escalation, and appeals have real owners.
