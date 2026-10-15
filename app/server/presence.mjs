@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { WebSocketServer, WebSocket } from 'ws'
+import { createRuntimeRoomDirectory } from './roomInstances.mjs'
 
 const QUICK_CHAT_PHRASES = Object.freeze([
   'Yo! 👋',
@@ -32,6 +33,8 @@ const DOORWAYS = {
 export function attachPresence(httpServer, { store } = {}) {
   const wss = new WebSocketServer({ server: httpServer, path: '/presence', maxPayload: 256 })
   const players = new Map()
+  const roomDirectory = createRuntimeRoomDirectory()
+  wss.roomDirectory = roomDirectory
   let closing = false
   const send = (socket, message) => { if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message)) }
   const isBlockedBetween = (a, b) => {
@@ -41,9 +44,21 @@ export function attachPresence(httpServer, { store } = {}) {
   const broadcast = (message, except, source) => {
     for (const [socket, recipient] of players) {
       if (socket === except) continue
+      if (source && recipient.instanceId !== source.instanceId) continue
       if (source && isBlockedBetween(source.id, recipient.id)) continue
       send(socket, message)
     }
+  }
+  const preferredPartyInstances = (guestId, location) => {
+    if (!store || typeof guestId !== 'string') return []
+    try {
+      const memberIds = new Set(store.partyState(guestId)?.party?.members?.map(member => member.guestId) || [])
+      if (!memberIds.size) return []
+      return [...new Set([...players.values()]
+        .filter(other => memberIds.has(other.id) && other.location === location)
+        .map(other => other.instanceId)
+        .filter(Boolean))]
+    } catch { return [] }
   }
   const stopBlockListener = store?.onBlock?.(({ blockerId, blockedId }) => {
     for (const [socket, player] of players) {
@@ -110,10 +125,13 @@ export function attachPresence(httpServer, { store } = {}) {
     } catch { /* ignore URL parse error */ }
 
     const player = { id, name: 'Guest', x: -4, z: 7, angle: 0, dancing: false, emote: null, location: 'square', chatOptIn: false, authenticated }
+    const initialRoom = roomDirectory.join(socket, 'square', preferredPartyInstances(id, 'square'))
+    Object.assign(player, { spaceId: initialRoom.spaceId, instanceId: initialRoom.instanceId })
     let partyTracked = false
     send(socket, {
-      type: 'welcome', id, authenticated,
-      players: [...players.values()].filter(other => !isBlockedBetween(id, other.id)),
+      type: 'welcome', id, authenticated, spaceId: player.spaceId,
+      instanceId: player.instanceId, capacity: initialRoom.capacity,
+      players: [...players.values()].filter(other => other.instanceId === player.instanceId && !isBlockedBetween(id, other.id)),
     })
     players.set(socket, player)
     if (authenticated) { store?.partySessionConnected?.(id); partyTracked = true }
@@ -154,7 +172,7 @@ export function attachPresence(httpServer, { store } = {}) {
         if (!player.chatOptIn || !trimmed || trimmed.length > 40) return
         const chat = { type: 'chat', id, name: player.name || 'Guest', text: trimmed }
         for (const [recipientSocket, recipient] of players) {
-          if (isPublicZoneChatRecipient(player, recipient, store)) send(recipientSocket, chat)
+          if (recipient.instanceId === player.instanceId && isPublicZoneChatRecipient(player, recipient, store)) send(recipientSocket, chat)
         }
         return
       }
@@ -163,7 +181,7 @@ export function attachPresence(httpServer, { store } = {}) {
         if (typeof emote !== 'string' || !['cheer', 'wave', 'heart', 'fire'].includes(emote)) return
         player.emote = emote
         for (const [recipientSocket, recipient] of players) {
-          if (recipient.location === player.location && !isBlockedBetween(player.id, recipient.id)) send(recipientSocket, { type: 'emote', id, emote })
+          if (recipient.instanceId === player.instanceId && !isBlockedBetween(player.id, recipient.id)) send(recipientSocket, { type: 'emote', id, emote })
         }
         return
       }
@@ -190,12 +208,24 @@ export function attachPresence(httpServer, { store } = {}) {
       }
 
       const sanitizedName = typeof name === 'string' && name.trim() ? name.trim().slice(0, 16) : player.name
+      if (location !== player.location) {
+        const previousRoom = { ...player }
+        const nextRoom = roomDirectory.move(socket, location, preferredPartyInstances(player.id, location))
+        if (nextRoom.error) return
+        Object.assign(player, { x, z, angle, dancing, location, name: sanitizedName, spaceId: nextRoom.room.spaceId, instanceId: nextRoom.room.instanceId })
+        lastMove = now
+        broadcast({ type: 'leave', id }, socket, previousRoom)
+        broadcast({ type: 'join', player }, socket, player)
+        send(socket, { type: 'instance', spaceId: player.spaceId, instanceId: player.instanceId })
+        return
+      }
       Object.assign(player, { x, z, angle, dancing, location, name: sanitizedName })
       lastMove = now
       broadcast({ type: 'move', player }, socket, player)
     })
     socket.on('close', () => {
       players.delete(socket)
+      roomDirectory.leave(socket)
       if (partyTracked && !closing) store?.partySessionDisconnected?.(id)
       broadcast({ type: 'leave', id }, undefined, player)
     })

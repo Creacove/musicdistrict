@@ -487,8 +487,16 @@ Added an integration test that connects 20 real WebSocket test clients to an iso
 - **Verification:** Full suite passes 99/99; focused avatar motion tests pass 9/9. Netlify-mode production build succeeds. Production deploy `6ad0af4a20f6a5e5cee7c5a1` serves `index-DtTz3ju2.js` at [musicdistrict.netlify.app](https://musicdistrict.netlify.app/). The 390 × 844 browser shows the latest build with zero console errors. Screenshot: `docs/evidence/m1-avatar-idle-live.png`.
 - **Device caveat:** Idle timing and physical-device battery/thermal behavior still need Android/iPhone testing.
 
+## M1 public room runtime instances — 15 October 2026
+
+- **Public room routing:** Added a self-hosted runtime directory for Music Square, City Studio, Release House, and Palm Room's public preview. It groups actual connected human sessions up to the tested 20-client cap, opens another technical instance at capacity, prefers a compatible instance containing current party members, and removes empty overflow shards.
+- **Isolation and travel:** Presence snapshots, movement, quick chat, and emotes are scoped to one runtime instance. Players change instances only after the existing server-validated physical doorway transition. NPCs never enter occupancy counts.
+- **Event safety:** Ticketed event/session IDs are not accepted by this public room resolver. The global event ticket roster and admission cap remain outside this prototype until the documented EventService exists.
+- **Verification:** Full suite passes 104/104 when test files are serialized; the parallel run overloaded an existing timed WebSocket notice test. The focused presence suite passes 13/13. Netlify-mode TypeScript/Vite production build passes. WebSocket integration opened 21 clients, confirmed the first 20 share one instance, the 21st is isolated, and movement does not cross instances.
+- **Hosting boundary:** The stable Netlify phone preview remains solo/static. Runtime instance routing runs only on the self-hosted Node/SQLite/WebSocket server and is not active at that URL.
+
 ## Current next slices — updated 15 October 2026
 
-1. Add a server-backed destination-instance, capacity, and ticket-entitlement resolver before any proposal can claim a room or event slot. Preserve physical travel and accessible routes.
+1. Connect approved party travel to public room capacity with a group-compatible destination result; keep ticketed admission blocked until the authoritative Chapter 06 EventService validates each attendee and global capacity.
 2. Validate FPS, thermals, touch comfort, and network recovery on physical Android/iPhone devices.
 3. Keep public chat and reports gated until age policy, moderation staffing, emergency escalation, and appeals have real owners.

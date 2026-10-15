@@ -408,29 +408,63 @@ test('20 connected test clients get a real room snapshot and shared movement', a
   const hub = attachPresence(server)
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
   const port = server.address().port
-  const peers = Array.from({ length: 20 }, () => new WebSocket(`ws://127.0.0.1:${port}/presence`))
+  const peers = Array.from({ length: 19 }, () => new WebSocket(`ws://127.0.0.1:${port}/presence`))
   let observer
   try {
     const welcomes = await Promise.all(peers.map(nextMessage))
     assert.ok(welcomes.every(message => message.type === 'welcome'))
-    assert.equal(new Set(welcomes.map(message => message.id)).size, 20)
+    assert.equal(new Set(welcomes.map(message => message.id)).size, 19)
 
     observer = new WebSocket(`ws://127.0.0.1:${port}/presence`)
     const room = await nextMessage(observer)
     assert.equal(room.type, 'welcome')
-    assert.equal(room.players.length, 20)
-    assert.equal(new Set(room.players.map(player => player.id)).size, 20)
+    assert.equal(room.players.length, 19)
+    assert.equal(new Set(room.players.map(player => player.id)).size, 19)
 
     await new Promise(resolve => setTimeout(resolve, 100))
     const broadcasts = Promise.all([nextMessage(observer), ...peers.slice(1).map(nextMessage)])
     peers[0].send(JSON.stringify({ type: 'move', x: 1, z: 1, angle: 0, dancing: false, location: 'square' }))
     const movement = await broadcasts
-    assert.equal(movement.length, 20)
+    assert.equal(movement.length, 19)
     assert.ok(movement.every(message => message.type === 'move'))
     assert.ok(movement.every(message => message.player.id === welcomes[0].id))
     assert.ok(movement.every(message => message.player.x === 1 && message.player.z === 1))
   } finally {
     observer?.terminate()
+    peers.forEach(peer => peer.terminate())
+    hub.close()
+    server.close()
+  }
+})
+
+test('a 21st public-room client gets a new runtime instance and isolated movement', async () => {
+  const server = createServer()
+  const hub = attachPresence(server)
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  const port = server.address().port
+  const peers = Array.from({ length: 20 }, () => new WebSocket(`ws://127.0.0.1:${port}/presence`))
+  let overflow
+  try {
+    const welcomes = await Promise.all(peers.map(nextMessage))
+    assert.ok(welcomes.every(message => message.type === 'welcome'))
+    assert.equal(new Set(welcomes.map(message => message.instanceId)).size, 1)
+    assert.ok(welcomes.every(message => message.capacity === 20))
+
+    overflow = new WebSocket(`ws://127.0.0.1:${port}/presence`)
+    const overflowWelcome = await nextMessage(overflow)
+    assert.equal(overflowWelcome.type, 'welcome')
+    assert.notEqual(overflowWelcome.instanceId, welcomes[0].instanceId)
+    assert.deepEqual(overflowWelcome.players, [])
+
+    const sharedMovement = Promise.all(peers.slice(1).map(nextMessage))
+    const isolated = receivesNoMessage(overflow)
+    peers[0].send(JSON.stringify({ type: 'move', x: 1, z: 1, angle: 0, dancing: false, location: 'square' }))
+    const updates = await sharedMovement
+    assert.ok(updates.every(message => message.type === 'move' && message.player.id === welcomes[0].id))
+    assert.equal(await isolated, true)
+    assert.deepEqual(hub.roomDirectory.list('square').map(room => room.activeHumans).sort((a, b) => b - a), [20, 1])
+  } finally {
+    overflow?.terminate()
     peers.forEach(peer => peer.terminate())
     hub.close()
     server.close()
