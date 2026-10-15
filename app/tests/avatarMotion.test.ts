@@ -1,6 +1,23 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { emotePose, walkingPose } from '../src/avatarMotion.ts'
+import { facingAngleForMovement } from '../src/avatarFacing.ts'
+
+test('avatar model faces its movement direction in every cardinal direction', () => {
+  const forward = facingAngleForMovement(0)
+  const right = facingAngleForMovement(Math.PI / 2)
+  const backward = facingAngleForMovement(Math.PI)
+  const left = facingAngleForMovement(-Math.PI / 2)
+
+  assert.ok(Math.abs(Math.sin(forward)) < 1e-9)
+  assert.ok(Math.cos(forward) < -0.999999)
+  assert.ok(Math.sin(right) > 0.999999)
+  assert.ok(Math.abs(Math.cos(right)) < 1e-9)
+  assert.ok(Math.abs(Math.sin(backward)) < 1e-9)
+  assert.ok(Math.cos(backward) > 0.999999)
+  assert.ok(Math.sin(left) < -0.999999)
+  assert.ok(Math.abs(Math.cos(left)) < 1e-9)
+})
 
 test('walking gait keeps opposite limbs in counter-swing', () => {
   const pose = walkingPose(Math.PI / 2, 0.8)

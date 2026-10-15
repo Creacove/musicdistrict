@@ -84,7 +84,7 @@ let passerbyPlate: THREE.Texture | undefined
 export function createAmbientPedestrian(variant: 0 | 1): THREE.Group {
   const palettes = [
     { top: '#267566', bottom: '#3e4141', accent: '#e7c98c', skin: '#805038', hair: '#211713' },
-    { top: '#d18b43', bottom: '#634a91', accent: '#f2d49a', skin: '#633c2d', hair: '#171411' },
+    { top: '#5277a7', bottom: '#a96447', accent: '#edcf98', skin: '#633c2d', hair: '#171411' },
   ] as const
   const colors = palettes[variant]
   const actor = new THREE.Group()

@@ -470,10 +470,18 @@ Added an integration test that connects 20 real WebSocket test clients to an iso
 - **Ambient life:** Added two distinctly dressed, clearly labeled `NPC · PASSERBY` figures on slow looping routes along the outer plaza. Their paths stay clear of world obstacles and all interaction hotspots. They are nonblocking cosmetic actors with no finance, attendance, presence, or analytics effect. Data Saver hides them.
 - **References:** Chapter 09 §11.1–11.2 and Master GDD §9; the Music Square composition follows V26 while authored characters remain original geometry and clothing.
 - **Verification:** Full suite passes 96/96, including three ambient-actor/motion tests and five navigation tests. Netlify-mode TypeScript/Vite production build passes. Production deploy `6ad0a82366535a0fbc251f8e` serves `index-zBrJ5gEV.js` at the stable phone URL. The 390 × 844 Balanced/Daylight browser view loads the Concierge and square with zero console errors. Screenshot: `docs/evidence/m1-city-ambience-balanced.png`.
-- **Visual follow-up:** The first-person phone framing still hides most ambient figures behind the avatar and plaza dressing. Keep refining their placement and the default camera in the next visual pass; retain the obstacle/hotspot checks and honest NPC labeling.
+- **Visual follow-up:** The initial production frame hid most ambient figures; the follow-up slice below reorients the avatar and stages both walkers on separate, visible sightlines.
+
+## M1 Music Square facing and ambient sightlines — 15 October 2026
+
+- **Avatar facing:** The authored avatar's face points along local +Z while forward movement advances toward -Z. Default square and room spawns now face toward the stage, and movement headings keep the avatar facing its travel direction. Idle and dance poses preserve that base orientation.
+- **Plaza staging:** The two labeled `NPC · PASSERBY` loops now occupy separate left and right sightlines around spawn. The second passerby has a distinct blue and terracotta outfit. Both remain outside obstacles and interaction hotspots and stay cosmetic-only.
+- **References:** Chapter 09 §5.2 and §11.2; V26 is the visual reference for the player facing into Music Square with other figures visible. The references are not shipped as runtime assets.
+- **Verification:** Full test suite passes 98/98; the final route adjustment passes the four focused ambient-motion tests. Netlify-mode TypeScript/Vite production build passes. The 390 × 844 built preview shows the avatar from behind with both labeled passersby visible and zero browser console errors. Screenshot: `docs/evidence/m1-avatar-heading-staging-preview.png`.
+- **Device caveat:** This is desktop Chromium at a mobile viewport. Physical Android/iPhone FPS, thermal behavior, touch comfort, and network recovery remain untested.
 
 ## Current next slices — updated 15 October 2026
 
-1. Tune the default mobile camera and starter-plaza staging so ambient roles read at first glance; then validate FPS, heat, and network recovery on physical Android/iPhone devices.
-2. Add a server-backed destination-instance, capacity, and ticket-entitlement resolver before any proposal can claim a room or event slot. Preserve physical travel and accessible routes.
+1. Add a server-backed destination-instance, capacity, and ticket-entitlement resolver before any proposal can claim a room or event slot. Preserve physical travel and accessible routes.
+2. Validate FPS, thermals, touch comfort, and network recovery on physical Android/iPhone devices.
 3. Keep public chat and reports gated until age policy, moderation staffing, emergency escalation, and appeals have real owners.

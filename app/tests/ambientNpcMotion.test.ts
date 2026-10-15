@@ -14,6 +14,11 @@ test('Music Square ambient pedestrians stay on clear paths outside interaction h
   }
 })
 
+test('Music Square pedestrians are staged on separate sightlines', () => {
+  const [first, second] = MUSIC_SQUARE_AMBIENT_WALKERS
+  assert.ok(Math.abs(first.centerX - second.centerX) >= 5)
+})
+
 test('ambient pedestrians are labeled scenery with no human, economic, or analytics effect', () => {
   assert.equal(AMBIENT_ACTOR_TRUTH.actorType, 'NPC')
   assert.equal(AMBIENT_ACTOR_TRUTH.countsAsHuman, false)
