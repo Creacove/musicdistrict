@@ -12,7 +12,7 @@ import { connectPresence, type EmoteType, type FriendUpdateKind, type PartyUpdat
 import { peopleInLocation } from './people.ts'
 import { emotePose, walkingPose } from './avatarMotion.ts'
 import { disposeSpriteResources } from './avatarLifecycle.ts'
-import { acceptGuestFriendRequest, acceptGuestPartyInvitation, blockGuest, cancelGuestFriendRequest, createGuestParty, declineGuestFriendRequest, declineGuestPartyInvitation, fetchCatalogue, fetchGuestBlocks, fetchGuestFriends, fetchGuestMessages, fetchGuestParty, fetchGuestPartyMessages, inviteGuestToParty, leaveGuestParty, openGuest, removeGuestSave, requestGuestFriend, saveGuestPreview, sendGuestMessage, sendGuestPartyMessage, setGuestMessagePreference, submitGuestReport, unfriendGuest, unblockGuest, type CatalogueTrack, type GuestDirectMessage, type GuestFriendState, type GuestPartyMessage, type GuestPartyState, type GuestReportReason } from './guest.ts'
+import { acceptGuestFriendRequest, acceptGuestPartyInvitation, blockGuest, cancelGuestFriendRequest, createGuestParty, declineGuestFriendRequest, declineGuestPartyInvitation, fetchCatalogue, fetchGuestBlocks, fetchGuestFriends, fetchGuestMessages, fetchGuestParty, fetchGuestPartyMessages, inviteGuestToParty, leaveGuestParty, openGuest, proposeGuestPartyTravel, removeGuestSave, requestGuestFriend, saveGuestPreview, sendGuestMessage, sendGuestPartyMessage, setGuestMessagePreference, submitGuestReport, unfriendGuest, unblockGuest, voteGuestPartyTravel, type CatalogueTrack, type GuestDirectMessage, type GuestFriendState, type GuestPartyMessage, type GuestPartyState, type GuestReportReason } from './guest.ts'
 import { LIGHTING_PRESETS, getNextLightingMode, type LightingMode } from './lighting.ts'
 import { parseStageTemplate, serializeStageTemplate, type StageLook } from './stageTemplate.ts'
 import { RELEASE_JOURNEY, nextReleaseStation, previousReleaseStation, releaseStation, type ReleaseStationId } from './releaseJourney.ts'
@@ -21,6 +21,12 @@ import { resolveDeskQuestion } from './deskQuery.ts'
 import './style.css'
 
 const SOLO_PREVIEW = import.meta.env?.VITE_SCENE_DEMO_MODE === 'true'
+const mapDestinations: { id: Hotspot; name: string; detail: string }[] = [
+  { id: 'releaseEntrance', name: 'Release House', detail: 'Record intake · private sleeve' },
+  { id: 'studio', name: 'City Studio', detail: 'Free beat desk' },
+  { id: 'kiosk', name: 'Listening station', detail: 'Original music preview' },
+  { id: 'palmEntrance', name: 'Palm Room', detail: 'Walkable venue preview' },
+]
 
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
 <main id="game">
@@ -231,7 +237,6 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
       <div id="party-incoming" class="social-list" role="list" aria-label="Party invitations"></div>
       <button id="party-create" class="social-action party-create" data-party-action="create" type="button">Start a party</button>
       <div id="party-chat"></div>
-      <small class="party-note">Travel proposals will require each member’s approval. No one can be moved without opting in.</small>
     </section>
     <section id="blocked-section" class="blocked-section" hidden aria-labelledby="blocked-title"><h3 id="blocked-title">Blocked sessions</h3><div id="blocked-list" role="list"></div></section>
     <div class="people-actions"><button id="people-wave" class="green-button" disabled>👋 Wave to everyone here</button><button id="people-edit-avatar" class="people-edit">Customize avatar</button></div>
@@ -800,6 +805,7 @@ function handlePartyUpdate(kind: PartyUpdateKind, _partyId: string, otherId?: st
   else if (kind === 'joined' && otherId !== presence.getOwnId()) toast(`${socialDisplayName(otherId || '')} joined the party`)
   else if (kind === 'left' && otherId !== presence.getOwnId()) toast(`${socialDisplayName(otherId || '')} left the party`)
   else if (kind === 'expired') toast('Party closed after everyone disconnected')
+  else if (kind === 'travel-update' && otherId !== presence.getOwnId()) toast('Party travel changed · review the proposal')
 }
 
 function handlePartyMessage(partyId: string, message: PresencePartyMessage) {
@@ -847,6 +853,53 @@ function wirePartyActions(root: HTMLElement) {
           : button.dataset.targetId || ''
       button.disabled = true
       void handlePartyAction(action, id).finally(() => { button.disabled = false })
+    }
+  })
+}
+
+async function handlePartyTravelVote(proposalId: string, decision: 'approve' | 'decline') {
+  const party = partyState.party
+  if (!party) return
+  try {
+    const status = await voteGuestPartyTravel(party.partyId, proposalId, decision)
+    await refreshPartyState()
+    toast(status === 'approved' ? 'Everyone agreed · choose when you are ready to walk' : status === 'declined' ? 'Travel proposal declined' : 'Your decision is recorded')
+  } catch (error) {
+    toast(error instanceof Error ? error.message : 'Could not record your travel decision')
+  }
+}
+
+function wirePartyTravelActions(root: HTMLElement) {
+  const form = root.querySelector<HTMLFormElement>('[data-party-travel-form]')
+  form?.addEventListener('submit', event => {
+    event.preventDefault()
+    const party = partyState.party
+    const select = form.querySelector<HTMLSelectElement>('[data-party-destination]')
+    const destinationId = select?.value || ''
+    if (!party || !destinationId) return
+    const submit = form.querySelector<HTMLButtonElement>('button[type="submit"]')
+    if (submit) submit.disabled = true
+    void proposeGuestPartyTravel(party.partyId, destinationId).then(async () => {
+      await refreshPartyState()
+      toast('Route proposed · each member must approve')
+    }).catch(error => toast(error instanceof Error ? error.message : 'Could not propose this route')).finally(() => {
+      if (submit) submit.disabled = false
+    })
+  })
+  root.querySelectorAll<HTMLButtonElement>('[data-party-travel-vote]').forEach(button => {
+    button.onclick = () => {
+      const decision = button.dataset.partyTravelVote
+      const proposalId = button.dataset.proposalId || ''
+      if (decision !== 'approve' && decision !== 'decline') return
+      button.disabled = true
+      void handlePartyTravelVote(proposalId, decision)
+    }
+  })
+  root.querySelectorAll<HTMLButtonElement>('[data-party-travel-route]').forEach(button => {
+    button.onclick = () => {
+      const destinationId = button.dataset.partyTravelRoute as Hotspot
+      if (!mapDestinations.some(destination => destination.id === destinationId)) return
+      mapRoute(destinationId)
     }
   })
 }
@@ -985,13 +1038,31 @@ function renderPartyState() {
   else {
     const memberRows = party.members.map(member => `<div class="party-member" role="listitem"><span>${member.guestId === ownId ? 'You' : escapeHtml(socialDisplayName(member.guestId))}</span><small>${member.leader ? 'Leader' : 'Member'}</small></div>`).join('')
     const inviteRows = party.invitations.map(invite => `<div class="party-invite-pending" role="listitem"><span>${escapeHtml(socialDisplayName(invite.guestId))}</span><small>Invited · expires ${new Date(invite.expiresAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</small></div>`).join('')
-    overview.innerHTML = `<div class="party-summary"><b>${party.members.length}/4 guests · ${party.leaderId === ownId ? 'You lead' : `${escapeHtml(socialDisplayName(party.leaderId))} leads`}</b><div class="party-members" role="list">${memberRows}${inviteRows}</div><button class="social-action" data-party-action="leave" data-party-id="${escapeHtml(party.partyId)}">Leave party</button></div>`
+    const proposal = party.travelProposal
+    const destination = proposal && mapDestinations.find(item => item.id === proposal.destinationId)
+    const proposalUi = proposal && destination ? (() => {
+      const ownVote = proposal.votes.find(vote => vote.guestId === ownId)
+      const waiting = proposal.votes.filter(vote => vote.decision === null).length
+      const votes = proposal.votes.map(vote => `<div class="party-travel-vote"><span>${vote.guestId === ownId ? 'You' : escapeHtml(socialDisplayName(vote.guestId))}</span><small>${vote.decision === 'approve' ? 'Approved' : vote.decision === 'decline' ? 'Declined' : 'Waiting'}</small></div>`).join('')
+      const controls = proposal.status === 'approved'
+        ? `<p class="party-travel-status">Everyone agreed. Each guest chooses when to walk.</p><button type="button" class="social-action accept party-travel-route" data-party-travel-route="${destination.id}">Show my walking route</button>`
+        : ownVote?.decision
+          ? `<p class="party-travel-status">Your choice is recorded · waiting for ${waiting} member${waiting === 1 ? '' : 's'}.</p>`
+          : `<div class="party-travel-actions"><button type="button" class="social-action accept" data-party-travel-vote="approve" data-proposal-id="${escapeHtml(proposal.proposalId)}">Approve</button><button type="button" class="social-action decline" data-party-travel-vote="decline" data-proposal-id="${escapeHtml(proposal.proposalId)}">Decline</button></div>`
+      return `<div class="party-travel-proposal" aria-live="polite"><b>Walk together · ${destination.name}</b><small>Expires ${new Date(proposal.expiresAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</small><div class="party-travel-votes">${votes}</div>${controls}</div>`
+    })() : ''
+    const travelComposer = !proposal && party.leaderId === ownId
+      ? `<form class="party-travel-form" data-party-travel-form><label for="party-travel-destination">Propose a public destination</label><select id="party-travel-destination" data-party-destination required><option value="">Choose a place</option>${mapDestinations.map(item => `<option value="${item.id}">${item.name}</option>`).join('')}</select><button type="submit" class="social-action party-travel-propose">Propose route</button></form>`
+      : ''
+    overview.innerHTML = `<div class="party-summary"><b>${party.members.length}/4 guests · ${party.leaderId === ownId ? 'You lead' : `${escapeHtml(socialDisplayName(party.leaderId))} leads`}</b><div class="party-members" role="list">${memberRows}${inviteRows}</div><small class="party-travel-note">Public places only · everyone must be online and approve. No tickets or room are reserved; each guest chooses and walks their own route.</small>${travelComposer}${proposalUi}<button class="social-action" data-party-action="leave" data-party-id="${escapeHtml(party.partyId)}">Leave party</button></div>`
   }
   incoming.innerHTML = partyState.incoming.map(invite => `<div class="social-entry social-request" role="listitem"><span><b>${escapeHtml(socialDisplayName(invite.leaderId))}</b><small>Invited you to a party · expires ${new Date(invite.expiresAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</small></span><button class="social-action accept" data-party-action="accept" data-invitation-id="${escapeHtml(invite.invitationId)}" ${party ? 'disabled title="Leave your current party before joining another"' : ''}>Join</button><button class="social-action decline" data-party-action="decline" data-invitation-id="${escapeHtml(invite.invitationId)}">Decline</button></div>`).join('')
   wirePartyActions(section)
+  wirePartyTravelActions(overview)
   const expiries = [
     ...partyState.incoming.map(invite => invite.expiresAt),
     ...(party?.invitations || []).map(invite => invite.expiresAt),
+    ...(party?.travelProposal ? [party.travelProposal.expiresAt] : []),
   ].map(value => new Date(value).getTime()).filter(Number.isFinite)
   if (expiries.length) partyRefreshTimer = window.setTimeout(() => { void refreshPartyState() }, Math.max(0, Math.min(...expiries) - Date.now() + 50))
   create.disabled = false
@@ -1574,12 +1645,6 @@ function setRoute(target: Hotspot) {
   toast(beginWalkTo(x, z) ? 'Walking to the marked place · steer with WASD or the touch pad' : 'No clear walking route · move closer and try again')
 }
 
-const mapDestinations: { id: Hotspot; name: string; detail: string }[] = [
-  { id: 'releaseEntrance', name: 'Release House', detail: 'Record intake · private sleeve' },
-  { id: 'studio', name: 'City Studio', detail: 'Free beat desk' },
-  { id: 'kiosk', name: 'Listening station', detail: 'Original music preview' },
-  { id: 'palmEntrance', name: 'Palm Room', detail: 'Walkable venue preview' },
-]
 const mapPins: Partial<Record<Hotspot, [number, number]>> = { releaseEntrance: [15, 18], studio: [84, 18], kiosk: [28, 54], palmEntrance: [76, 54] }
 function exitForLocation(): Hotspot { return location === 'venue' ? 'venueExit' : location === 'studio' ? 'studioExit' : 'releaseExit' }
 function mapRoute(target: Hotspot) {

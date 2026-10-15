@@ -1,6 +1,6 @@
 export type EmoteType = 'cheer' | 'wave' | 'heart' | 'fire'
 export type FriendUpdateKind = 'request' | 'accepted' | 'declined' | 'cancelled' | 'unfriended' | 'blocked' | 'message-preference'
-export type PartyUpdateKind = 'created' | 'invited' | 'joined' | 'declined' | 'left' | 'closed' | 'expired' | 'invitation-cancelled'
+export type PartyUpdateKind = 'created' | 'invited' | 'joined' | 'declined' | 'left' | 'closed' | 'expired' | 'invitation-cancelled' | 'travel-update'
 export type PresencePartyMessage = { id: string; senderGuestId: string; text: string; sentAt: string }
 export type PresencePlayer = { id: string; name?: string; authenticated?: boolean; x: number; z: number; angle: number; dancing: boolean; emote?: EmoteType | null; location: 'square' | 'venue' | 'studio' | 'release' }
 type Message =

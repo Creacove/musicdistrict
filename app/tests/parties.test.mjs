@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
 import { test } from 'node:test'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { createGuestStore, guestApi } from '../server/guestStore.mjs'
 
 async function makeApi() {
@@ -219,4 +222,138 @@ test('blocking a party member removes them and hides their earlier chat', () => 
     assert.equal(store.partyState(leader.id).party.members.length, 1)
     assert.equal(store.sendPartyMessage(party.partyId, member.id, 'blocked follow-up').error, 'not_member')
   } finally { store.close() }
+})
+
+test('party travel requires the leader and unanimous explicit approval', async () => {
+  const app = await makeApi()
+  const [leader, member, outsider] = app.guests
+  const { base, auth, json, makeFriends, invite, store } = app
+  try {
+    store.partySessionConnected(leader.id)
+    const created = await fetch(`${base}/api/parties`, { method: 'POST', headers: auth(leader) })
+    const { partyId } = await created.json()
+    await makeFriends(leader, member)
+    const invitation = await (await invite(partyId, leader, member)).json()
+    await fetch(`${base}/api/party-invitations/${invitation.invitationId}/accept`, { method: 'POST', headers: auth(member) })
+    store.partySessionConnected(member.id)
+
+    const createProposal = (guest, destinationId) => fetch(`${base}/api/parties/${partyId}/travel-proposals`, {
+      method: 'POST', headers: { ...auth(guest), ...json }, body: JSON.stringify({ destinationId }),
+    })
+    assert.equal((await createProposal(member, 'studio')).status, 403)
+    assert.equal((await createProposal(leader, 'ticketed-event')).status, 400)
+    const proposalResponse = await createProposal(leader, 'studio')
+    assert.equal(proposalResponse.status, 201)
+    const proposal = (await proposalResponse.json()).travelProposal
+    assert.equal(proposal.destinationId, 'studio')
+    assert.equal(proposal.status, 'pending')
+    assert.equal(proposal.votes.length, 2)
+    assert.equal((await createProposal(leader, 'kiosk')).status, 409)
+    assert.equal((await fetch(`${base}/api/parties/${partyId}/travel-proposals/${proposal.proposalId}/votes`, {
+      method: 'POST', headers: { ...auth(outsider), ...json }, body: JSON.stringify({ decision: 'approve' }),
+    })).status, 403)
+
+    const vote = (guest, decision) => fetch(`${base}/api/parties/${partyId}/travel-proposals/${proposal.proposalId}/votes`, {
+      method: 'POST', headers: { ...auth(guest), ...json }, body: JSON.stringify({ decision }),
+    })
+    assert.equal((await vote(member, 'approve')).status, 200)
+    assert.equal((await (await vote(leader, 'approve')).json()).status, 'approved')
+    const state = await (await fetch(`${base}/api/parties/me`, { headers: auth(member) })).json()
+    assert.equal(state.party.travelProposal.status, 'approved')
+    assert.equal(state.party.travelProposal.votes.every(item => item.decision === 'approve'), true)
+  } finally { app.close() }
+})
+
+test('party travel cancels when a member declines, disconnects, or leaves', async () => {
+  const app = await makeApi()
+  const [leader, member] = app.guests
+  const { base, auth, json, makeFriends, invite, store } = app
+  try {
+    store.partySessionConnected(leader.id)
+    const created = await fetch(`${base}/api/parties`, { method: 'POST', headers: auth(leader) })
+    const { partyId } = await created.json()
+    await makeFriends(leader, member)
+    const invitation = await (await invite(partyId, leader, member)).json()
+    await fetch(`${base}/api/party-invitations/${invitation.invitationId}/accept`, { method: 'POST', headers: auth(member) })
+    store.partySessionConnected(member.id)
+    const create = async () => {
+      const response = await fetch(`${base}/api/parties/${partyId}/travel-proposals`, {
+        method: 'POST', headers: { ...auth(leader), ...json }, body: JSON.stringify({ destinationId: 'palmEntrance' }),
+      })
+      assert.equal(response.status, 201)
+      return (await response.json()).travelProposal
+    }
+    const first = await create()
+    const decline = await fetch(`${base}/api/parties/${partyId}/travel-proposals/${first.proposalId}/votes`, {
+      method: 'POST', headers: { ...auth(member), ...json }, body: JSON.stringify({ decision: 'decline' }),
+    })
+    assert.equal((await decline.json()).status, 'declined')
+    assert.equal((await (await fetch(`${base}/api/parties/me`, { headers: auth(leader) })).json()).party.travelProposal, null)
+
+    const second = await create()
+    store.partySessionDisconnected(member.id)
+    assert.equal((await (await fetch(`${base}/api/parties/me`, { headers: auth(leader) })).json()).party.travelProposal, null)
+    assert.equal((await fetch(`${base}/api/parties/${partyId}/travel-proposals/${second.proposalId}/votes`, {
+      method: 'POST', headers: { ...auth(member), ...json }, body: JSON.stringify({ decision: 'approve' }),
+    })).status, 409)
+
+    store.partySessionConnected(member.id)
+    const third = await create()
+    await fetch(`${base}/api/parties/${partyId}/leave`, { method: 'POST', headers: auth(member) })
+    assert.equal((await (await fetch(`${base}/api/parties/me`, { headers: auth(leader) })).json()).party.travelProposal, null)
+    assert.equal((await fetch(`${base}/api/parties/${partyId}/travel-proposals/${third.proposalId}/votes`, {
+      method: 'POST', headers: { ...auth(member), ...json }, body: JSON.stringify({ decision: 'approve' }),
+    })).status, 403)
+  } finally { app.close() }
+})
+
+test('party travel requires every member online and expires after five minutes', async () => {
+  const app = await makeApi()
+  const [leader, member] = app.guests
+  const { base, auth, json, makeFriends, invite, store } = app
+  try {
+    const now = Date.now()
+    store.partySessionConnected(leader.id, now)
+    const created = await fetch(`${base}/api/parties`, { method: 'POST', headers: auth(leader) })
+    const { partyId } = await created.json()
+    await makeFriends(leader, member)
+    const invitation = await (await invite(partyId, leader, member)).json()
+    await fetch(`${base}/api/party-invitations/${invitation.invitationId}/accept`, { method: 'POST', headers: auth(member) })
+    const url = `${base}/api/parties/${partyId}/travel-proposals`
+    const request = () => fetch(url, { method: 'POST', headers: { ...auth(leader), ...json }, body: JSON.stringify({ destinationId: 'studio' }) })
+    assert.equal((await request()).status, 409)
+    store.partySessionConnected(member.id, now)
+    const proposalResponse = await request()
+    assert.equal(proposalResponse.status, 201)
+    const { travelProposal } = await proposalResponse.json()
+    const state = store.partyState(member.id, Date.parse(travelProposal.expiresAt) + 1)
+    assert.equal(state.party.travelProposal, null)
+  } finally { app.close() }
+})
+
+test('party travel votes pause until every member reconnects after a server restart', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'scene-party-travel-'))
+  const database = join(directory, 'party.sqlite')
+  let store = createGuestStore(database)
+  let restarted
+  try {
+    const leader = store.create(), member = store.create()
+    const friendship = store.requestFriend(leader.id, member.id)
+    store.acceptFriendRequest(friendship.requestId, member.id)
+    const party = store.createParty(leader.id)
+    const invitation = store.inviteToParty(party.partyId, leader.id, member.id)
+    store.acceptPartyInvitation(invitation.invitationId, member.id)
+    store.partySessionConnected(leader.id)
+    store.partySessionConnected(member.id)
+    const { travelProposal } = store.createPartyTravelProposal(party.partyId, leader.id, 'studio')
+    store.close()
+    store = null
+
+    restarted = createGuestStore(database)
+    assert.equal(restarted.votePartyTravelProposal(party.partyId, travelProposal.proposalId, leader.id, 'approve').error, 'offline_member')
+  } finally {
+    store?.close()
+    restarted?.close()
+    rmSync(directory, { recursive: true, force: true })
+  }
 })

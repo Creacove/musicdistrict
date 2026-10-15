@@ -443,8 +443,17 @@ Added an integration test that connects 20 real WebSocket test clients to an iso
 - **Verification:** Full suite passes 88/88; focused party/presence suite passes 21/21. TypeScript/Vite production build and `git diff --check` succeed. Main app JS is 142.90 kB (46.31 kB gzip), CSS 45.97 kB (10.18 kB gzip), and Three.js vendor 567.38 kB (140.97 kB gzip); the existing vendor-chunk warning remains nonfatal.
 - **Hosting boundary:** Netlify remains a static solo preview. Party chat and live updates require the self-hosted Node/SQLite/WebSocket server and are not available at the phone-testing URL.
 
+## M1 consent-based public destination proposals — 15 October 2026
+
+- **Server:** Added temporary party travel proposals for the existing public demo destinations (City Studio, Palm Room, Release House, and the listening kiosk). Only the leader can propose. Every current member must be connected and explicitly approve; one decline cancels, proposals expire after five minutes, and server restarts pause voting until every member reconnects. Membership changes and disconnects cancel pending proposals.
+- **Travel behavior:** Unanimous approval reveals the existing physical walking route to each guest. It does not teleport avatars, reserve capacity, grant tickets, or create event instances. The UI states this limitation.
+- **GDD trace:** Fan & Social Chapter 05 §12, FS-017, and FAN-12. Consent and physical travel are implemented; authoritative destination-instance availability, capacity, and ticket-entitlement checks remain unavailable because this preview has no such service.
+- **Live browser:** At 390 × 844, created a party, proposed City Studio, approved with the other guest, and opened the physical route. The avatar remained in place and the browser reported zero console errors.
+- **Verification:** The preceding full suite passed 91/91 before the final server-restart test was added. The reconnect-focused run passes 2/2, and the production TypeScript/Vite build succeeds. `git diff --check` is part of the publish check.
+- **Hosting boundary:** The Netlify URL is a static solo demo. Shared parties, proposals, and live updates require the self-hosted Node/SQLite/WebSocket server and are not available on that URL.
+
 ## Current next slices — updated 15 October 2026
 
-1. Implement Chapter 05 §12 consent-based destination proposals. Each current member must explicitly approve; check destination availability and event capacity on the server; never force-teleport a member or clone sold-out inventory. Preserve physical travel and accessible routes.
-2. Continue M1 physical-device and performance validation; the embedded Chromium mobile viewport is not a physical Android/iPhone test.
+1. Continue M1 phone-device and performance validation; embedded Chromium mobile viewport checks do not replace physical Android/iPhone testing.
+2. Add a server-backed destination-instance, capacity, and ticket-entitlement resolver before any proposal can claim a room or event slot. Preserve physical travel and accessible routes.
 3. Keep public chat and reports gated until age policy, moderation staffing, emergency escalation, and appeals have real owners.

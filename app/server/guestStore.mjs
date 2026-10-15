@@ -14,6 +14,8 @@ const DIRECT_MESSAGE_MAX_LENGTH = 500
 const PARTY_MESSAGE_WINDOW_MS = 60 * 1000
 const PARTY_MESSAGE_LIMIT_PER_WINDOW = 20
 const PARTY_MESSAGE_MAX_LENGTH = 280
+const PARTY_TRAVEL_PROPOSAL_TTL_MS = 5 * 60 * 1000
+const PARTY_TRAVEL_DESTINATIONS = new Set(['studio', 'palmEntrance', 'releaseEntrance', 'kiosk'])
 const PARTY_MAX_MEMBERS = 4
 const PARTY_INVITATION_TTL_MS = 10 * 60 * 1000
 const PARTY_IDLE_TTL_MS = 30 * 60 * 1000
@@ -119,7 +121,24 @@ export function createGuestStore(path) {
       created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS party_messages_order ON party_messages (party_id, seq);
-    CREATE INDEX IF NOT EXISTS party_messages_sender_recent ON party_messages (sender_guest_id, created_at);`)
+    CREATE INDEX IF NOT EXISTS party_messages_sender_recent ON party_messages (sender_guest_id, created_at);
+    CREATE TABLE IF NOT EXISTS party_travel_proposals (
+      id TEXT PRIMARY KEY,
+      party_id TEXT NOT NULL REFERENCES parties(id),
+      destination_id TEXT NOT NULL CHECK (destination_id IN ('studio', 'palmEntrance', 'releaseEntrance', 'kiosk')),
+      proposer_guest_id TEXT NOT NULL REFERENCES guests(id),
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'declined', 'cancelled', 'expired'))
+    );
+    CREATE INDEX IF NOT EXISTS party_travel_proposal_state ON party_travel_proposals (party_id, status, expires_at);
+    CREATE TABLE IF NOT EXISTS party_travel_votes (
+      proposal_id TEXT NOT NULL REFERENCES party_travel_proposals(id),
+      guest_id TEXT NOT NULL REFERENCES guests(id),
+      decision TEXT NOT NULL CHECK (decision IN ('approve', 'decline')),
+      decided_at TEXT NOT NULL,
+      PRIMARY KEY (proposal_id, guest_id)
+    );`)
   const partyMemberColumns = db.prepare('PRAGMA table_info(party_members)').all().map(column => column.name)
   if (!partyMemberColumns.includes('joined_message_seq')) db.exec('ALTER TABLE party_members ADD COLUMN joined_message_seq INTEGER NOT NULL DEFAULT 0')
   const find = db.prepare('SELECT id FROM guests WHERE token_hash = ?')
@@ -208,6 +227,17 @@ export function createGuestStore(path) {
   const blockPartyInvitations = db.prepare("UPDATE party_invitations SET status = 'blocked' WHERE status = 'pending' AND ((sender_guest_id = ? AND recipient_guest_id = ?) OR (sender_guest_id = ? AND recipient_guest_id = ?))")
   const cancelPartyInvitationPair = db.prepare("UPDATE party_invitations SET status = 'cancelled' WHERE status = 'pending' AND ((sender_guest_id = ? AND recipient_guest_id = ?) OR (sender_guest_id = ? AND recipient_guest_id = ?))")
   const expirePartyInvitations = db.prepare("UPDATE party_invitations SET status = 'expired' WHERE status = 'pending' AND expires_at <= ?")
+  const insertPartyTravelProposal = db.prepare("INSERT INTO party_travel_proposals (id, party_id, destination_id, proposer_guest_id, created_at, expires_at, status) VALUES (?, ?, ?, ?, ?, ?, 'pending')")
+  const activePartyTravelProposal = db.prepare("SELECT * FROM party_travel_proposals WHERE party_id = ? AND status IN ('pending', 'approved') AND expires_at > ? ORDER BY created_at DESC LIMIT 1")
+  const expiredPartyTravelProposals = db.prepare("SELECT id, party_id FROM party_travel_proposals WHERE status IN ('pending', 'approved') AND expires_at <= ?")
+  const updatePartyTravelProposal = db.prepare("UPDATE party_travel_proposals SET status = ? WHERE id = ? AND status IN ('pending', 'approved')")
+  const deletePartyTravelVotes = db.prepare('DELETE FROM party_travel_votes WHERE proposal_id IN (SELECT id FROM party_travel_proposals WHERE party_id = ?)')
+  const deletePartyTravelProposals = db.prepare('DELETE FROM party_travel_proposals WHERE party_id = ?')
+  const insertPartyTravelVote = db.prepare('INSERT INTO party_travel_votes (proposal_id, guest_id, decision, decided_at) VALUES (?, ?, ?, ?)')
+  const partyTravelVotes = db.prepare(`SELECT m.guest_id, v.decision FROM party_members m
+    LEFT JOIN party_travel_votes v ON v.proposal_id = ? AND v.guest_id = m.guest_id
+    WHERE m.party_id = ? AND m.state = 'active' ORDER BY m.joined_at, m.guest_id`)
+  const partyTravelVoteFor = db.prepare('SELECT decision FROM party_travel_votes WHERE proposal_id = ? AND guest_id = ?')
   const friendPairFor = (a, b) => a < b ? [a, b] : [b, a]
   const friendPair = (a, b) => a < b ? [a, b] : [b, a]
   const areBlocked = (a, b) => isBlocked.get(a, b) !== undefined || isBlocked.get(b, a) !== undefined
@@ -217,6 +247,38 @@ export function createGuestStore(path) {
   const notifyPartyEvent = event => { for (const listener of partyEventListeners) { try { listener(event) } catch { /* notification failures do not undo party state */ } } }
   const notifyPartyMessageEvent = event => { for (const listener of partyMessageEventListeners) { try { listener(event) } catch { /* delivery failures do not undo a stored message */ } } }
   const partyMemberIds = partyId => activePartyMembers.all(partyId).map(row => row.guest_id)
+  const notifyPartyTravelUpdate = (partyId, actorId = null) => notifyPartyEvent({ kind: 'travel-update', partyId, memberIds: partyMemberIds(partyId), actorId })
+  const travelProposalDto = (proposal, now) => ({
+    proposalId: proposal.id,
+    destinationId: proposal.destination_id,
+    proposerId: proposal.proposer_guest_id,
+    createdAt: proposal.created_at,
+    expiresAt: proposal.expires_at,
+    status: proposal.status,
+    votes: partyTravelVotes.all(proposal.id, proposal.party_id).map(row => ({ guestId: row.guest_id, decision: row.decision || null })),
+  })
+  const activeTravelProposalForParty = (partyId, now) => {
+    const proposal = activePartyTravelProposal.get(partyId, new Date(now).toISOString())
+    return proposal ? travelProposalDto(proposal, now) : null
+  }
+  const expirePartyTravelProposals = now => {
+    const nowIso = new Date(now).toISOString()
+    for (const proposal of expiredPartyTravelProposals.all(nowIso)) {
+      updatePartyTravelProposal.run('expired', proposal.id)
+      notifyPartyTravelUpdate(proposal.party_id)
+    }
+  }
+  const cancelPartyTravelProposal = (partyId, now, status = 'cancelled') => {
+    const proposal = activePartyTravelProposal.get(partyId, new Date(now).toISOString())
+    if (!proposal) return false
+    updatePartyTravelProposal.run(status, proposal.id)
+    notifyPartyTravelUpdate(partyId)
+    return true
+  }
+  const clearPartyTravelData = partyId => {
+    deletePartyTravelVotes.run(partyId)
+    deletePartyTravelProposals.run(partyId)
+  }
   const updatePartyOfflineState = (partyId, now) => {
     const members = partyMemberIds(partyId)
     const online = members.some(memberId => (partyConnectionCounts.get(memberId) || 0) > 0)
@@ -226,17 +288,21 @@ export function createGuestStore(path) {
   const closeParty = (partyId, now, kind = 'closed') => {
     const memberIds = partyMemberIds(partyId)
     const nowIso = new Date(now).toISOString()
+    expirePartyTravelProposals(now)
+    cancelPartyTravelProposal(partyId, now)
     const changed = closePartyRow.run(nowIso, partyId).changes
     if (!changed) return false
     db.prepare("UPDATE party_members SET state = 'left', left_at = ? WHERE party_id = ? AND state = 'active'").run(nowIso, partyId)
     cancelPartyInvitations.run(partyId)
     db.prepare('DELETE FROM party_messages WHERE party_id = ?').run(partyId)
+    clearPartyTravelData(partyId)
     notifyPartyEvent({ kind, partyId, memberIds, actorId: null })
     return true
   }
   const expireParties = now => {
     const nowIso = new Date(now).toISOString()
     expirePartyInvitations.run(nowIso)
+    expirePartyTravelProposals(now)
     const cutoff = new Date(now - PARTY_IDLE_TTL_MS).toISOString()
     const idleParties = db.prepare("SELECT id FROM parties WHERE state = 'active' AND all_offline_since IS NOT NULL AND all_offline_since <= ?").all(cutoff)
     for (const party of idleParties) closeParty(party.id, now, 'expired')
@@ -250,7 +316,7 @@ export function createGuestStore(path) {
         .filter(invite => !areBlocked(viewerId, invite.recipient_guest_id))
         .map(invite => ({ invitationId: invite.id, guestId: invite.recipient_guest_id, createdAt: invite.created_at, expiresAt: invite.expires_at }))
       : []
-    return { partyId: party.id, leaderId: party.leader_guest_id, createdAt: party.created_at, members, invitations }
+    return { partyId: party.id, leaderId: party.leader_guest_id, createdAt: party.created_at, members, invitations, travelProposal: activeTravelProposalForParty(party.id, now) }
   }
   const leavePartyInternal = (partyId, guestId, now) => {
     const party = partyById.get(partyId)
@@ -258,12 +324,14 @@ export function createGuestStore(path) {
     const members = partyMemberIds(partyId)
     if (!members.includes(guestId)) return { error: 'not_member' }
     const nowIso = new Date(now).toISOString()
+    cancelPartyTravelProposal(partyId, now)
     leavePartyMember.run(nowIso, partyId, guestId)
     const remaining = activePartyMembers.all(partyId)
     if (!remaining.length) {
       closePartyRow.run(nowIso, partyId)
       cancelPartyInvitations.run(partyId)
       db.prepare('DELETE FROM party_messages WHERE party_id = ?').run(partyId)
+      clearPartyTravelData(partyId)
       notifyPartyEvent({ kind: 'closed', partyId, memberIds: members, actorId: guestId })
       return { state: 'closed', newLeaderId: null }
     }
@@ -357,14 +425,56 @@ export function createGuestStore(path) {
       if (party) db.prepare("UPDATE parties SET all_offline_since = NULL WHERE id = ? AND state = 'active'").run(party.id)
     },
     partySessionDisconnected(guestId, now = Date.now()) {
+      expireParties(now)
       const count = partyConnectionCounts.get(guestId) || 0
       if (count <= 1) partyConnectionCounts.delete(guestId)
       else partyConnectionCounts.set(guestId, count - 1)
       const party = activePartyForMember.get(guestId)
-      if (party) updatePartyOfflineState(party.id, now)
+      if (party) {
+        if (!partyConnectionCounts.get(guestId)) cancelPartyTravelProposal(party.id, now)
+        updatePartyOfflineState(party.id, now)
+      }
     },
     partyState(guestId, now = Date.now()) { return partyState(guestId, now) },
     partyMessages(guestId, partyId, now = Date.now(), limit = 100) { return partyMessages(guestId, partyId, now, limit) },
+    createPartyTravelProposal(partyId, proposerId, destinationId, now = Date.now()) {
+      expireParties(now)
+      if (!PARTY_TRAVEL_DESTINATIONS.has(destinationId)) return { error: 'destination' }
+      const party = partyById.get(partyId)
+      if (!party || party.state !== 'active') return { error: 'party' }
+      const members = partyMemberIds(partyId)
+      if (!members.includes(proposerId)) return { error: 'not_member' }
+      if (party.leader_guest_id !== proposerId) return { error: 'not_leader' }
+      if (members.some(memberId => !partyConnectionCounts.get(memberId))) return { error: 'offline_member' }
+      if (members.some(memberId => memberId !== proposerId && areBlocked(proposerId, memberId))) return { error: 'blocked' }
+      if (activePartyTravelProposal.get(partyId, new Date(now).toISOString())) return { error: 'proposal_active' }
+      const createdAt = new Date(now).toISOString()
+      const expiresAt = new Date(now + PARTY_TRAVEL_PROPOSAL_TTL_MS).toISOString()
+      const proposal = { id: randomUUID(), party_id: partyId, destination_id: destinationId, proposer_guest_id: proposerId, created_at: createdAt, expires_at: expiresAt, status: 'pending' }
+      insertPartyTravelProposal.run(proposal.id, partyId, destinationId, proposerId, createdAt, expiresAt)
+      notifyPartyTravelUpdate(partyId, proposerId)
+      return { travelProposal: travelProposalDto(proposal, now) }
+    },
+    votePartyTravelProposal(partyId, proposalId, guestId, decision, now = Date.now()) {
+      expireParties(now)
+      if (decision !== 'approve' && decision !== 'decline') return { error: 'invalid' }
+      const party = partyById.get(partyId)
+      if (!party || party.state !== 'active') return { error: 'party' }
+      const members = partyMemberIds(partyId)
+      if (!members.includes(guestId)) return { error: 'not_member' }
+      if (members.some(memberId => memberId !== guestId && areBlocked(guestId, memberId))) return { error: 'blocked' }
+      if (members.some(memberId => !partyConnectionCounts.get(memberId))) return { error: 'offline_member' }
+      const proposal = activePartyTravelProposal.get(partyId, new Date(now).toISOString())
+      if (!proposal || proposal.id !== proposalId) return { error: 'proposal' }
+      if (partyTravelVoteFor.get(proposalId, guestId)) return { error: 'already_voted' }
+      insertPartyTravelVote.run(proposalId, guestId, decision, new Date(now).toISOString())
+      let status = 'pending'
+      if (decision === 'decline') status = 'declined'
+      else if (members.every(memberId => partyTravelVoteFor.get(proposalId, memberId)?.decision === 'approve')) status = 'approved'
+      if (status !== 'pending') updatePartyTravelProposal.run(status, proposalId)
+      notifyPartyTravelUpdate(partyId, guestId)
+      return { status, travelProposal: status === 'pending' ? travelProposalDto(proposal, now) : null }
+    },
     sendPartyMessage(partyId, senderId, text, now = Date.now()) {
       expireParties(now)
       const party = partyById.get(partyId)
@@ -445,6 +555,7 @@ export function createGuestStore(path) {
       const [low, high] = friendPairFor(invitation.sender_guest_id, recipientId)
       if (!activeFriendMembership.get(low, high)) return { error: 'not_friends' }
       if (members.length >= PARTY_MAX_MEMBERS) return { error: 'full' }
+      cancelPartyTravelProposal(invitation.party_id, now)
       const nowIso = new Date(now).toISOString()
       insertPartyMember.run(invitation.party_id, recipientId, nowIso, invitation.party_id)
       updatePartyInvitation.run('accepted', invitationId)
@@ -767,6 +878,31 @@ export function guestApi(store) {
       if (result.error === 'rate_limited') return reply(429, { error: 'Please slow down before sending another party message' })
       if (result.error) return reply(400, { error: 'Message must be 1 to 280 characters' })
       return reply(201, { message: result.message })
+    }
+    const partyTravelProposalPath = pathname.match(/^\/api\/parties\/([0-9a-f-]{36})\/travel-proposals$/i)
+    if (partyTravelProposalPath && req.method === 'POST') {
+      const parsed = await readJsonBody(req)
+      if (parsed.error) return reply(parsed.error === 'too_large' ? 413 : 400, { error: 'Invalid travel proposal' })
+      const result = store.createPartyTravelProposal(partyTravelProposalPath[1], id, parsed.value?.destinationId)
+      if (result.error === 'destination' || result.error === 'invalid') return reply(400, { error: 'Choose an available public destination' })
+      if (result.error === 'party') return reply(404, { error: 'Party is no longer available' })
+      if (result.error === 'not_member' || result.error === 'not_leader' || result.error === 'blocked') return reply(403, { error: 'Only the party leader can propose travel for current members' })
+      if (result.error === 'offline_member') return reply(409, { error: 'Every party member must be connected before proposing travel' })
+      if (result.error === 'proposal_active') return reply(409, { error: 'This party already has an active travel proposal' })
+      return reply(201, result)
+    }
+    const partyTravelVotePath = pathname.match(/^\/api\/parties\/([0-9a-f-]{36})\/travel-proposals\/([0-9a-f-]{36})\/votes$/i)
+    if (partyTravelVotePath && req.method === 'POST') {
+      const parsed = await readJsonBody(req)
+      if (parsed.error) return reply(parsed.error === 'too_large' ? 413 : 400, { error: 'Invalid travel vote' })
+      const result = store.votePartyTravelProposal(partyTravelVotePath[1], partyTravelVotePath[2], id, parsed.value?.decision)
+      if (result.error === 'invalid') return reply(400, { error: 'Choose approve or decline' })
+      if (result.error === 'party') return reply(404, { error: 'Party is no longer available' })
+      if (result.error === 'not_member' || result.error === 'blocked') return reply(403, { error: 'Travel is only available to current unblocked party members' })
+      if (result.error === 'offline_member') return reply(409, { error: 'Every party member must reconnect before voting' })
+      if (result.error === 'already_voted') return reply(409, { error: 'Your travel decision is already recorded' })
+      if (result.error) return reply(409, { error: 'This travel proposal is no longer active' })
+      return reply(200, result)
     }
     if (pathname === '/api/parties' && req.method === 'POST') {
       const result = store.createParty(id)

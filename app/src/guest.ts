@@ -11,12 +11,23 @@ export type GuestFriendState = {
 export type FriendRequestReceipt = { requestId: string; status: 'pending'; expiresAt: string; duplicate: boolean }
 export type GuestDirectMessage = { id: string; senderGuestId: string; recipientGuestId: string; text: string; sentAt: string }
 export type GuestPartyMessage = { id: string; senderGuestId: string; text: string; sentAt: string }
+export type GuestPartyTravelVote = { guestId: string; decision: 'approve' | 'decline' | null }
+export type GuestPartyTravelProposal = {
+  proposalId: string
+  destinationId: string
+  proposerId: string
+  createdAt: string
+  expiresAt: string
+  status: 'pending' | 'approved'
+  votes: GuestPartyTravelVote[]
+}
 export type GuestParty = {
   partyId: string
   leaderId: string
   createdAt: string
   members: { guestId: string; joinedAt: string; leader: boolean }[]
   invitations: { invitationId: string; guestId: string; createdAt: string; expiresAt: string }[]
+  travelProposal: GuestPartyTravelProposal | null
 }
 export type GuestPartyState = {
   party: GuestParty | null
@@ -217,6 +228,30 @@ export async function leaveGuestParty(partyId: string): Promise<{ newLeaderId: s
   const response = await guestRequest(`/api/parties/${encodeURIComponent(partyId)}/leave`, { method: 'POST' })
   if (!response.ok) throw new Error('Could not leave this party')
   return response.json() as Promise<{ newLeaderId: string | null }>
+}
+
+export async function proposeGuestPartyTravel(partyId: string, destinationId: string): Promise<GuestPartyTravelProposal> {
+  const response = await guestRequest(`/api/parties/${encodeURIComponent(partyId)}/travel-proposals`, {
+    method: 'POST', body: JSON.stringify({ destinationId }),
+  })
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({})) as { error?: string }
+    throw new Error(data.error || 'Could not propose this route')
+  }
+  const data = await response.json() as { travelProposal: GuestPartyTravelProposal }
+  return data.travelProposal
+}
+
+export async function voteGuestPartyTravel(partyId: string, proposalId: string, decision: 'approve' | 'decline'): Promise<'pending' | 'approved' | 'declined'> {
+  const response = await guestRequest(`/api/parties/${encodeURIComponent(partyId)}/travel-proposals/${encodeURIComponent(proposalId)}/votes`, {
+    method: 'POST', body: JSON.stringify({ decision }),
+  })
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({})) as { error?: string }
+    throw new Error(data.error || 'Could not record your travel decision')
+  }
+  const data = await response.json() as { status: 'pending' | 'approved' | 'declined' }
+  return data.status
 }
 
 export async function blockGuest(targetGuestId: string): Promise<void> {
