@@ -459,6 +459,11 @@ Added an integration test that connects 20 real WebSocket test clients to an iso
 - **Verification:** TypeScript/Vite production build passes with the Netlify solo-demo flag; production deploy `6ad09a3aa467e7fe7bfd1628` is live. The browser check demonstrates render-scale behavior, not physical-phone thermals or sustained frame rate; those still need the user's device.
 - **Background-tab behavior:** The WebGL frame loop now cancels its pending animation frame when the page is hidden and restarts with a fresh time baseline when visible again. In the live WebGL2 browser at 390 × 844, instrumented draw calls stayed at 3,161 across a 350 ms hidden interval, then resumed to 3,270 after 800 ms visible; no console errors. Deploy `6ad09c2ca3b78eeaf07b9bae` is live.
 
+## M1 district map follows the walkable route — 15 October 2026
+
+- **Map:** Replaced the straight connector with an SVG polyline projected from the same collision-checked `findWalkPath` used by tap-to-walk. The route now bends around blocked objects and keeps destination pins in front.
+- **Verification:** TypeScript/Vite build passes and navigation tests pass 4/4. The live 390 × 844 browser selected City Studio from the map and showed a four-vertex route with the active destination; the walking guidance remained active and the browser reported zero console errors. Deploy `6ad09d3f5afcde2c75a55529` is live.
+
 ## Current next slices — updated 15 October 2026
 
 1. Continue M1 phone-device and performance validation; embedded Chromium mobile viewport checks do not replace physical Android/iPhone testing.
