@@ -4,9 +4,21 @@ export type WalkPose = {
 }
 
 export type AvatarEmote = 'cheer' | 'wave' | 'heart' | 'fire'
+export type IdlePose = { bob: number; lean: number; armSwing: number; facing: number }
 export type EmotePose = {
   leftArmZ: number; rightArmZ: number; leftElbowZ: number; rightElbowZ: number
   bodyBob: number; turn: number; weight: number
+}
+
+export function idlePose(time: number): IdlePose {
+  const t = Number.isFinite(time) ? time : 0
+  const breath = Math.sin(t * 1.35)
+  return {
+    bob: (breath + 1) * 0.006,
+    lean: Math.sin(t * 0.62) * 0.012,
+    armSwing: Math.sin(t * 1.05 + 0.4) * 0.022,
+    facing: Math.sin(t * 0.48) * 0.04,
+  }
 }
 
 export function walkingPose(phase: number, intensity: number): WalkPose {

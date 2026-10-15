@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { emotePose, walkingPose } from '../src/avatarMotion.ts'
+import { emotePose, idlePose, walkingPose } from '../src/avatarMotion.ts'
 import { facingAngleForMovement } from '../src/avatarFacing.ts'
 
 test('avatar model faces its movement direction in every cardinal direction', () => {
@@ -17,6 +17,17 @@ test('avatar model faces its movement direction in every cardinal direction', ()
   assert.ok(Math.cos(backward) > 0.999999)
   assert.ok(Math.sin(left) < -0.999999)
   assert.ok(Math.abs(Math.cos(left)) < 1e-9)
+})
+
+test('idle motion stays subtle, finite, and changes smoothly with time', () => {
+  const first = idlePose(0)
+  const next = idlePose(.8)
+  assert.ok(first.bob >= 0 && first.bob <= .02)
+  assert.ok(Math.abs(first.lean) <= .02)
+  assert.ok(Math.abs(first.armSwing) <= .03)
+  assert.ok(Math.abs(first.facing) <= .05)
+  assert.notDeepEqual(next, first)
+  assert.ok(Object.values(idlePose(Number.NaN)).every(Number.isFinite))
 })
 
 test('walking gait keeps opposite limbs in counter-swing', () => {

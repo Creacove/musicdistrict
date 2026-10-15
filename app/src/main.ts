@@ -10,7 +10,7 @@ import { createReleaseSleeveSvg } from './releaseArtwork.ts'
 import { rehearsalMetrics } from './eventPreview.ts'
 import { connectPresence, type EmoteType, type FriendUpdateKind, type PartyUpdateKind, type PresencePartyMessage, type PresencePlayer } from './presence.ts'
 import { peopleInLocation } from './people.ts'
-import { emotePose, walkingPose } from './avatarMotion.ts'
+import { emotePose, idlePose, walkingPose } from './avatarMotion.ts'
 import { facingAngleForMovement } from './avatarFacing.ts'
 import { disposeSpriteResources } from './avatarLifecycle.ts'
 import { acceptGuestFriendRequest, acceptGuestPartyInvitation, blockGuest, cancelGuestFriendRequest, createGuestParty, declineGuestFriendRequest, declineGuestPartyInvitation, fetchCatalogue, fetchGuestBlocks, fetchGuestFriends, fetchGuestMessages, fetchGuestParty, fetchGuestPartyMessages, inviteGuestToParty, leaveGuestParty, openGuest, proposeGuestPartyTravel, removeGuestSave, requestGuestFriend, saveGuestPreview, sendGuestMessage, sendGuestPartyMessage, setGuestMessagePreference, submitGuestReport, unfriendGuest, unblockGuest, voteGuestPartyTravel, type CatalogueTrack, type GuestDirectMessage, type GuestFriendState, type GuestPartyMessage, type GuestPartyState, type GuestReportReason } from './guest.ts'
@@ -584,6 +584,7 @@ const leftKnee = leftLegParts.knee, rightKnee = rightLegParts.knee
 const leftFoot = leftLegParts.foot, rightFoot = rightLegParts.foot
 avatar.position.set(-4, 0, 7)
 avatar.rotation.y = Math.PI
+let idleFacing = Math.PI
 camera.position.set(-4, 3.8, 14.2)
 const remoteAvatars = new Map<string, THREE.Group>()
 let connectedPlayers: PresencePlayer[] = []
@@ -1883,6 +1884,7 @@ async function showVenue() {
   $<HTMLElement>('game').dataset.location = 'venue'
   avatar.position.set(0, 0, 8)
   avatar.rotation.y = Math.PI
+  idleFacing = Math.PI
   yaw = 0
   camera.position.set(0, 4.9, 18.6)
   sun.intensity = 1.45
@@ -1914,7 +1916,7 @@ async function showStudio() {
   square.visible = false; studioRoom.visible = true
   location = 'studio'; $<HTMLElement>('game').dataset.location = 'studio'
   renderPresence(connectedPlayers, presenceConnected, 0)
-  avatar.position.set(0, 0, 7); avatar.rotation.y = Math.PI; yaw = 0; camera.position.set(0, 3.7, 14)
+  avatar.position.set(0, 0, 7); avatar.rotation.y = Math.PI; idleFacing = Math.PI; yaw = 0; camera.position.set(0, 3.7, 14)
   sun.intensity = 1.05; ambient.intensity = 1.45
   scene.background = new THREE.Color('#28202f'); scene.fog = new THREE.Fog('#28202f', 24, 56)
   routeTarget = null; $<HTMLElement>('route').hidden = true; nearby = null; closeSheets()
@@ -1929,7 +1931,7 @@ function leaveStudio() {
   clearWalkTarget(); stopBeat(); studioRoom!.visible = false; square.visible = true
   location = 'square'; $<HTMLElement>('game').dataset.location = 'square'
   renderPresence(connectedPlayers, presenceConnected, 0)
-  avatar.position.set(13, 0, -6.7); avatar.rotation.y = Math.PI; yaw = 0; camera.position.set(13, 3.8, .3)
+  avatar.position.set(13, 0, -6.7); avatar.rotation.y = Math.PI; idleFacing = Math.PI; yaw = 0; camera.position.set(13, 3.8, .3)
   sun.intensity = 2; ambient.intensity = 1.9
   scene.background = new THREE.Color('#413243'); scene.fog = new THREE.Fog('#413243', 32, 72)
   nearby = null; closeSheets(); $<HTMLElement>('place-name').textContent = 'Music Square · Lagos'
@@ -1953,7 +1955,7 @@ async function showReleaseHouse() {
   square.visible = false; releaseRoom.visible = true
   location = 'release'; $<HTMLElement>('game').dataset.location = 'release'
   renderPresence(connectedPlayers, presenceConnected, 0)
-  avatar.position.set(0, 0, 7); avatar.rotation.y = Math.PI; yaw = 0; camera.position.set(0, 3.7, 14)
+  avatar.position.set(0, 0, 7); avatar.rotation.y = Math.PI; idleFacing = Math.PI; yaw = 0; camera.position.set(0, 3.7, 14)
   sun.intensity = 1.05; ambient.intensity = 1.45
   scene.background = new THREE.Color('#251d2e'); scene.fog = new THREE.Fog('#251d2e', 24, 56)
   routeTarget = null; $<HTMLElement>('route').hidden = true; nearby = null; closeSheets()
@@ -1968,7 +1970,7 @@ function leaveReleaseHouse() {
   clearWalkTarget(); releaseRoom!.visible = false; square.visible = true
   location = 'square'; $<HTMLElement>('game').dataset.location = 'square'
   renderPresence(connectedPlayers, presenceConnected, 0)
-  avatar.position.set(-13, 0, -6.7); avatar.rotation.y = Math.PI; yaw = 0; camera.position.set(-13, 3.8, .3)
+  avatar.position.set(-13, 0, -6.7); avatar.rotation.y = Math.PI; idleFacing = Math.PI; yaw = 0; camera.position.set(-13, 3.8, .3)
   sun.intensity = 2; ambient.intensity = 1.9
   scene.background = new THREE.Color('#413243'); scene.fog = new THREE.Fog('#413243', 32, 72)
   nearby = null; closeSheets(); $<HTMLElement>('place-name').textContent = 'Music Square · Lagos'
@@ -2102,6 +2104,7 @@ function leaveVenue() {
   $<HTMLElement>('game').dataset.location = 'square'
   avatar.position.set(10, 0, 3.5)
   avatar.rotation.y = Math.PI
+  idleFacing = Math.PI
   yaw = 0
   camera.position.set(10, 3.8, 10.5)
   sun.intensity = 2.0
@@ -2779,7 +2782,7 @@ function frame() {
     avatar.position.z = resolved.z
     const targetY = location === 'venue' && avatar.position.z <= -6.4 && avatar.position.z >= -10.8 && Math.abs(avatar.position.x) <= 6.8 ? 0.78 : 0
     avatar.position.y += (targetY - avatar.position.y) * Math.min(1, dt * 10)
-    avatar.rotation.y = facingAngleForMovement(angle)
+    avatar.rotation.y = idleFacing = facingAngleForMovement(angle)
     const gait = walkingPose(elapsed * 11, walkTarget ? 1 : speed)
     leftArm.rotation.z = -.15; rightArm.rotation.z = .15
     leftElbow.rotation.z = rightElbow.rotation.z = 0
@@ -2789,8 +2792,10 @@ function frame() {
     leftKnee.rotation.x = gait.leftKnee; rightKnee.rotation.x = gait.rightKnee
     leftFoot.rotation.x = -gait.leftKnee * .6; rightFoot.rotation.x = -gait.rightKnee * .6
     avatarBody.position.y = gait.bob
+    avatarBody.rotation.z = 0
   } else if (dancing && sheet === 'none') {
     avatarBody.position.y = Math.abs(Math.sin(elapsed * 5)) * .045
+    avatarBody.rotation.z = 0
     avatar.rotation.y = Math.PI + Math.sin(elapsed * 2.5) * .32
     leftArm.rotation.x = Math.sin(elapsed * 6) * .6
     rightArm.rotation.x = -leftArm.rotation.x
@@ -2805,8 +2810,12 @@ function frame() {
     rightKnee.rotation.x = Math.max(0, -Math.sin(elapsed * 6)) * .35
     leftFoot.rotation.x = -leftKnee.rotation.x * .6; rightFoot.rotation.x = -rightKnee.rotation.x * .6
   } else {
-    avatarBody.position.y = 0
-    leftLeg.rotation.x = rightLeg.rotation.x = leftArm.rotation.x = rightArm.rotation.x = 0
+    const idle = idlePose(elapsed)
+    avatarBody.position.y = idle.bob
+    avatarBody.rotation.z = idle.lean
+    avatar.rotation.y = idleFacing + idle.facing
+    leftLeg.rotation.x = rightLeg.rotation.x = 0
+    leftArm.rotation.x = idle.armSwing; rightArm.rotation.x = -idle.armSwing
     leftElbow.rotation.x = rightElbow.rotation.x = .08
     leftElbow.rotation.z = rightElbow.rotation.z = 0
     leftKnee.rotation.x = rightKnee.rotation.x = leftFoot.rotation.x = rightFoot.rotation.x = 0
