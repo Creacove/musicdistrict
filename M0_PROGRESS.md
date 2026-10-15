@@ -469,10 +469,11 @@ Added an integration test that connects 20 real WebSocket test clients to an iso
 - **Concierge:** Added the Chapter 09 §11.1 City Concierge at the spawn plaza. Its labeled interaction explains movement and opens the real free-destination map; it does not grant money, change reputation, or move the avatar. The action was confirmed in the production 390 × 844 browser.
 - **Ambient life:** Added two distinctly dressed, clearly labeled `NPC · PASSERBY` figures on slow looping routes along the outer plaza. Their paths stay clear of world obstacles and all interaction hotspots. They are nonblocking cosmetic actors with no finance, attendance, presence, or analytics effect. Data Saver hides them.
 - **References:** Chapter 09 §11.1–11.2 and Master GDD §9; the Music Square composition follows V26 while authored characters remain original geometry and clothing.
-- **Verification:** Full suite passes 96/96, including three ambient-actor/motion tests and five navigation tests. Netlify-mode TypeScript/Vite production build passes. (The live deployment and mobile viewport check are recorded after publication.)
+- **Verification:** Full suite passes 96/96, including three ambient-actor/motion tests and five navigation tests. Netlify-mode TypeScript/Vite production build passes. Production deploy `6ad0a82366535a0fbc251f8e` serves `index-zBrJ5gEV.js` at the stable phone URL. The 390 × 844 Balanced/Daylight browser view loads the Concierge and square with zero console errors. Screenshot: `docs/evidence/m1-city-ambience-balanced.png`.
+- **Visual follow-up:** The first-person phone framing still hides most ambient figures behind the avatar and plaza dressing. Keep refining their placement and the default camera in the next visual pass; retain the obstacle/hotspot checks and honest NPC labeling.
 
 ## Current next slices — updated 15 October 2026
 
-1. Continue M1 phone-device and performance validation; embedded Chromium mobile viewport checks do not replace physical Android/iPhone testing.
+1. Tune the default mobile camera and starter-plaza staging so ambient roles read at first glance; then validate FPS, heat, and network recovery on physical Android/iPhone devices.
 2. Add a server-backed destination-instance, capacity, and ticket-entitlement resolver before any proposal can claim a room or event slot. Preserve physical travel and accessible routes.
 3. Keep public chat and reports gated until age policy, moderation staffing, emergency escalation, and appeals have real owners.
