@@ -50,7 +50,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
     <p id="map-context">Choose a place. The route leads to its physical entrance.</p>
     <div class="district-map" role="img" aria-label="Map of Music Square and nearby destinations">
       <span class="map-road map-road-horizontal"></span><span class="map-road map-road-vertical"></span>
-      <svg id="map-route-line" class="map-route-line" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true" hidden><line id="map-route-stroke" x1="0" y1="0" x2="0" y2="0" /></svg>
+      <svg id="map-route-line" class="map-route-line" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true" hidden><polyline id="map-route-stroke" points="" /></svg>
       <span class="map-plaza">MUSIC<br>SQUARE</span><span id="map-avatar" class="map-avatar" aria-label="Your position">●<small>YOU</small></span>
       <button data-map-target="releaseEntrance" style="--mx:15%;--my:18%">▣<small>RELEASE HOUSE</small></button>
       <button data-map-target="studio" style="--mx:84%;--my:18%">♫<small>CITY STUDIO</small></button>
@@ -1645,6 +1645,9 @@ function setRoute(target: Hotspot) {
 }
 
 const mapPins: Partial<Record<Hotspot, [number, number]>> = { releaseEntrance: [15, 18], studio: [84, 18], kiosk: [28, 54], palmEntrance: [76, 54] }
+function mapCoordinates(x: number, z: number): [number, number] {
+  return [Math.max(5, Math.min(95, (x + 18) / 37 * 100)), Math.max(6, Math.min(94, (z + 12) / 28 * 100))]
+}
 function exitForLocation(): Hotspot { return location === 'venue' ? 'venueExit' : location === 'studio' ? 'studioExit' : 'releaseExit' }
 function mapRoute(target: Hotspot) {
   onwardTarget = location === 'square' ? null : target
@@ -1661,18 +1664,20 @@ function renderMap() {
   const avatarPin = $<HTMLElement>('map-avatar')
   avatarPin.hidden = location !== 'square'
   if (location === 'square') {
-    avatarPin.style.left = `${Math.max(5, Math.min(95, (avatar.position.x + 18) / 37 * 100))}%`
-    avatarPin.style.top = `${Math.max(6, Math.min(94, (avatar.position.z + 12) / 28 * 100))}%`
+    const [x, y] = mapCoordinates(avatar.position.x, avatar.position.z)
+    avatarPin.style.left = `${x}%`
+    avatarPin.style.top = `${y}%`
   }
   const routeSvg = $<SVGSVGElement>('map-route-line')
   const destination = routeTarget ? mapPins[routeTarget] : undefined
-  routeSvg.toggleAttribute('hidden', location !== 'square' || !destination)
-  if (destination) {
-    const line = $<SVGLineElement>('map-route-stroke')
-    line.setAttribute('x1', avatarPin.style.left.replace('%', ''))
-    line.setAttribute('y1', avatarPin.style.top.replace('%', ''))
-    line.setAttribute('x2', String(destination[0]))
-    line.setAttribute('y2', String(destination[1]))
+  const routePath = routeTarget && location === 'square' && destination
+    ? findWalkPath('square', [avatar.position.x, avatar.position.z], routePoints[routeTarget])
+    : []
+  routeSvg.toggleAttribute('hidden', location !== 'square' || !destination || !routePath.length)
+  if (destination && routePath.length) {
+    const line = $<SVGPolylineElement>('map-route-stroke')
+    const points = [mapCoordinates(avatar.position.x, avatar.position.z), ...routePath.map(([x, z]) => mapCoordinates(x, z))]
+    line.setAttribute('points', points.map(([x, y]) => `${x},${y}`).join(' '))
   }
   $<HTMLElement>('map-context').textContent = location === 'square' ? 'Choose a place to walk there. Interact at its entrance.' : `You are inside ${location === 'venue' ? 'Palm Room' : location === 'studio' ? 'City Studio' : 'Release House'}. A route to another place begins at this room’s exit.`
   const selectedMapTarget = onwardTarget ?? routeTarget
