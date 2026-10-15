@@ -332,9 +332,8 @@ function applyQuality() {
   document.querySelectorAll<HTMLButtonElement>('[data-quality]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.quality === quality)))
   if (world.clientWidth) resize()
 }
-applyQuality()
-renderer.shadowMap.enabled = true
 renderer.shadowMap.type = THREE.PCFShadowMap
+applyQuality()
 renderer.outputColorSpace = THREE.SRGBColorSpace
 renderer.toneMapping = THREE.ACESFilmicToneMapping
 renderer.toneMappingExposure = 1.16
