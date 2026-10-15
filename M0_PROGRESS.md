@@ -406,8 +406,6 @@ Added an integration test that connects 20 real WebSocket test clients to an iso
 - **Build output:** App JS 122.08 kB (40.87 kB gzip), CSS 39.42 kB (9.09 kB gzip), Three.js vendor 567.38 kB (140.97 kB gzip). No new scene assets were added. Vite retains the existing nonfatal >500 kB vendor-chunk warning.
 - **Hosting boundary:** Netlify remains a static, solo preview. Shared guest identity, WebSocket presence, persistent blocks and report intake require the self-hosted Node server; the staging URL does not have those backend services.
 
-## Current next slices
-
 ## M1 mutual friend requests — 14 October 2026
 
 - **Friend requests:** Added authenticated SQLite-backed friend requests and mutual friend edges. Only a recipient can accept or decline; the sender can cancel; either friend can unfriend. Acceptance is idempotent. Pending requests expire after seven days, outgoing requests cap at 20, repeated requests after decline are rejected, and a block removes friendship and overrides pending requests. Unblocking never recreates friendship.
@@ -417,8 +415,18 @@ Added an integration test that connects 20 real WebSocket test clients to an iso
 - **Verification:** Full suite passes 74 tests. Production TypeScript/Vite build succeeds; `git diff --check` succeeds. App JS is 127.10 kB (42.15 kB gzip), CSS 40.54 kB (9.31 kB gzip), Three.js vendor 567.38 kB (140.97 kB gzip). Vite's existing >500 kB vendor-chunk warning remains nonfatal.
 - **Hosting boundary:** Netlify is a static solo preview and does not run the guest database or WebSocket server. Friend requests and live updates work on the self-hosted prototype server, not on the static phone-testing URL.
 
+## M1 friend direct messages — 14 October 2026
+
+- **Server:** Added authenticated SQLite conversation storage and endpoints restricted to current mutual friends. Sends fail if either user has blocked the other or either person disables friend messages. Messages are plain text, capped at 500 characters, and limited to 20 per sender per minute. A conversation cannot be fetched by a third guest or after block/unfriend.
+- **Privacy:** Friend messages are on by default with a per-account switch to disable sending and receiving. Privacy changes notify connected friends; open conversations close and their Message action becomes unavailable. WebSocket notifications carry only participant and message IDs; message contents stay behind authenticated HTTP.
+- **People UI:** Added friend-only Message buttons, a private conversation view with safe text rendering, character count, live delivery, and a visible disclosure that reports have no connected moderation team in this preview. Direct message content is never broadcast in the room.
+- **GDD trace:** Fan & Social Chapter 05 §§11.1–11.2 and FS-017. Message requests remain unavailable because the optional professional contact channel is not implemented. The prototype does not claim human moderation; reports and blocks remain accessible from People.
+- **Live browser:** Two authenticated local guests at 390 × 844 exchanged a private message. Verified the recipient's live notice and retrieved history, disabled messaging on one account and saw both clients close the thread and disable Message. A markup-shaped message rendered as literal text with no image element. Browser console errors: 0. Capture: `docs/evidence/m1-dm-conversation.png`.
+- **Verification:** Full suite passes 78 tests. TypeScript/Vite build and `git diff --check` succeed. App JS is 132.74 kB (43.70 kB gzip), CSS 43.19 kB (9.73 kB gzip), Three.js vendor 567.38 kB (140.97 kB gzip). Vite's >500 kB vendor-chunk warning remains nonfatal.
+- **Hosting boundary:** Netlify is still a static solo preview. Direct messages, friend privacy settings and shared live notices are available only through the self-hosted Node/SQLite/WebSocket prototype; no shared backend is deployed to the phone-testing URL.
+
 ## Current next slices — updated 14 October 2026
 
-1. Implement mutual-friend direct messages with block checks, authenticated delivery, privacy controls, and explicit reporting/safety boundaries before enabling unsolicited contact.
+1. Implement the Chapter 05 §12 lightweight party: maximum four actual guests, 10-minute invitations, member leave and leadership transfer. Then add destination proposals where every member opts in and no one is teleported without approval.
 2. Continue M1 physical-device and performance validation; the embedded Chromium mobile viewport is not a physical Android/iPhone test.
 3. Keep public chat and reports gated until age policy, moderation staffing, emergency escalation, and appeals have real owners.

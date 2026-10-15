@@ -1,5 +1,5 @@
 export type EmoteType = 'cheer' | 'wave' | 'heart' | 'fire'
-export type FriendUpdateKind = 'request' | 'accepted' | 'declined' | 'cancelled' | 'unfriended' | 'blocked'
+export type FriendUpdateKind = 'request' | 'accepted' | 'declined' | 'cancelled' | 'unfriended' | 'blocked' | 'message-preference'
 export type PresencePlayer = { id: string; name?: string; authenticated?: boolean; x: number; z: number; angle: number; dancing: boolean; emote?: EmoteType | null; location: 'square' | 'venue' | 'studio' | 'release' }
 type Message =
   | { type: 'welcome'; id: string; players: PresencePlayer[] }
@@ -9,6 +9,7 @@ type Message =
   | { type: 'chat'; id: string; name: string; text: string }
   | { type: 'auth'; success: boolean; id?: string }
   | { type: 'friend-update'; kind: FriendUpdateKind; otherId: string; requestId?: string }
+  | { type: 'direct-message'; otherId: string; messageId: string }
 
 const SOLO_PREVIEW = import.meta.env?.VITE_SCENE_DEMO_MODE === 'true'
 
@@ -17,6 +18,7 @@ export function connectPresence(
   onEmote?: (id: string, emote: EmoteType) => void,
   onChat?: (id: string, name: string, text: string) => void,
   onFriendUpdate?: (kind: FriendUpdateKind, otherId: string) => void,
+  onDirectMessage?: (otherId: string, messageId: string) => void,
   token?: string,
 ) {
   const players = new Map<string, PresencePlayer>()
@@ -64,6 +66,7 @@ export function connectPresence(
         onChat?.(message.id, message.name, message.text)
       }
       if (message.type === 'friend-update') onFriendUpdate?.(message.kind, message.otherId)
+      if (message.type === 'direct-message') onDirectMessage?.(message.otherId, message.messageId)
       notify()
     }
     socket.onopen = () => {

@@ -3,11 +3,13 @@ type Guest = { id: string; token: string; saves: string[] }
 export type GuestReportReason = 'harassment' | 'spam' | 'inappropriate_name' | 'other'
 export type GuestReportReceipt = { id: string; status: 'received'; createdAt: string }
 export type GuestFriendState = {
-  friends: { guestId: string; createdAt: string }[]
+  friends: { guestId: string; createdAt: string; canMessage: boolean }[]
   incoming: { requestId: string; guestId: string; createdAt: string; expiresAt: string }[]
   outgoing: { requestId: string; guestId: string; createdAt: string; expiresAt: string }[]
+  allowFriendMessages: boolean
 }
 export type FriendRequestReceipt = { requestId: string; status: 'pending'; expiresAt: string; duplicate: boolean }
+export type GuestDirectMessage = { id: string; senderGuestId: string; recipientGuestId: string; text: string; sentAt: string }
 let token = ''
 const SOLO_PREVIEW = import.meta.env?.VITE_SCENE_DEMO_MODE === 'true'
 const PREVIEW_CATALOGUE: CatalogueTrack[] = [
@@ -82,7 +84,7 @@ export async function fetchGuestBlocks(): Promise<string[]> {
 }
 
 export async function fetchGuestFriends(): Promise<GuestFriendState> {
-  if (SOLO_PREVIEW) return { friends: [], incoming: [], outgoing: [] }
+  if (SOLO_PREVIEW) return { friends: [], incoming: [], outgoing: [], allowFriendMessages: true }
   const response = await guestRequest('/api/friends')
   if (!response.ok) throw new Error('Friend list unavailable')
   return response.json() as Promise<GuestFriendState>
@@ -119,6 +121,29 @@ export async function cancelGuestFriendRequest(requestId: string): Promise<void>
 export async function unfriendGuest(targetGuestId: string): Promise<void> {
   const response = await guestRequest(`/api/friends/${encodeURIComponent(targetGuestId)}`, { method: 'DELETE' })
   if (!response.ok) throw new Error('Could not remove this friendship')
+}
+
+export async function fetchGuestMessages(otherGuestId: string): Promise<GuestDirectMessage[]> {
+  const response = await guestRequest(`/api/messages/${encodeURIComponent(otherGuestId)}`)
+  if (!response.ok) throw new Error('This conversation is unavailable')
+  const data = await response.json() as { messages?: GuestDirectMessage[] }
+  return Array.isArray(data.messages) ? data.messages : []
+}
+
+export async function sendGuestMessage(recipientGuestId: string, text: string): Promise<GuestDirectMessage> {
+  const response = await guestRequest('/api/messages', { method: 'POST', body: JSON.stringify({ recipientGuestId, text }) })
+  if (!response.ok) {
+    if (response.status === 429) throw new Error('Please wait a moment before sending another message')
+    if (response.status === 403) throw new Error('Messages are unavailable because of a friendship, block, or privacy setting')
+    throw new Error('Could not send this message')
+  }
+  const data = await response.json() as { message: GuestDirectMessage }
+  return data.message
+}
+
+export async function setGuestMessagePreference(allowFriendMessages: boolean): Promise<void> {
+  const response = await guestRequest('/api/messages/preferences', { method: 'PUT', body: JSON.stringify({ allowFriendMessages }) })
+  if (!response.ok) throw new Error('Could not update your message privacy setting')
 }
 
 export async function blockGuest(targetGuestId: string): Promise<void> {

@@ -4,7 +4,7 @@ import { once } from 'node:events'
 import { test } from 'node:test'
 import WebSocket from 'ws'
 import { attachPresence } from '../server/presence.mjs'
-import { createGuestStore } from '../server/guestStore.mjs'
+import { createGuestStore, guestApi } from '../server/guestStore.mjs'
 
 async function nextMessage(socket) {
   const [raw] = await once(socket, 'message')
@@ -156,6 +156,53 @@ test('friend request and acceptance notify the two connected guests', async () =
     assert.equal(accepted.kind, 'accepted')
     assert.equal(accepted.otherId, recipient.id)
   } finally { a.terminate(); b?.terminate(); hub.close(); server.close(); store.close() }
+})
+
+test('friend messages notify only the two permitted sessions without broadcasting message text', async () => {
+  const store = createGuestStore(':memory:')
+  const alice = store.create(), bob = store.create(), carol = store.create()
+  const request = store.requestFriend(alice.id, bob.id)
+  store.acceptFriendRequest(request.requestId, bob.id)
+  const server = createServer((req, res) => guestApi(store)(req, res, () => { res.statusCode = 404; res.end() }))
+  const hub = attachPresence(server, { store })
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  const base = `http://127.0.0.1:${server.address().port}`
+  const a = new WebSocket(`ws://127.0.0.1:${server.address().port}/presence?token=${alice.token}`)
+  const b = new WebSocket(`ws://127.0.0.1:${server.address().port}/presence?token=${bob.token}`)
+  const c = new WebSocket(`ws://127.0.0.1:${server.address().port}/presence?token=${carol.token}`)
+  try {
+    assert.equal((await nextMessage(a)).type, 'welcome')
+    assert.equal((await nextMessage(b)).type, 'welcome')
+    assert.equal((await nextMessage(c)).type, 'welcome')
+    await new Promise(resolve => setTimeout(resolve, 50)) // discard session-join notifications before observing DMs
+    const aliceNotice = nextMessageWithin(a, 'sender message notice')
+    const bobNotice = nextMessageWithin(b, 'recipient message notice')
+    const noBroadcast = receivesNoMessage(c, 150)
+    const response = await fetch(`${base}/api/messages`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${alice.token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ recipientGuestId: bob.id, text: 'Private content stays in the API response' }),
+    })
+    assert.equal(response.status, 201)
+    const { message } = await response.json()
+    const [fromAlice, fromBob] = await Promise.all([aliceNotice, bobNotice])
+    assert.deepEqual(fromAlice, { type: 'direct-message', otherId: bob.id, messageId: message.id })
+    assert.deepEqual(fromBob, { type: 'direct-message', otherId: alice.id, messageId: message.id })
+    assert.equal(await noBroadcast, true)
+    assert.equal((await (await fetch(`${base}/api/messages/${alice.id}`, { headers: { Authorization: `Bearer ${bob.token}` } })).json()).messages[0].text, 'Private content stays in the API response')
+    const alicePrivacyNotice = nextMessageWithin(a, 'friend privacy update')
+    const bobPrivacyNotice = nextMessageWithin(b, 'own privacy update')
+    const noPrivacyBroadcast = receivesNoMessage(c, 150)
+    const privacy = await fetch(`${base}/api/messages/preferences`, {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${bob.token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ allowFriendMessages: false }),
+    })
+    assert.equal(privacy.status, 200)
+    assert.deepEqual(await alicePrivacyNotice, { type: 'friend-update', kind: 'message-preference', otherId: bob.id })
+    assert.deepEqual(await bobPrivacyNotice, { type: 'friend-update', kind: 'message-preference', otherId: alice.id })
+    assert.equal(await noPrivacyBroadcast, true)
+  } finally { a.terminate(); b.terminate(); c.terminate(); hub.close(); server.close(); store.close() }
 })
 
 test('exponential backoff doubles delay up to 30 s cap', () => {

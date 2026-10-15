@@ -8,6 +8,9 @@ const REPORT_REASONS = new Set(['harassment', 'spam', 'inappropriate_name', 'oth
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const REPORT_WINDOW_MS = 60 * 60 * 1000
 const REPORT_LIMIT_PER_WINDOW = 5
+const DIRECT_MESSAGE_WINDOW_MS = 60 * 1000
+const DIRECT_MESSAGE_LIMIT_PER_WINDOW = 20
+const DIRECT_MESSAGE_MAX_LENGTH = 500
 
 export function createGuestStore(path) {
   if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true })
@@ -50,7 +53,23 @@ export function createGuestStore(path) {
       created_at TEXT NOT NULL,
       PRIMARY KEY (guest_low_id, guest_high_id),
       CHECK (guest_low_id < guest_high_id)
-    );`)
+    );
+    CREATE TABLE IF NOT EXISTS guest_message_preferences (
+      guest_id TEXT PRIMARY KEY REFERENCES guests(id),
+      allow_friend_messages INTEGER NOT NULL CHECK (allow_friend_messages IN (0, 1))
+    );
+    CREATE TABLE IF NOT EXISTS direct_messages (
+      id TEXT PRIMARY KEY,
+      sender_guest_id TEXT NOT NULL REFERENCES guests(id),
+      recipient_guest_id TEXT NOT NULL REFERENCES guests(id),
+      text TEXT NOT NULL CHECK (length(text) BETWEEN 1 AND 500),
+      created_at TEXT NOT NULL,
+      CHECK (sender_guest_id <> recipient_guest_id)
+    );
+    CREATE INDEX IF NOT EXISTS direct_messages_pair_order
+      ON direct_messages (sender_guest_id, recipient_guest_id, created_at, id);
+    CREATE INDEX IF NOT EXISTS direct_messages_sender_recent
+      ON direct_messages (sender_guest_id, created_at);`)
   const find = db.prepare('SELECT id FROM guests WHERE token_hash = ?')
   const create = db.prepare('INSERT INTO guests (id, token_hash, created_at) VALUES (?, ?, ?)')
   const save = db.prepare('INSERT OR IGNORE INTO saved_items (guest_id, item_id, saved_at) VALUES (?, ?, ?)')
@@ -88,17 +107,32 @@ export function createGuestStore(path) {
   const removeFriendEdge = db.prepare('DELETE FROM friend_edges WHERE guest_low_id = ? AND guest_high_id = ?')
   const blockPendingRequests = db.prepare("UPDATE friend_requests SET status = 'blocked' WHERE status = 'pending' AND ((requester_guest_id = ? AND recipient_guest_id = ?) OR (requester_guest_id = ? AND recipient_guest_id = ?))")
   const removeFriendRequests = db.prepare('DELETE FROM friend_requests WHERE requester_guest_id = ? AND recipient_guest_id = ?')
+  const friendMessagePreference = db.prepare('SELECT allow_friend_messages FROM guest_message_preferences WHERE guest_id = ?')
+  const saveFriendMessagePreference = db.prepare(`INSERT INTO guest_message_preferences (guest_id, allow_friend_messages) VALUES (?, ?)
+    ON CONFLICT (guest_id) DO UPDATE SET allow_friend_messages = excluded.allow_friend_messages`)
+  const activeFriend = db.prepare('SELECT 1 AS found FROM friend_edges WHERE guest_low_id = ? AND guest_high_id = ?')
+  const recentDirectMessages = db.prepare('SELECT count(*) AS count FROM direct_messages WHERE sender_guest_id = ? AND created_at >= ?')
+  const insertDirectMessage = db.prepare('INSERT INTO direct_messages (id, sender_guest_id, recipient_guest_id, text, created_at) VALUES (?, ?, ?, ?, ?)')
+  const conversationMessages = db.prepare(`SELECT id, sender_guest_id, recipient_guest_id, text, created_at
+    FROM direct_messages
+    WHERE (sender_guest_id = ? AND recipient_guest_id = ?) OR (sender_guest_id = ? AND recipient_guest_id = ?)
+    ORDER BY created_at DESC, id DESC LIMIT ?`)
+  const messageEventListeners = new Set()
   const friendPair = (a, b) => a < b ? [a, b] : [b, a]
+  const allowFriendMessages = id => friendMessagePreference.get(id)?.allow_friend_messages !== 0
+  const directMessageDto = row => ({ id: row.id, senderGuestId: row.sender_guest_id, recipientGuestId: row.recipient_guest_id, text: row.text, sentAt: row.created_at })
   const friendState = (id, now) => {
     const nowIso = new Date(now).toISOString()
     expireFriendRequests.run(nowIso)
     return {
-      friends: friendEdgesFor.all(id, id, id).map(row => ({ guestId: row.guest_id, createdAt: row.created_at })),
+      friends: friendEdgesFor.all(id, id, id).map(row => ({ guestId: row.guest_id, createdAt: row.created_at, canMessage: allowFriendMessages(id) && allowFriendMessages(row.guest_id) })),
       incoming: incomingFriendRequests.all(id, nowIso).map(row => ({ requestId: row.id, guestId: row.guest_id, createdAt: row.created_at, expiresAt: row.expires_at })),
       outgoing: outgoingFriendRequests.all(id, nowIso).map(row => ({ requestId: row.id, guestId: row.guest_id, createdAt: row.created_at, expiresAt: row.expires_at })),
+      allowFriendMessages: allowFriendMessages(id),
     }
   }
   const notifyFriendEvent = event => { for (const listener of friendEventListeners) { try { listener(event) } catch { /* notification failures do not undo a stored relationship */ } } }
+  const notifyMessageEvent = event => { for (const listener of messageEventListeners) { try { listener(event) } catch { /* notification failures do not undo a stored message */ } } }
   return {
     resume(token) { return typeof token === 'string' && /^[a-f0-9]{64}$/.test(token) ? find.get(hash(token))?.id ?? null : null },
     create() { const id = randomUUID(), token = randomBytes(32).toString('hex'); create.run(id, hash(token), new Date().toISOString()); return { id, token } },
@@ -128,6 +162,7 @@ export function createGuestStore(path) {
     },
     onBlock(listener) { blockListeners.add(listener); return () => blockListeners.delete(listener) },
     onFriendEvent(listener) { friendEventListeners.add(listener); return () => friendEventListeners.delete(listener) },
+    onMessageEvent(listener) { messageEventListeners.add(listener); return () => messageEventListeners.delete(listener) },
     unblock(blockerId, blockedId) {
       deleteBlock.run(blockerId, blockedId)
       return true
@@ -137,6 +172,42 @@ export function createGuestStore(path) {
     },
     isBlockedBetween(a, b) { return this.isBlocked(a, b) || this.isBlocked(b, a) },
     friendState(id, now = Date.now()) { return friendState(id, now) },
+    friendMessagePreference(id) { return { allowFriendMessages: allowFriendMessages(id) } },
+    setFriendMessagePreference(id, enabled) {
+      if (typeof enabled !== 'boolean') return { error: 'invalid' }
+      if (!hasGuest.get(id)) return { error: 'guest' }
+      const previous = allowFriendMessages(id)
+      saveFriendMessagePreference.run(id, enabled ? 1 : 0)
+      if (previous !== enabled) {
+        for (const friend of friendEdgesFor.all(id, id, id)) notifyFriendEvent({ kind: 'message-preference', actorId: id, targetId: friend.guest_id })
+      }
+      return { allowFriendMessages: enabled }
+    },
+    sendDirectMessage(senderId, recipientId, text, now = Date.now()) {
+      if (senderId === recipientId) return { error: 'self' }
+      if (!hasGuest.get(recipientId)) return { error: 'target' }
+      if (this.isBlockedBetween(senderId, recipientId)) return { error: 'blocked' }
+      const [low, high] = friendPair(senderId, recipientId)
+      if (!activeFriend.get(low, high)) return { error: 'not_friends' }
+      if (!allowFriendMessages(senderId) || !allowFriendMessages(recipientId)) return { error: 'messages_disabled' }
+      if (typeof text !== 'string' || !text.trim() || text.trim().length > DIRECT_MESSAGE_MAX_LENGTH) return { error: 'invalid' }
+      const createdAt = new Date(now).toISOString()
+      const cutoff = new Date(now - DIRECT_MESSAGE_WINDOW_MS).toISOString()
+      if (recentDirectMessages.get(senderId, cutoff).count >= DIRECT_MESSAGE_LIMIT_PER_WINDOW) return { error: 'rate_limited' }
+      const row = { id: randomUUID(), sender_guest_id: senderId, recipient_guest_id: recipientId, text: text.trim(), created_at: createdAt }
+      insertDirectMessage.run(row.id, row.sender_guest_id, row.recipient_guest_id, row.text, row.created_at)
+      const message = directMessageDto(row)
+      notifyMessageEvent({ senderId, recipientId, messageId: message.id })
+      return { status: 'sent', message }
+    },
+    directMessages(viewerId, otherGuestId, limit = 100) {
+      if (viewerId === otherGuestId) return { error: 'self' }
+      if (!hasGuest.get(otherGuestId)) return { error: 'target' }
+      if (this.isBlockedBetween(viewerId, otherGuestId)) return { error: 'blocked' }
+      const [low, high] = friendPair(viewerId, otherGuestId)
+      if (!activeFriend.get(low, high)) return { error: 'not_friends' }
+      return { messages: conversationMessages.all(viewerId, otherGuestId, otherGuestId, viewerId, Math.max(1, Math.min(100, limit))).reverse().map(directMessageDto) }
+    },
     requestFriend(requesterId, recipientId, now = Date.now()) {
       if (requesterId === recipientId) return { error: 'self' }
       if (!hasGuest.get(requesterId) || !hasGuest.get(recipientId)) return { error: 'target' }
@@ -257,7 +328,7 @@ export function guestApi(store) {
       res.setHeader('Cache-Control', 'no-store')
       return res.end(JSON.stringify({ tracks: CATALOGUE }))
     }
-    if (!['/api/guest', '/api/saves', '/api/reports', '/api/blocks', '/api/friends', '/api/friend-requests'].some(route => pathname === route || pathname.startsWith(`${route}/`))) return next()
+    if (!['/api/guest', '/api/saves', '/api/reports', '/api/blocks', '/api/friends', '/api/friend-requests', '/api/messages'].some(route => pathname === route || pathname.startsWith(`${route}/`))) return next()
     res.setHeader('Content-Type', 'application/json; charset=utf-8')
     res.setHeader('Cache-Control', 'no-store')
     const reply = (status, body) => { res.statusCode = status; res.end(JSON.stringify(body)) }
@@ -340,6 +411,32 @@ export function guestApi(store) {
       if (result.error === 'not_requester') return reply(403, { error: 'Friend request unavailable' })
       if (result.error === 'expired') return reply(410, { error: 'Friend request expired' })
       if (result.error) return reply(409, { error: 'Friend request is no longer pending' })
+      return reply(200, result)
+    }
+
+    if (pathname === '/api/messages/preferences' && req.method === 'GET') return reply(200, store.friendMessagePreference(id))
+    if (pathname === '/api/messages/preferences' && req.method === 'PUT') {
+      const parsed = await readJsonBody(req)
+      if (parsed.error || typeof parsed.value?.allowFriendMessages !== 'boolean') return reply(parsed.error === 'too_large' ? 413 : 400, { error: 'Invalid message preference' })
+      return reply(200, store.setFriendMessagePreference(id, parsed.value.allowFriendMessages))
+    }
+    if (pathname === '/api/messages' && req.method === 'POST') {
+      const parsed = await readJsonBody(req)
+      if (parsed.error) return reply(parsed.error === 'too_large' ? 413 : 400, { error: 'Invalid message' })
+      const { recipientGuestId, text } = parsed.value || {}
+      if (!UUID.test(recipientGuestId || '') || typeof text !== 'string') return reply(400, { error: 'Invalid message' })
+      const result = store.sendDirectMessage(id, recipientGuestId, text)
+      if (result.error === 'target') return reply(404, { error: 'Friend not found' })
+      if (result.error === 'rate_limited') return reply(429, { error: 'Message rate limit reached' })
+      if (result.error === 'invalid' || result.error === 'self') return reply(400, { error: 'Invalid message' })
+      if (result.error) return reply(403, { error: 'Direct message unavailable' })
+      return reply(201, { message: result.message })
+    }
+    const conversationMatch = pathname.match(/^\/api\/messages\/([0-9a-f-]{36})$/i)
+    if (conversationMatch && req.method === 'GET') {
+      const result = store.directMessages(id, conversationMatch[1])
+      if (result.error === 'target') return reply(404, { error: 'Friend not found' })
+      if (result.error) return reply(403, { error: 'Conversation unavailable' })
       return reply(200, result)
     }
 

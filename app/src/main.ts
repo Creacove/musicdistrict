@@ -12,7 +12,7 @@ import { connectPresence, type EmoteType, type FriendUpdateKind, type PresencePl
 import { peopleInLocation } from './people.ts'
 import { emotePose, walkingPose } from './avatarMotion.ts'
 import { disposeSpriteResources } from './avatarLifecycle.ts'
-import { acceptGuestFriendRequest, blockGuest, cancelGuestFriendRequest, declineGuestFriendRequest, fetchCatalogue, fetchGuestBlocks, fetchGuestFriends, openGuest, removeGuestSave, requestGuestFriend, saveGuestPreview, submitGuestReport, unfriendGuest, unblockGuest, type CatalogueTrack, type GuestFriendState, type GuestReportReason } from './guest.ts'
+import { acceptGuestFriendRequest, blockGuest, cancelGuestFriendRequest, declineGuestFriendRequest, fetchCatalogue, fetchGuestBlocks, fetchGuestFriends, fetchGuestMessages, openGuest, removeGuestSave, requestGuestFriend, saveGuestPreview, sendGuestMessage, setGuestMessagePreference, submitGuestReport, unfriendGuest, unblockGuest, type CatalogueTrack, type GuestDirectMessage, type GuestFriendState, type GuestReportReason } from './guest.ts'
 import { LIGHTING_PRESETS, getNextLightingMode, type LightingMode } from './lighting.ts'
 import { parseStageTemplate, serializeStageTemplate, type StageLook } from './stageTemplate.ts'
 import { RELEASE_JOURNEY, nextReleaseStation, previousReleaseStation, releaseStation, type ReleaseStationId } from './releaseJourney.ts'
@@ -218,6 +218,8 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
     <section id="friend-section" class="friend-section" hidden aria-labelledby="friend-section-title">
       <h3 id="friend-section-title">Friends & requests</h3>
       <p id="friend-empty" class="friend-empty">Friends are mutual. You choose whether to accept each request.</p>
+      <label class="message-preference"><input id="friend-messages-enabled" type="checkbox" checked> Allow messages from friends</label>
+      <small class="message-preference-note">Turn this off to stop sending and receiving friend messages.</small>
       <div id="friends-list" class="social-list" role="list" aria-label="Friends"></div>
       <div id="incoming-friends" class="social-list" role="list" aria-label="Received friend requests"></div>
       <div id="outgoing-friends" class="social-list" role="list" aria-label="Sent friend requests"></div>
@@ -243,6 +245,18 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
       <p class="report-disclosure">This prototype stores reports in a private local queue. No moderation team is connected yet.</p>
       <p id="report-status" class="report-status" role="status" aria-live="polite"></p>
       <div class="report-actions"><button id="report-cancel" class="people-edit" type="button">Cancel</button><button id="report-submit" class="green-button" type="submit">Send report</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="direct-message-dialog" class="direct-message-dialog" aria-labelledby="direct-message-title">
+    <form id="direct-message-form">
+      <div class="direct-message-heading"><div><small class="eyebrow">PRIVATE · FRIENDS ONLY</small><h2 id="direct-message-title">Message your friend</h2></div><button id="direct-message-close" class="icon-close" type="button" aria-label="Close conversation">×</button></div>
+      <p class="direct-message-disclosure">Messages are delivered only to you and this friend, and stored on the prototype server. Avoid personal contact details. Block or report from People. No moderation team is connected here.</p>
+      <div id="direct-message-history" class="direct-message-history" role="log" aria-live="polite" aria-relevant="additions text"></div>
+      <p id="direct-message-status" class="direct-message-status" role="status" aria-live="polite"></p>
+      <label class="sr-only" for="direct-message-input">Write a message</label>
+      <textarea id="direct-message-input" maxlength="500" rows="2" placeholder="Write to your friend…"></textarea>
+      <div class="direct-message-footer"><small><span id="direct-message-count">0</span>/500 characters</small><button id="direct-message-send" class="green-button" type="submit">Send message</button></div>
     </form>
   </dialog>
 
@@ -611,9 +625,10 @@ function updateAvatarNameTag(targetGroup: THREE.Group, name: string, id: string)
 const mutedIds = new Set<string>()
 const blockedIds = new Set<string>()
 const blockedNames = new Map<string, string>()
-let friendState: GuestFriendState = { friends: [], incoming: [], outgoing: [] }
+let friendState: GuestFriendState = { friends: [], incoming: [], outgoing: [], allowFriendMessages: true }
 let guestSessionReady = false
 let reportTargetId = ''
+let directMessageTarget = ''
 let roomChatOptedIn = false
 const mutePopover = document.createElement('div')
 mutePopover.className = 'mute-popover'
@@ -750,9 +765,107 @@ async function refreshFriendState() {
 }
 
 function handleFriendUpdate(kind: FriendUpdateKind, otherId: string) {
+  if (kind === 'message-preference') {
+    void refreshFriendState().then(() => {
+      if (directMessageTarget === otherId && !friendState.friends.find(friend => friend.guestId === otherId)?.canMessage) {
+        $<HTMLDialogElement>('direct-message-dialog').close()
+        toast('Friend message privacy was turned off')
+      }
+    })
+    return
+  }
   void refreshFriendState()
   if (kind === 'request') toast(`${socialDisplayName(otherId)} sent you a friend request`)
   else if (kind === 'accepted') toast(`${socialDisplayName(otherId)} accepted your friend request`)
+  else if ((kind === 'unfriended' || kind === 'blocked') && directMessageTarget === otherId) {
+    $<HTMLDialogElement>('direct-message-dialog').close()
+    toast('This conversation is unavailable')
+  }
+}
+
+function renderDirectMessageHistory(messages: GuestDirectMessage[]) {
+  const history = $<HTMLElement>('direct-message-history')
+  history.replaceChildren()
+  if (!messages.length) {
+    const empty = document.createElement('p')
+    empty.className = 'direct-message-empty'
+    empty.textContent = 'Start a private conversation with your friend.'
+    history.append(empty)
+    return
+  }
+  for (const message of messages) {
+    const item = document.createElement('article')
+    item.className = `direct-message${message.senderGuestId === presence.getOwnId() ? ' own' : ''}`
+    const sender = document.createElement('small')
+    sender.textContent = message.senderGuestId === presence.getOwnId() ? 'You' : socialDisplayName(message.senderGuestId)
+    const text = document.createElement('p')
+    text.textContent = message.text
+    const time = document.createElement('time')
+    time.dateTime = message.sentAt
+    time.textContent = new Date(message.sentAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+    item.append(sender, text, time)
+    history.append(item)
+  }
+  history.scrollTop = history.scrollHeight
+}
+
+async function loadDirectMessageHistory() {
+  const targetId = directMessageTarget
+  if (!targetId) return
+  $<HTMLElement>('direct-message-status').textContent = ''
+  try {
+    const messages = await fetchGuestMessages(targetId)
+    if (directMessageTarget === targetId) renderDirectMessageHistory(messages)
+  } catch (error) {
+    if (directMessageTarget === targetId) $<HTMLElement>('direct-message-status').textContent = error instanceof Error ? error.message : 'Conversation unavailable'
+  }
+}
+
+function openDirectMessage(otherId: string) {
+  if (!guestSessionReady || !friendState.friends.some(friend => friend.guestId === otherId) || blockedIds.has(otherId)) {
+    toast('Only mutual, unblocked friends can message')
+    return
+  }
+  if (!friendState.allowFriendMessages) {
+    toast('Turn on friend messages in People to start a conversation')
+    return
+  }
+  directMessageTarget = otherId
+  $<HTMLElement>('direct-message-title').textContent = socialDisplayName(otherId)
+  $<HTMLElement>('direct-message-status').textContent = 'Loading conversation…'
+  renderDirectMessageHistory([])
+  $<HTMLDialogElement>('direct-message-dialog').showModal()
+  void loadDirectMessageHistory()
+}
+
+function handleDirectMessageNotice(otherId: string) {
+  if (directMessageTarget === otherId && $<HTMLDialogElement>('direct-message-dialog').open) {
+    void loadDirectMessageHistory()
+  } else {
+    toast(`New message from ${socialDisplayName(otherId)}`)
+  }
+}
+
+async function submitDirectMessage(event: SubmitEvent) {
+  event.preventDefault()
+  const input = $<HTMLTextAreaElement>('direct-message-input')
+  const button = $<HTMLButtonElement>('direct-message-send')
+  const status = $<HTMLElement>('direct-message-status')
+  const text = input.value.trim()
+  if (!text || !directMessageTarget) return
+  button.disabled = true
+  status.textContent = 'Sending…'
+  try {
+    await sendGuestMessage(directMessageTarget, text)
+    input.value = ''
+    $<HTMLElement>('direct-message-count').textContent = '0'
+    await loadDirectMessageHistory()
+    input.focus()
+  } catch (error) {
+    status.textContent = error instanceof Error ? error.message : 'Could not send this message'
+  } finally {
+    button.disabled = false
+  }
 }
 
 async function handleFriendAction(action: 'accept' | 'decline' | 'cancel' | 'unfriend', id: string) {
@@ -772,20 +885,23 @@ function renderSocialState() {
   const incomingList = $<HTMLElement>('incoming-friends')
   const outgoingList = $<HTMLElement>('outgoing-friends')
   const empty = $<HTMLElement>('friend-empty')
+  const messagePreference = $<HTMLInputElement>('friend-messages-enabled')
   section.hidden = SOLO_PREVIEW || !guestSessionReady
   if (section.hidden) return
   const friends = friendState.friends.filter(friend => !blockedIds.has(friend.guestId))
   const incoming = friendState.incoming.filter(request => !blockedIds.has(request.guestId))
   const outgoing = friendState.outgoing.filter(request => !blockedIds.has(request.guestId))
+  messagePreference.checked = friendState.allowFriendMessages
   empty.hidden = Boolean(friends.length || incoming.length || outgoing.length)
   empty.textContent = 'No friends yet. Send a request from a player’s Options menu.'
-  friendsList.innerHTML = friends.map(friend => `<div class="social-entry" role="listitem"><span><b>${escapeHtml(socialDisplayName(friend.guestId))}</b><small>Friend</small></span><button type="button" class="social-action" data-social-action="unfriend" data-target-id="${escapeHtml(friend.guestId)}">Unfriend</button></div>`).join('')
+  friendsList.innerHTML = friends.map(friend => `<div class="social-entry" role="listitem"><span><b>${escapeHtml(socialDisplayName(friend.guestId))}</b><small>${friend.canMessage ? 'Friend' : 'Friend · messaging unavailable'}</small></span><button type="button" class="social-action" data-social-action="message" data-target-id="${escapeHtml(friend.guestId)}" ${friendState.allowFriendMessages && friend.canMessage ? '' : 'disabled title="Messages are unavailable for this friend"'}>Message</button><button type="button" class="social-action" data-social-action="unfriend" data-target-id="${escapeHtml(friend.guestId)}">Unfriend</button></div>`).join('')
   incomingList.innerHTML = incoming.map(request => `<div class="social-entry social-request" role="listitem"><span><b>${escapeHtml(socialDisplayName(request.guestId))}</b><small>Sent a friend request · expires ${new Date(request.expiresAt).toLocaleDateString()}</small></span><button type="button" class="social-action accept" data-social-action="accept" data-target-id="${escapeHtml(request.requestId)}">Accept</button><button type="button" class="social-action decline" data-social-action="decline" data-target-id="${escapeHtml(request.requestId)}">Decline</button></div>`).join('')
   outgoingList.innerHTML = outgoing.map(request => `<div class="social-entry" role="listitem"><span><b>${escapeHtml(socialDisplayName(request.guestId))}</b><small>Request sent · expires ${new Date(request.expiresAt).toLocaleDateString()}</small></span><button type="button" class="social-action" data-social-action="cancel" data-target-id="${escapeHtml(request.requestId)}">Cancel</button></div>`).join('')
   section.querySelectorAll<HTMLButtonElement>('[data-social-action]').forEach(button => {
     button.onclick = () => {
-      const action = button.dataset.socialAction as 'accept' | 'decline' | 'cancel' | 'unfriend'
       const id = button.dataset.targetId || ''
+      if (button.dataset.socialAction === 'message') { openDirectMessage(id); return }
+      const action = button.dataset.socialAction as 'accept' | 'decline' | 'cancel' | 'unfriend'
       button.disabled = true
       void handleFriendAction(action, id).finally(() => { button.disabled = false })
     }
@@ -1046,7 +1162,7 @@ function renderPeople(players: PresencePlayer[], connected: boolean) {
   renderSocialState()
   wave.disabled = view.availability !== 'online' || view.people.length === 0
 }
-const presence = connectPresence(renderPresence, handleIncomingEmote, handleIncomingChat, handleFriendUpdate)
+const presence = connectPresence(renderPresence, handleIncomingEmote, handleIncomingChat, handleFriendUpdate, handleDirectMessageNotice)
 window.addEventListener('beforeunload', () => presence.close())
 
 const keys = new Set<string>()
@@ -2142,6 +2258,25 @@ $<HTMLButtonElement>('people-wave').onclick = () => { if (presenceConnected && c
 $<HTMLButtonElement>('people-edit-avatar').onclick = () => { $<HTMLElement>('people-sheet').hidden = true; $<HTMLElement>('avatar-sheet').hidden = false; applyAppearance() }
 $<HTMLButtonElement>('report-close').onclick = () => $<HTMLDialogElement>('report-dialog').close()
 $<HTMLButtonElement>('report-cancel').onclick = () => $<HTMLDialogElement>('report-dialog').close()
+$<HTMLButtonElement>('direct-message-close').onclick = () => $<HTMLDialogElement>('direct-message-dialog').close()
+$<HTMLDialogElement>('direct-message-dialog').addEventListener('close', () => { directMessageTarget = '' })
+$<HTMLFormElement>('direct-message-form').addEventListener('submit', submitDirectMessage)
+$<HTMLTextAreaElement>('direct-message-input').oninput = event => { $<HTMLElement>('direct-message-count').textContent = String((event.target as HTMLTextAreaElement).value.length) }
+$<HTMLInputElement>('friend-messages-enabled').onchange = async event => {
+  const input = event.target as HTMLInputElement
+  const enabled = input.checked
+  input.disabled = true
+  try {
+    await setGuestMessagePreference(enabled)
+    friendState.allowFriendMessages = enabled
+    renderSocialState()
+    if (!enabled && $<HTMLDialogElement>('direct-message-dialog').open) $<HTMLDialogElement>('direct-message-dialog').close()
+    toast(enabled ? 'Friend messages are on' : 'Friend messages are off')
+  } catch (error) {
+    input.checked = friendState.allowFriendMessages
+    toast(error instanceof Error ? error.message : 'Could not update message privacy')
+  } finally { input.disabled = false }
+}
 $<HTMLFormElement>('report-form').addEventListener('submit', async event => {
   event.preventDefault()
   const submit = $<HTMLButtonElement>('report-submit')
