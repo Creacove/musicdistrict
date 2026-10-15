@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 
-export type ServiceNpcRole = 'venue-usher' | 'studio-technician'
+export type ServiceNpcRole = 'venue-usher' | 'studio-technician' | 'city-concierge'
 
 export const SERVICE_NPC_ROLES = {
   'venue-usher': {
@@ -12,6 +12,11 @@ export const SERVICE_NPC_ROLES = {
     location: 'studio', badge: 'NPC · STUDIO TECH', actorType: 'NPC',
     cosmeticOnly: true, countsAsHuman: false, financialEffect: 'none',
     shirt: '#384151', shirtAccent: '#59b7a1', trouser: '#252a34', skin: '#513222', hair: '#181313',
+  },
+  'city-concierge': {
+    location: 'square', badge: 'NPC · CITY CONCIERGE', actorType: 'NPC',
+    cosmeticOnly: true, countsAsHuman: false, financialEffect: 'none',
+    shirt: '#254d45', shirtAccent: '#e1b15d', trouser: '#352d3d', skin: '#8d5524', hair: '#191512',
   },
 } as const
 
@@ -155,8 +160,8 @@ export function createServiceNpc(role: ServiceNpcRole): THREE.Group {
     const hand = makeMesh(new THREE.SphereGeometry(.075, 8, 6), skin, shoulder)
     hand.position.set(side * .025, -.69, .02)
   }
-  armPivots[0].rotation.z = role === 'venue-usher' ? -.14 : .18
-  armPivots[1].rotation.z = role === 'venue-usher' ? .58 : -.32
+  armPivots[0].rotation.z = role === 'venue-usher' ? -.14 : role === 'city-concierge' ? -.42 : .18
+  armPivots[1].rotation.z = role === 'venue-usher' ? .58 : role === 'city-concierge' ? .42 : -.32
 
   const badge = makeMesh(new THREE.PlaneGeometry(.34, .19), new THREE.MeshBasicMaterial({ map: badgeTexture(spec.badge, spec.shirtAccent), side: THREE.DoubleSide }), upper)
   badge.position.set(0, .52, .295)
@@ -173,7 +178,7 @@ export function createServiceNpc(role: ServiceNpcRole): THREE.Group {
 
   const chestSeam = makeMesh(new THREE.BoxGeometry(.018, .42, .012), trim, upper)
   chestSeam.position.set(-.19, .03, .258)
-  actor.userData.idlePose = { upper, armPivots, armRestZ: armPivots[1].rotation.z, phase: role === 'venue-usher' ? .4 : 2.1 }
+  actor.userData.idlePose = { upper, armPivots, armRestZ: armPivots[1].rotation.z, phase: role === 'venue-usher' ? .4 : role === 'city-concierge' ? 1.25 : 2.1 }
   return actor
 }
 

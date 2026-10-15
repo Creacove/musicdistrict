@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { instanceStaticBoxes } from './instanceBoxes.ts'
+import { createServiceNpc, updateServiceNpc } from './serviceNpc.ts'
 
 const mat = (color: string, metalness = 0, emissive = '#000000') =>
   new THREE.MeshStandardMaterial({ color, roughness: .78, metalness, emissive, emissiveIntensity: .45 })
@@ -350,6 +351,11 @@ export function makeSquare() {
   for (const x of [1.45, 4.55]) box(root, .14, .85, 1.1, black, x, .43, 9)
   box(root, 2.5, 3.8, .12, black, 20, 2, -1.5)
   sign(root, ['LAGOS', 'CREATES', 'STARS'], 2.35, 3.6, 20, 2, -1.41, { bg: '#4b2c32', ink: '#f1dac0', size: 92 })
+  const concierge = createServiceNpc('city-concierge')
+  concierge.position.set(-2.6, 0, 6.4)
+  concierge.rotation.y = Math.atan2(2.6, 1.6)
+  root.add(concierge)
+  root.userData.updateConcierge = (time: number) => updateServiceNpc(concierge, time)
   instanceStaticBoxes(root)
   return root
 }

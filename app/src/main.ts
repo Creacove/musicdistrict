@@ -1494,7 +1494,7 @@ walkMarker.rotation.x = -Math.PI / 2; walkMarker.visible = false; walkMarker.ren
 const routeMarker = new THREE.Mesh(new THREE.RingGeometry(.7, .84, 32), new THREE.MeshBasicMaterial({ color: '#f7d37d', side: THREE.DoubleSide, depthTest: false }))
 routeMarker.rotation.x = -Math.PI / 2; routeMarker.visible = false; routeMarker.renderOrder = 21; scene.add(routeMarker)
 const releaseRoute = (id: ReleaseStationId): [number, number] => { const { x, z } = releaseStation(id); return [x, z] }
-const routePoints: Record<Hotspot, [number, number]> = { kiosk: [-8, 3.55], studio: [13, -8], palmEntrance: [10, 2], stage: [0, -7], venueExit: [-10, 9], studioDesk: [0, -4.05], studioExit: [-10, 9], releaseEntrance: [-13, -8], releaseIntake: releaseRoute('intake'), releaseArtwork: releaseRoute('artwork'), releaseMetadata: releaseRoute('metadata'), releaseListening: releaseRoute('listening'), releaseRights: releaseRoute('rights'), releaseCalendar: releaseRoute('calendar'), releaseExit: [-10, 9] }
+const routePoints: Record<Hotspot, [number, number]> = { kiosk: [-8, 3.55], cityConcierge: [-2.6, 6.4], studio: [13, -8], palmEntrance: [10, 2], stage: [0, -7], venueExit: [-10, 9], studioDesk: [0, -4.05], studioExit: [-10, 9], releaseEntrance: [-13, -8], releaseIntake: releaseRoute('intake'), releaseArtwork: releaseRoute('artwork'), releaseMetadata: releaseRoute('metadata'), releaseListening: releaseRoute('listening'), releaseRights: releaseRoute('rights'), releaseCalendar: releaseRoute('calendar'), releaseExit: [-10, 9] }
 const ground = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), raycaster = new THREE.Raycaster()
 function clearWalkTarget() { walkTarget = null; walkPath = []; walkMarker.visible = false }
 function beginWalkTo(x: number, z: number): boolean {
@@ -1639,7 +1639,7 @@ function setRoute(target: Hotspot) {
   routeMarker.visible = true
   $<HTMLElement>('route').hidden = false
   const releaseTitle = RELEASE_JOURNEY.find(station => station.hotspot === target)?.title
-  $<HTMLElement>('route-title').textContent = releaseTitle?.toUpperCase() ?? (target === 'palmEntrance' ? 'PALM ROOM' : target === 'stage' ? 'STAGE SETUP' : target === 'studio' ? 'CITY STUDIO' : target === 'studioDesk' ? 'BEAT DESK' : target === 'studioExit' ? 'STUDIO EXIT' : target === 'releaseEntrance' ? 'RELEASE HOUSE' : target === 'releaseExit' ? 'RELEASE EXIT' : target === 'venueExit' ? 'VENUE EXIT' : 'LISTENING STATION')
+  $<HTMLElement>('route-title').textContent = releaseTitle?.toUpperCase() ?? (target === 'cityConcierge' ? 'CITY CONCIERGE' : target === 'palmEntrance' ? 'PALM ROOM' : target === 'stage' ? 'STAGE SETUP' : target === 'studio' ? 'CITY STUDIO' : target === 'studioDesk' ? 'BEAT DESK' : target === 'studioExit' ? 'STUDIO EXIT' : target === 'releaseEntrance' ? 'RELEASE HOUSE' : target === 'releaseExit' ? 'RELEASE EXIT' : target === 'venueExit' ? 'VENUE EXIT' : 'LISTENING STATION')
   closeSheets()
   toast(beginWalkTo(x, z) ? 'Walking to the marked place · steer with WASD or the touch pad' : 'No clear walking route · move closer and try again')
 }
@@ -2163,6 +2163,12 @@ function interact() {
     $<HTMLElement>('route').hidden = true
     clearWalkTarget()
   }
+  if (nearby === 'cityConcierge') openAction(
+    'City Concierge',
+    'Welcome to Music Square. Walk with the touch pad or WASD, then use Map to choose a place. City Studio has a free beat desk; the Listening station has original previews. No purchase is needed.',
+    'Find free music spots',
+    openMap,
+  )
   if (nearby === 'kiosk') {
     const track = catalogue[currentTrackIndex] || catalogue[0]
     const isSaved = savedTrackIds.has(track.id)
@@ -2261,6 +2267,7 @@ function refreshContext() {
   if (!nearby) return
   const names: Record<Hotspot, [string, string]> = {
     kiosk: ['LISTEN HERE', 'Choose a preview and save it'],
+    cityConcierge: ['CITY CONCIERGE', 'Meet your guide · find free music spots'],
     studio: ['CITY STUDIO', 'Enter the free beat room'],
     studioDesk: ['BEAT DESK', 'Tap pads and make a private beat'],
     studioExit: ['MUSIC SQUARE', 'Leave City Studio'],
@@ -2861,6 +2868,7 @@ function frame() {
   }
   routeMarker.visible = !!routeTarget
   if (location === 'venue') palmRoom?.update(elapsed)
+  if (location === 'square') (square.userData.updateConcierge as ((time: number) => void) | undefined)?.(elapsed)
   if (location === 'studio') (studioRoom?.userData.updateServiceNpc as ((time: number) => void) | undefined)?.(elapsed)
   renderer.render(scene, camera)
   if (readyMs === null) readyMs = performance.now()

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { findWalkPath, type WalkPoint } from '../src/navigation.ts'
-import { isPointBlocked, type Location } from '../src/worldModel.ts'
+import { getNearby, isPointBlocked, type Location } from '../src/worldModel.ts'
 
 function assertWalkable(location: Location, from: WalkPoint, to: WalkPoint) {
   const path = findWalkPath(location, from, to)
@@ -22,6 +22,11 @@ test('tap-to-walk routes around square planters to every playable door', () => {
   for (const destination of [[-8, 3.5], [13, -8], [-13, -8], [10, 2]] as WalkPoint[]) {
     assertWalkable('square', [-4, 7], destination)
   }
+})
+
+test('City Concierge is discoverable from spawn and reachable on foot', () => {
+  assert.equal(getNearby('square', 0, 8), 'cityConcierge')
+  assertWalkable('square', [0, 8], [-2.6, 6.4])
 })
 
 test('tap-to-walk routes around the venue lounge and studio desk', () => {
