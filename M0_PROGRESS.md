@@ -452,6 +452,12 @@ Added an integration test that connects 20 real WebSocket test clients to an iso
 - **Verification:** The preceding full suite passed 91/91 before the final server-restart test was added. The reconnect-focused run passes 2/2, and the production TypeScript/Vite build succeeds. `git diff --check` is part of the publish check.
 - **Hosting boundary:** The Netlify URL is a static solo demo. Shared parties, proposals, and live updates require the self-hosted Node/SQLite/WebSocket server and are not available on that URL.
 
+## M1 mobile Data Saver correction — 15 October 2026
+
+- **Fix:** The renderer set the saved quality preset and then unconditionally re-enabled shadows. Initialization now sets the shadow type before applying the selected preset, so Data Saver keeps shadows disabled.
+- **Live browser:** Production asset `index-DQxtolbZ` tested at 390 × 844. With device pixel ratio simulated at 3, Balanced rendered at 585 px canvas width; Data Saver rendered at 390 px, persisted `scene-quality=saver`, and selected the correct button. Browser reported zero console errors.
+- **Verification:** TypeScript/Vite production build passes with the Netlify solo-demo flag; production deploy `6ad09a3aa467e7fe7bfd1628` is live. The browser check demonstrates render-scale behavior, not physical-phone thermals or sustained frame rate; those still need the user's device.
+
 ## Current next slices — updated 15 October 2026
 
 1. Continue M1 phone-device and performance validation; embedded Chromium mobile viewport checks do not replace physical Android/iPhone testing.
