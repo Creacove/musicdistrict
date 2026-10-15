@@ -72,7 +72,21 @@ export function attachPresence(httpServer, { store } = {}) {
       })
     }
   })
-  const stopListeners = () => { closing = true; stopBlockListener?.(); stopFriendEventListener?.(); stopMessageListener?.() }
+  const stopPartyListener = store?.onPartyEvent?.(event => {
+    for (const [socket, player] of players) {
+      if (!event.memberIds?.includes(player.id)) continue
+      if (event.kind === 'invited' && player.id !== event.targetId) continue
+      if (event.actorId && player.id !== event.actorId && isBlockedBetween(event.actorId, player.id)) continue
+      send(socket, {
+        type: 'party-update',
+        kind: event.kind,
+        partyId: event.partyId,
+        invitationId: event.invitationId,
+        otherId: event.actorId === player.id ? player.id : event.actorId,
+      })
+    }
+  })
+  const stopListeners = () => { closing = true; stopBlockListener?.(); stopFriendEventListener?.(); stopMessageListener?.(); stopPartyListener?.() }
   wss.on('close', stopListeners)
   const closeWebSocketServer = wss.close.bind(wss)
   wss.close = callback => { stopListeners(); return closeWebSocketServer(callback) }
@@ -89,11 +103,13 @@ export function attachPresence(httpServer, { store } = {}) {
     } catch { /* ignore URL parse error */ }
 
     const player = { id, name: 'Guest', x: -4, z: 7, angle: 0, dancing: false, emote: null, location: 'square', chatOptIn: false, authenticated }
+    let partyTracked = false
     send(socket, {
       type: 'welcome', id, authenticated,
       players: [...players.values()].filter(other => !isBlockedBetween(id, other.id)),
     })
     players.set(socket, player)
+    if (authenticated) { store?.partySessionConnected?.(id); partyTracked = true }
     broadcast({ type: 'join', player }, socket, player)
     let lastMove = 0
     let lastChat = 0
@@ -105,8 +121,11 @@ export function attachPresence(httpServer, { store } = {}) {
         if (store && typeof token === 'string') {
           const guestId = store.resume(token)
           if (guestId) {
+            const needsPartyTrack = !partyTracked || id !== guestId
+            if (partyTracked && id !== guestId) store.partySessionDisconnected?.(id)
             player.id = id = guestId
             player.authenticated = authenticated = true
+            if (needsPartyTrack) { store.partySessionConnected?.(guestId); partyTracked = true }
             send(socket, { type: 'auth', success: true, id })
             broadcast({ type: 'move', player }, socket, player)
           } else {
@@ -168,7 +187,11 @@ export function attachPresence(httpServer, { store } = {}) {
       lastMove = now
       broadcast({ type: 'move', player }, socket, player)
     })
-    socket.on('close', () => { players.delete(socket); broadcast({ type: 'leave', id }, undefined, player) })
+    socket.on('close', () => {
+      players.delete(socket)
+      if (partyTracked && !closing) store?.partySessionDisconnected?.(id)
+      broadcast({ type: 'leave', id }, undefined, player)
+    })
   })
   return wss
 }

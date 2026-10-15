@@ -10,6 +10,17 @@ export type GuestFriendState = {
 }
 export type FriendRequestReceipt = { requestId: string; status: 'pending'; expiresAt: string; duplicate: boolean }
 export type GuestDirectMessage = { id: string; senderGuestId: string; recipientGuestId: string; text: string; sentAt: string }
+export type GuestParty = {
+  partyId: string
+  leaderId: string
+  createdAt: string
+  members: { guestId: string; joinedAt: string; leader: boolean }[]
+  invitations: { invitationId: string; guestId: string; createdAt: string; expiresAt: string }[]
+}
+export type GuestPartyState = {
+  party: GuestParty | null
+  incoming: { invitationId: string; partyId: string; senderId: string; leaderId: string; createdAt: string; expiresAt: string }[]
+}
 let token = ''
 const SOLO_PREVIEW = import.meta.env?.VITE_SCENE_DEMO_MODE === 'true'
 const PREVIEW_CATALOGUE: CatalogueTrack[] = [
@@ -144,6 +155,48 @@ export async function sendGuestMessage(recipientGuestId: string, text: string): 
 export async function setGuestMessagePreference(allowFriendMessages: boolean): Promise<void> {
   const response = await guestRequest('/api/messages/preferences', { method: 'PUT', body: JSON.stringify({ allowFriendMessages }) })
   if (!response.ok) throw new Error('Could not update your message privacy setting')
+}
+
+export async function fetchGuestParty(): Promise<GuestPartyState> {
+  if (SOLO_PREVIEW) return { party: null, incoming: [] }
+  const response = await guestRequest('/api/parties/me')
+  if (!response.ok) throw new Error('Party state unavailable')
+  return response.json() as Promise<GuestPartyState>
+}
+
+export async function createGuestParty(): Promise<{ partyId: string }> {
+  const response = await guestRequest('/api/parties', { method: 'POST' })
+  if (!response.ok) throw new Error(response.status === 409 ? 'You are already in a party' : 'Could not start a party')
+  return response.json() as Promise<{ partyId: string }>
+}
+
+export async function inviteGuestToParty(partyId: string, targetGuestId: string): Promise<void> {
+  const response = await guestRequest(`/api/parties/${encodeURIComponent(partyId)}/invitations`, { method: 'POST', body: JSON.stringify({ targetGuestId }) })
+  if (!response.ok) {
+    if (response.status === 403) throw new Error('Only the leader can invite unblocked friends')
+    if (response.status === 409) throw new Error('Party is full or this friend is already in a party')
+    throw new Error('Could not invite this friend')
+  }
+}
+
+export async function acceptGuestPartyInvitation(invitationId: string): Promise<void> {
+  const response = await guestRequest(`/api/party-invitations/${encodeURIComponent(invitationId)}/accept`, { method: 'POST' })
+  if (!response.ok) {
+    if (response.status === 410) throw new Error('This party invitation expired')
+    if (response.status === 409) throw new Error('Party is full or you are already in another party')
+    throw new Error('Could not join this party')
+  }
+}
+
+export async function declineGuestPartyInvitation(invitationId: string): Promise<void> {
+  const response = await guestRequest(`/api/party-invitations/${encodeURIComponent(invitationId)}/decline`, { method: 'POST' })
+  if (!response.ok) throw new Error('Could not decline this party invitation')
+}
+
+export async function leaveGuestParty(partyId: string): Promise<{ newLeaderId: string | null }> {
+  const response = await guestRequest(`/api/parties/${encodeURIComponent(partyId)}/leave`, { method: 'POST' })
+  if (!response.ok) throw new Error('Could not leave this party')
+  return response.json() as Promise<{ newLeaderId: string | null }>
 }
 
 export async function blockGuest(targetGuestId: string): Promise<void> {

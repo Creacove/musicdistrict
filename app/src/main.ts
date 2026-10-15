@@ -8,11 +8,11 @@ import { loadLocalMaster, saveLocalMaster } from './localMaster.ts'
 import { blankReleaseDraft, releaseBlockers, validReleaseDraft, canPreflight, RELEASE_GENRES, type ReleaseDraft, type ArtworkVariant, type ReleaseGenre } from './releaseDraft.ts'
 import { createReleaseSleeveSvg } from './releaseArtwork.ts'
 import { rehearsalMetrics } from './eventPreview.ts'
-import { connectPresence, type EmoteType, type FriendUpdateKind, type PresencePlayer } from './presence.ts'
+import { connectPresence, type EmoteType, type FriendUpdateKind, type PartyUpdateKind, type PresencePlayer } from './presence.ts'
 import { peopleInLocation } from './people.ts'
 import { emotePose, walkingPose } from './avatarMotion.ts'
 import { disposeSpriteResources } from './avatarLifecycle.ts'
-import { acceptGuestFriendRequest, blockGuest, cancelGuestFriendRequest, declineGuestFriendRequest, fetchCatalogue, fetchGuestBlocks, fetchGuestFriends, fetchGuestMessages, openGuest, removeGuestSave, requestGuestFriend, saveGuestPreview, sendGuestMessage, setGuestMessagePreference, submitGuestReport, unfriendGuest, unblockGuest, type CatalogueTrack, type GuestDirectMessage, type GuestFriendState, type GuestReportReason } from './guest.ts'
+import { acceptGuestFriendRequest, acceptGuestPartyInvitation, blockGuest, cancelGuestFriendRequest, createGuestParty, declineGuestFriendRequest, declineGuestPartyInvitation, fetchCatalogue, fetchGuestBlocks, fetchGuestFriends, fetchGuestMessages, fetchGuestParty, inviteGuestToParty, leaveGuestParty, openGuest, removeGuestSave, requestGuestFriend, saveGuestPreview, sendGuestMessage, setGuestMessagePreference, submitGuestReport, unfriendGuest, unblockGuest, type CatalogueTrack, type GuestDirectMessage, type GuestFriendState, type GuestPartyState, type GuestReportReason } from './guest.ts'
 import { LIGHTING_PRESETS, getNextLightingMode, type LightingMode } from './lighting.ts'
 import { parseStageTemplate, serializeStageTemplate, type StageLook } from './stageTemplate.ts'
 import { RELEASE_JOURNEY, nextReleaseStation, previousReleaseStation, releaseStation, type ReleaseStationId } from './releaseJourney.ts'
@@ -223,6 +223,14 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
       <div id="friends-list" class="social-list" role="list" aria-label="Friends"></div>
       <div id="incoming-friends" class="social-list" role="list" aria-label="Received friend requests"></div>
       <div id="outgoing-friends" class="social-list" role="list" aria-label="Sent friend requests"></div>
+    </section>
+    <section id="party-section" class="party-section" hidden aria-labelledby="party-title">
+      <h3 id="party-title">Party</h3>
+      <p class="party-note">A temporary group of up to four real guests. Invitations expire in 10 minutes. No pooled money.</p>
+      <div id="party-overview"></div>
+      <div id="party-incoming" class="social-list" role="list" aria-label="Party invitations"></div>
+      <button id="party-create" class="social-action party-create" data-party-action="create" type="button">Start a party</button>
+      <small class="party-note">Group chat and travel are not available in this preview yet.</small>
     </section>
     <section id="blocked-section" class="blocked-section" hidden aria-labelledby="blocked-title"><h3 id="blocked-title">Blocked sessions</h3><div id="blocked-list" role="list"></div></section>
     <div class="people-actions"><button id="people-wave" class="green-button" disabled>👋 Wave to everyone here</button><button id="people-edit-avatar" class="people-edit">Customize avatar</button></div>
@@ -626,6 +634,8 @@ const mutedIds = new Set<string>()
 const blockedIds = new Set<string>()
 const blockedNames = new Map<string, string>()
 let friendState: GuestFriendState = { friends: [], incoming: [], outgoing: [], allowFriendMessages: true }
+let partyState: GuestPartyState = { party: null, incoming: [] }
+let partyRefreshTimer: number | undefined
 let guestSessionReady = false
 let reportTargetId = ''
 let directMessageTarget = ''
@@ -721,6 +731,7 @@ async function setPlayerBlocked(id: string, blocked: boolean) {
     try {
       await blockGuest(id)
       await refreshFriendState()
+      await refreshPartyState()
       toast('Player blocked · contact and visibility are restricted')
     } catch {
       blockedIds.delete(id)
@@ -764,6 +775,93 @@ async function refreshFriendState() {
   } catch { /* keep the last known list when the connection drops */ }
 }
 
+async function refreshPartyState() {
+  if (!guestSessionReady) return
+  try {
+    partyState = await fetchGuestParty()
+    renderPeople(connectedPlayers, presenceConnected)
+  } catch { /* keep the last known party state while the service reconnects */ }
+}
+
+function handlePartyUpdate(kind: PartyUpdateKind, _partyId: string, otherId?: string) {
+  void refreshPartyState()
+  if (kind === 'invited') toast(`Party invitation from ${socialDisplayName(otherId || '')}`)
+  else if (kind === 'joined' && otherId !== presence.getOwnId()) toast(`${socialDisplayName(otherId || '')} joined the party`)
+  else if (kind === 'left' && otherId !== presence.getOwnId()) toast(`${socialDisplayName(otherId || '')} left the party`)
+  else if (kind === 'expired') toast('Party closed after everyone disconnected')
+}
+
+async function handlePartyAction(action: 'create' | 'invite' | 'accept' | 'decline' | 'leave', id = '') {
+  try {
+    if (action === 'create') {
+      await createGuestParty()
+      await refreshPartyState()
+      toast('Party started · invite an unblocked friend')
+    } else if (action === 'invite') {
+      if (!partyState.party) throw new Error('Start a party first')
+      await inviteGuestToParty(partyState.party.partyId, id)
+      await refreshPartyState()
+      toast('Party invitation sent · expires in 10 minutes')
+    } else if (action === 'accept') {
+      await acceptGuestPartyInvitation(id)
+      await refreshPartyState()
+      toast('You joined the party')
+    } else if (action === 'decline') {
+      await declineGuestPartyInvitation(id)
+      await refreshPartyState()
+      toast('Party invitation declined')
+    } else {
+      const oldLeader = partyState.party?.leaderId === presence.getOwnId()
+      const result = await leaveGuestParty(id)
+      await refreshPartyState()
+      toast(oldLeader && result.newLeaderId ? `You left · ${socialDisplayName(result.newLeaderId)} is now leader` : 'You left the party')
+    }
+  } catch (error) {
+    toast(error instanceof Error ? error.message : 'Could not update the party')
+  }
+}
+
+function wirePartyActions(root: HTMLElement) {
+  root.querySelectorAll<HTMLButtonElement>('[data-party-action]').forEach(button => {
+    button.onclick = () => {
+      const action = button.dataset.partyAction as 'create' | 'invite' | 'accept' | 'decline' | 'leave'
+      const id = action === 'leave' ? button.dataset.partyId || ''
+        : action === 'accept' || action === 'decline' ? button.dataset.invitationId || ''
+          : button.dataset.targetId || ''
+      button.disabled = true
+      void handlePartyAction(action, id).finally(() => { button.disabled = false })
+    }
+  })
+}
+
+function renderPartyState() {
+  const section = $<HTMLElement>('party-section')
+  const overview = $<HTMLElement>('party-overview')
+  const incoming = $<HTMLElement>('party-incoming')
+  const create = $<HTMLButtonElement>('party-create')
+  if (partyRefreshTimer !== undefined) window.clearTimeout(partyRefreshTimer)
+  partyRefreshTimer = undefined
+  section.hidden = SOLO_PREVIEW || !guestSessionReady
+  if (section.hidden) return
+  const party = partyState.party
+  create.hidden = Boolean(party || partyState.incoming.length)
+  const ownId = presence.getOwnId()
+  if (!party) overview.replaceChildren()
+  else {
+    const memberRows = party.members.map(member => `<div class="party-member" role="listitem"><span>${member.guestId === ownId ? 'You' : escapeHtml(socialDisplayName(member.guestId))}</span><small>${member.leader ? 'Leader' : 'Member'}</small></div>`).join('')
+    const inviteRows = party.invitations.map(invite => `<div class="party-invite-pending" role="listitem"><span>${escapeHtml(socialDisplayName(invite.guestId))}</span><small>Invited · expires ${new Date(invite.expiresAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</small></div>`).join('')
+    overview.innerHTML = `<div class="party-summary"><b>${party.members.length}/4 guests · ${party.leaderId === ownId ? 'You lead' : `${escapeHtml(socialDisplayName(party.leaderId))} leads`}</b><div class="party-members" role="list">${memberRows}${inviteRows}</div><button class="social-action" data-party-action="leave" data-party-id="${escapeHtml(party.partyId)}">Leave party</button></div>`
+  }
+  incoming.innerHTML = partyState.incoming.map(invite => `<div class="social-entry social-request" role="listitem"><span><b>${escapeHtml(socialDisplayName(invite.leaderId))}</b><small>Invited you to a party · expires ${new Date(invite.expiresAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</small></span><button class="social-action accept" data-party-action="accept" data-invitation-id="${escapeHtml(invite.invitationId)}" ${party ? 'disabled title="Leave your current party before joining another"' : ''}>Join</button><button class="social-action decline" data-party-action="decline" data-invitation-id="${escapeHtml(invite.invitationId)}">Decline</button></div>`).join('')
+  wirePartyActions(section)
+  const expiries = [
+    ...partyState.incoming.map(invite => invite.expiresAt),
+    ...(party?.invitations || []).map(invite => invite.expiresAt),
+  ].map(value => new Date(value).getTime()).filter(Number.isFinite)
+  if (expiries.length) partyRefreshTimer = window.setTimeout(() => { void refreshPartyState() }, Math.max(0, Math.min(...expiries) - Date.now() + 50))
+  create.disabled = false
+}
+
 function handleFriendUpdate(kind: FriendUpdateKind, otherId: string) {
   if (kind === 'message-preference') {
     void refreshFriendState().then(() => {
@@ -775,6 +873,7 @@ function handleFriendUpdate(kind: FriendUpdateKind, otherId: string) {
     return
   }
   void refreshFriendState()
+  if (kind === 'unfriended' || kind === 'blocked') void refreshPartyState()
   if (kind === 'request') toast(`${socialDisplayName(otherId)} sent you a friend request`)
   else if (kind === 'accepted') toast(`${socialDisplayName(otherId)} accepted your friend request`)
   else if ((kind === 'unfriended' || kind === 'blocked') && directMessageTarget === otherId) {
@@ -875,6 +974,7 @@ async function handleFriendAction(action: 'accept' | 'decline' | 'cancel' | 'unf
     else if (action === 'cancel') await cancelGuestFriendRequest(id)
     else await unfriendGuest(id)
     await refreshFriendState()
+    if (action === 'unfriend') await refreshPartyState()
     toast(action === 'accept' ? 'Friend request accepted' : action === 'decline' ? 'Friend request declined' : action === 'cancel' ? 'Friend request cancelled' : 'Friend removed')
   } catch (error) { toast(error instanceof Error ? error.message : 'Could not update friend request') }
 }
@@ -891,10 +991,23 @@ function renderSocialState() {
   const friends = friendState.friends.filter(friend => !blockedIds.has(friend.guestId))
   const incoming = friendState.incoming.filter(request => !blockedIds.has(request.guestId))
   const outgoing = friendState.outgoing.filter(request => !blockedIds.has(request.guestId))
+  const party = partyState.party
+  const partyMemberIds = new Set(party?.members.map(member => member.guestId) || [])
+  const pendingPartyIds = new Set(party?.invitations.map(invite => invite.guestId) || [])
+  const canInvite = Boolean(party && party.leaderId === presence.getOwnId() && party.members.length + party.invitations.length < 4)
   messagePreference.checked = friendState.allowFriendMessages
   empty.hidden = Boolean(friends.length || incoming.length || outgoing.length)
   empty.textContent = 'No friends yet. Send a request from a player’s Options menu.'
-  friendsList.innerHTML = friends.map(friend => `<div class="social-entry" role="listitem"><span><b>${escapeHtml(socialDisplayName(friend.guestId))}</b><small>${friend.canMessage ? 'Friend' : 'Friend · messaging unavailable'}</small></span><button type="button" class="social-action" data-social-action="message" data-target-id="${escapeHtml(friend.guestId)}" ${friendState.allowFriendMessages && friend.canMessage ? '' : 'disabled title="Messages are unavailable for this friend"'}>Message</button><button type="button" class="social-action" data-social-action="unfriend" data-target-id="${escapeHtml(friend.guestId)}">Unfriend</button></div>`).join('')
+  friendsList.innerHTML = friends.map(friend => {
+    const inviteButton = party && party.leaderId === presence.getOwnId()
+      ? partyMemberIds.has(friend.guestId)
+        ? '<button type="button" class="social-action" disabled>In party</button>'
+        : pendingPartyIds.has(friend.guestId)
+          ? '<button type="button" class="social-action" disabled>Invited</button>'
+          : `<button type="button" class="social-action party-invite" data-party-action="invite" data-target-id="${escapeHtml(friend.guestId)}" ${canInvite ? '' : 'disabled title="Party is full"'}>Invite</button>`
+      : ''
+    return `<div class="social-entry" role="listitem"><span><b>${escapeHtml(socialDisplayName(friend.guestId))}</b><small>${friend.canMessage ? 'Friend' : 'Friend · messaging unavailable'}</small></span>${inviteButton}<button type="button" class="social-action" data-social-action="message" data-target-id="${escapeHtml(friend.guestId)}" ${friendState.allowFriendMessages && friend.canMessage ? '' : 'disabled title="Messages are unavailable for this friend"'}>Message</button><button type="button" class="social-action" data-social-action="unfriend" data-target-id="${escapeHtml(friend.guestId)}">Unfriend</button></div>`
+  }).join('')
   incomingList.innerHTML = incoming.map(request => `<div class="social-entry social-request" role="listitem"><span><b>${escapeHtml(socialDisplayName(request.guestId))}</b><small>Sent a friend request · expires ${new Date(request.expiresAt).toLocaleDateString()}</small></span><button type="button" class="social-action accept" data-social-action="accept" data-target-id="${escapeHtml(request.requestId)}">Accept</button><button type="button" class="social-action decline" data-social-action="decline" data-target-id="${escapeHtml(request.requestId)}">Decline</button></div>`).join('')
   outgoingList.innerHTML = outgoing.map(request => `<div class="social-entry" role="listitem"><span><b>${escapeHtml(socialDisplayName(request.guestId))}</b><small>Request sent · expires ${new Date(request.expiresAt).toLocaleDateString()}</small></span><button type="button" class="social-action" data-social-action="cancel" data-target-id="${escapeHtml(request.requestId)}">Cancel</button></div>`).join('')
   section.querySelectorAll<HTMLButtonElement>('[data-social-action]').forEach(button => {
@@ -906,6 +1019,7 @@ function renderSocialState() {
       void handleFriendAction(action, id).finally(() => { button.disabled = false })
     }
   })
+  wirePartyActions(section)
 }
 
 function createEmoteTexture(emoji: string): THREE.Texture {
@@ -1160,9 +1274,10 @@ function renderPeople(players: PresencePlayer[], connected: boolean) {
     button.onclick = () => { button.disabled = true; void setPlayerBlocked(button.dataset.playerId || '', false).finally(() => { button.disabled = false }) }
   })
   renderSocialState()
+  renderPartyState()
   wave.disabled = view.availability !== 'online' || view.people.length === 0
 }
-const presence = connectPresence(renderPresence, handleIncomingEmote, handleIncomingChat, handleFriendUpdate, handleDirectMessageNotice)
+const presence = connectPresence(renderPresence, handleIncomingEmote, handleIncomingChat, handleFriendUpdate, handleDirectMessageNotice, handlePartyUpdate)
 window.addEventListener('beforeunload', () => presence.close())
 
 const keys = new Set<string>()
@@ -1256,6 +1371,7 @@ void openGuest().then(async guest => {
   blockedIds.clear()
   for (const id of savedBlocks) blockedIds.add(id)
   friendState = await fetchGuestFriends().catch(() => friendState)
+  partyState = await fetchGuestParty().catch(() => partyState)
   renderPresence(connectedPlayers, presenceConnected, 0)
   renderMiniPlayer()
 }).catch(() => { /* offline guests retain the local demo save */ })
@@ -2252,7 +2368,7 @@ if (timeToggle) {
   }
 }
 $<HTMLButtonElement>('nav-create').onclick = () => location === 'studio' ? setRoute('studioDesk') : location === 'release' ? setRoute('releaseIntake') : location === 'square' ? setRoute('studio') : toast('Walk to City Studio from Music Square')
-$<HTMLButtonElement>('nav-people').onclick = () => { closeSheets(); $<HTMLElement>('people-sheet').hidden = false; renderPeople(connectedPlayers, presenceConnected); void refreshFriendState() }
+$<HTMLButtonElement>('nav-people').onclick = () => { closeSheets(); $<HTMLElement>('people-sheet').hidden = false; renderPeople(connectedPlayers, presenceConnected); void refreshFriendState(); void refreshPartyState() }
 $<HTMLButtonElement>('people-close').onclick = closeSheets
 $<HTMLButtonElement>('people-wave').onclick = () => { if (presenceConnected && connectedPlayers.some(player => player.location === location)) presence.sendEmote('wave') }
 $<HTMLButtonElement>('people-edit-avatar').onclick = () => { $<HTMLElement>('people-sheet').hidden = true; $<HTMLElement>('avatar-sheet').hidden = false; applyAppearance() }

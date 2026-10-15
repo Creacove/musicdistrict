@@ -11,6 +11,9 @@ const REPORT_LIMIT_PER_WINDOW = 5
 const DIRECT_MESSAGE_WINDOW_MS = 60 * 1000
 const DIRECT_MESSAGE_LIMIT_PER_WINDOW = 20
 const DIRECT_MESSAGE_MAX_LENGTH = 500
+const PARTY_MAX_MEMBERS = 4
+const PARTY_INVITATION_TTL_MS = 10 * 60 * 1000
+const PARTY_IDLE_TTL_MS = 30 * 60 * 1000
 
 export function createGuestStore(path) {
   if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true })
@@ -69,7 +72,40 @@ export function createGuestStore(path) {
     CREATE INDEX IF NOT EXISTS direct_messages_pair_order
       ON direct_messages (sender_guest_id, recipient_guest_id, created_at, id);
     CREATE INDEX IF NOT EXISTS direct_messages_sender_recent
-      ON direct_messages (sender_guest_id, created_at);`)
+      ON direct_messages (sender_guest_id, created_at);
+    CREATE TABLE IF NOT EXISTS parties (
+      id TEXT PRIMARY KEY,
+      leader_guest_id TEXT NOT NULL REFERENCES guests(id),
+      created_at TEXT NOT NULL,
+      state TEXT NOT NULL CHECK (state IN ('active', 'closed')),
+      all_offline_since TEXT
+    );
+    CREATE TABLE IF NOT EXISTS party_members (
+      party_id TEXT NOT NULL REFERENCES parties(id),
+      guest_id TEXT NOT NULL REFERENCES guests(id),
+      joined_at TEXT NOT NULL,
+      left_at TEXT,
+      state TEXT NOT NULL CHECK (state IN ('active', 'left')),
+      PRIMARY KEY (party_id, guest_id)
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS party_one_active_membership
+      ON party_members (guest_id) WHERE state = 'active';
+    CREATE INDEX IF NOT EXISTS party_members_active
+      ON party_members (party_id, state, joined_at);
+    CREATE TABLE IF NOT EXISTS party_invitations (
+      id TEXT PRIMARY KEY,
+      party_id TEXT NOT NULL REFERENCES parties(id),
+      sender_guest_id TEXT NOT NULL REFERENCES guests(id),
+      recipient_guest_id TEXT NOT NULL REFERENCES guests(id),
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('pending', 'accepted', 'declined', 'expired', 'cancelled', 'blocked')),
+      CHECK (sender_guest_id <> recipient_guest_id)
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS party_invitation_one_pending_target
+      ON party_invitations (party_id, recipient_guest_id) WHERE status = 'pending';
+    CREATE INDEX IF NOT EXISTS party_invitation_pending_expiry
+      ON party_invitations (recipient_guest_id, status, expires_at);`)
   const find = db.prepare('SELECT id FROM guests WHERE token_hash = ?')
   const create = db.prepare('INSERT INTO guests (id, token_hash, created_at) VALUES (?, ?, ?)')
   const save = db.prepare('INSERT OR IGNORE INTO saved_items (guest_id, item_id, saved_at) VALUES (?, ?, ?)')
@@ -118,9 +154,114 @@ export function createGuestStore(path) {
     WHERE (sender_guest_id = ? AND recipient_guest_id = ?) OR (sender_guest_id = ? AND recipient_guest_id = ?)
     ORDER BY created_at DESC, id DESC LIMIT ?`)
   const messageEventListeners = new Set()
+  const partyEventListeners = new Set()
+  const partyConnectionCounts = new Map()
+  const restartTime = new Date().toISOString()
+  db.prepare("UPDATE parties SET all_offline_since = COALESCE(all_offline_since, ?) WHERE state = 'active'").run(restartTime)
+  const partyById = db.prepare('SELECT id, leader_guest_id, created_at, state, all_offline_since FROM parties WHERE id = ?')
+  const activePartyForMember = db.prepare(`SELECT p.id, p.leader_guest_id, p.created_at, p.state, p.all_offline_since
+    FROM party_members m JOIN parties p ON p.id = m.party_id
+    WHERE m.guest_id = ? AND m.state = 'active' AND p.state = 'active' LIMIT 1`)
+  const activePartyMembers = db.prepare(`SELECT guest_id, joined_at FROM party_members
+    WHERE party_id = ? AND state = 'active' ORDER BY joined_at, guest_id`)
+  const partyIncomingInvitations = db.prepare(`SELECT i.id, i.party_id, i.sender_guest_id, i.created_at, i.expires_at, p.leader_guest_id
+    FROM party_invitations i JOIN parties p ON p.id = i.party_id
+    WHERE i.recipient_guest_id = ? AND i.status = 'pending' AND i.expires_at > ? AND p.state = 'active'
+    ORDER BY i.created_at, i.id`)
+  const partyOutgoingInvitations = db.prepare(`SELECT id, recipient_guest_id, created_at, expires_at
+    FROM party_invitations WHERE party_id = ? AND status = 'pending' AND expires_at > ? ORDER BY created_at, id`)
+  const pendingPartyInvitation = db.prepare("SELECT id, created_at, expires_at FROM party_invitations WHERE party_id = ? AND recipient_guest_id = ? AND status = 'pending'")
+  const activePartyInvitationById = db.prepare('SELECT id, party_id, sender_guest_id, recipient_guest_id, created_at, expires_at, status FROM party_invitations WHERE id = ?')
+  const updatePartyInvitation = db.prepare('UPDATE party_invitations SET status = ? WHERE id = ?')
+  const countPartyCapacity = db.prepare(`SELECT
+    (SELECT count(*) FROM party_members WHERE party_id = ? AND state = 'active') +
+    (SELECT count(*) FROM party_invitations WHERE party_id = ? AND status = 'pending' AND expires_at > ?) AS count`)
+  const activeFriendMembership = db.prepare('SELECT 1 AS found FROM friend_edges WHERE guest_low_id = ? AND guest_high_id = ?')
+  const insertParty = db.prepare("INSERT INTO parties (id, leader_guest_id, created_at, state, all_offline_since) VALUES (?, ?, ?, 'active', ?)")
+  const insertPartyMember = db.prepare(`INSERT INTO party_members (party_id, guest_id, joined_at, state) VALUES (?, ?, ?, 'active')
+    ON CONFLICT (party_id, guest_id) DO UPDATE SET joined_at = excluded.joined_at, state = 'active', left_at = NULL`)
+  const insertPartyInvitation = db.prepare("INSERT INTO party_invitations (id, party_id, sender_guest_id, recipient_guest_id, created_at, expires_at, status) VALUES (?, ?, ?, ?, ?, ?, 'pending')")
+  const setPartyLeader = db.prepare("UPDATE parties SET leader_guest_id = ?, all_offline_since = ? WHERE id = ? AND state = 'active'")
+  const leavePartyMember = db.prepare("UPDATE party_members SET state = 'left', left_at = ? WHERE party_id = ? AND guest_id = ? AND state = 'active'")
+  const closePartyRow = db.prepare("UPDATE parties SET state = 'closed', all_offline_since = ? WHERE id = ? AND state = 'active'")
+  const cancelPartyInvitations = db.prepare("UPDATE party_invitations SET status = 'cancelled' WHERE party_id = ? AND status = 'pending'")
+  const blockPartyInvitations = db.prepare("UPDATE party_invitations SET status = 'blocked' WHERE status = 'pending' AND ((sender_guest_id = ? AND recipient_guest_id = ?) OR (sender_guest_id = ? AND recipient_guest_id = ?))")
+  const cancelPartyInvitationPair = db.prepare("UPDATE party_invitations SET status = 'cancelled' WHERE status = 'pending' AND ((sender_guest_id = ? AND recipient_guest_id = ?) OR (sender_guest_id = ? AND recipient_guest_id = ?))")
+  const expirePartyInvitations = db.prepare("UPDATE party_invitations SET status = 'expired' WHERE status = 'pending' AND expires_at <= ?")
+  const friendPairFor = (a, b) => a < b ? [a, b] : [b, a]
   const friendPair = (a, b) => a < b ? [a, b] : [b, a]
+  const areBlocked = (a, b) => isBlocked.get(a, b) !== undefined || isBlocked.get(b, a) !== undefined
   const allowFriendMessages = id => friendMessagePreference.get(id)?.allow_friend_messages !== 0
   const directMessageDto = row => ({ id: row.id, senderGuestId: row.sender_guest_id, recipientGuestId: row.recipient_guest_id, text: row.text, sentAt: row.created_at })
+  const notifyPartyEvent = event => { for (const listener of partyEventListeners) { try { listener(event) } catch { /* notification failures do not undo party state */ } } }
+  const partyMemberIds = partyId => activePartyMembers.all(partyId).map(row => row.guest_id)
+  const updatePartyOfflineState = (partyId, now) => {
+    const members = partyMemberIds(partyId)
+    const online = members.some(memberId => (partyConnectionCounts.get(memberId) || 0) > 0)
+    const timestamp = online ? null : new Date(now).toISOString()
+    db.prepare('UPDATE parties SET all_offline_since = ? WHERE id = ? AND state = \'active\'').run(timestamp, partyId)
+  }
+  const closeParty = (partyId, now, kind = 'closed') => {
+    const memberIds = partyMemberIds(partyId)
+    const nowIso = new Date(now).toISOString()
+    const changed = closePartyRow.run(nowIso, partyId).changes
+    if (!changed) return false
+    db.prepare("UPDATE party_members SET state = 'left', left_at = ? WHERE party_id = ? AND state = 'active'").run(nowIso, partyId)
+    cancelPartyInvitations.run(partyId)
+    notifyPartyEvent({ kind, partyId, memberIds, actorId: null })
+    return true
+  }
+  const expireParties = now => {
+    const nowIso = new Date(now).toISOString()
+    expirePartyInvitations.run(nowIso)
+    const cutoff = new Date(now - PARTY_IDLE_TTL_MS).toISOString()
+    const idleParties = db.prepare("SELECT id FROM parties WHERE state = 'active' AND all_offline_since IS NOT NULL AND all_offline_since <= ?").all(cutoff)
+    for (const party of idleParties) closeParty(party.id, now, 'expired')
+  }
+  const partySummary = (party, viewerId, now) => {
+    const members = activePartyMembers.all(party.id)
+      .filter(member => !areBlocked(viewerId, member.guest_id))
+      .map(member => ({ guestId: member.guest_id, joinedAt: member.joined_at, leader: member.guest_id === party.leader_guest_id }))
+    const invitations = viewerId === party.leader_guest_id
+      ? partyOutgoingInvitations.all(party.id, new Date(now).toISOString())
+        .filter(invite => !areBlocked(viewerId, invite.recipient_guest_id))
+        .map(invite => ({ invitationId: invite.id, guestId: invite.recipient_guest_id, createdAt: invite.created_at, expiresAt: invite.expires_at }))
+      : []
+    return { partyId: party.id, leaderId: party.leader_guest_id, createdAt: party.created_at, members, invitations }
+  }
+  const leavePartyInternal = (partyId, guestId, now) => {
+    const party = partyById.get(partyId)
+    if (!party || party.state !== 'active') return { error: 'party' }
+    const members = partyMemberIds(partyId)
+    if (!members.includes(guestId)) return { error: 'not_member' }
+    const nowIso = new Date(now).toISOString()
+    leavePartyMember.run(nowIso, partyId, guestId)
+    const remaining = activePartyMembers.all(partyId)
+    if (!remaining.length) {
+      closePartyRow.run(nowIso, partyId)
+      cancelPartyInvitations.run(partyId)
+      notifyPartyEvent({ kind: 'closed', partyId, memberIds: members, actorId: guestId })
+      return { state: 'closed', newLeaderId: null }
+    }
+    let newLeaderId = party.leader_guest_id
+    if (guestId === party.leader_guest_id) {
+      newLeaderId = remaining[0].guest_id
+      setPartyLeader.run(newLeaderId, partyConnectionCounts.get(newLeaderId) ? null : nowIso, partyId)
+    }
+    updatePartyOfflineState(partyId, now)
+    notifyPartyEvent({ kind: 'left', partyId, memberIds: members, actorId: guestId, newLeaderId })
+    return { state: 'active', newLeaderId }
+  }
+  const partyState = (guestId, now) => {
+    expireParties(now)
+    const current = activePartyForMember.get(guestId)
+    return {
+      party: current ? partySummary(current, guestId, now) : null,
+      incoming: partyIncomingInvitations.all(guestId, new Date(now).toISOString())
+        .filter(invite => !areBlocked(guestId, invite.sender_guest_id))
+        .map(invite => ({ invitationId: invite.id, partyId: invite.party_id, senderId: invite.sender_guest_id, leaderId: invite.leader_guest_id, createdAt: invite.created_at, expiresAt: invite.expires_at })),
+    }
+  }
   const friendState = (id, now) => {
     const nowIso = new Date(now).toISOString()
     expireFriendRequests.run(nowIso)
@@ -155,6 +296,10 @@ export function createGuestStore(path) {
         const [low, high] = friendPair(blockerId, blockedId)
         removeFriendEdge.run(low, high)
         blockPendingRequests.run(blockerId, blockedId, blockedId, blockerId)
+        blockPartyInvitations.run(blockerId, blockedId, blockedId, blockerId)
+        const blockerParty = activePartyForMember.get(blockerId)
+        const blockedParty = activePartyForMember.get(blockedId)
+        if (blockerParty && blockerParty.id === blockedParty?.id) leavePartyInternal(blockerParty.id, blockedId, Date.now())
         for (const listener of blockListeners) { try { listener({ blockerId, blockedId }) } catch { /* safety state remains stored */ } }
         notifyFriendEvent({ kind: 'blocked', actorId: blockerId, targetId: blockedId })
       }
@@ -163,6 +308,108 @@ export function createGuestStore(path) {
     onBlock(listener) { blockListeners.add(listener); return () => blockListeners.delete(listener) },
     onFriendEvent(listener) { friendEventListeners.add(listener); return () => friendEventListeners.delete(listener) },
     onMessageEvent(listener) { messageEventListeners.add(listener); return () => messageEventListeners.delete(listener) },
+    onPartyEvent(listener) { partyEventListeners.add(listener); return () => partyEventListeners.delete(listener) },
+    partySessionConnected(guestId, now = Date.now()) {
+      // A reconnect past the idle deadline must not clear the evidence used to expire the party.
+      expireParties(now)
+      partyConnectionCounts.set(guestId, (partyConnectionCounts.get(guestId) || 0) + 1)
+      const party = activePartyForMember.get(guestId)
+      if (party) db.prepare("UPDATE parties SET all_offline_since = NULL WHERE id = ? AND state = 'active'").run(party.id)
+    },
+    partySessionDisconnected(guestId, now = Date.now()) {
+      const count = partyConnectionCounts.get(guestId) || 0
+      if (count <= 1) partyConnectionCounts.delete(guestId)
+      else partyConnectionCounts.set(guestId, count - 1)
+      const party = activePartyForMember.get(guestId)
+      if (party) updatePartyOfflineState(party.id, now)
+    },
+    partyState(guestId, now = Date.now()) { return partyState(guestId, now) },
+    createParty(leaderId, now = Date.now()) {
+      expireParties(now)
+      if (!hasGuest.get(leaderId)) return { error: 'guest' }
+      if (activePartyForMember.get(leaderId)) return { error: 'already_in_party' }
+      const partyId = randomUUID()
+      const nowIso = new Date(now).toISOString()
+      insertParty.run(partyId, leaderId, nowIso, partyConnectionCounts.get(leaderId) ? null : nowIso)
+      insertPartyMember.run(partyId, leaderId, nowIso)
+      notifyPartyEvent({ kind: 'created', partyId, actorId: leaderId, memberIds: [leaderId] })
+      return { partyId, status: 'active', leaderId }
+    },
+    inviteToParty(partyId, senderId, recipientId, now = Date.now()) {
+      expireParties(now)
+      if (!hasGuest.get(recipientId)) return { error: 'target' }
+      const party = partyById.get(partyId)
+      if (!party || party.state !== 'active') return { error: 'party' }
+      if (party.leader_guest_id !== senderId) return { error: 'not_leader' }
+      const members = partyMemberIds(partyId)
+      if (!members.includes(senderId)) return { error: 'not_member' }
+      if (members.includes(recipientId)) return { error: 'already_member' }
+      if (this.isBlockedBetween(senderId, recipientId) || members.some(memberId => this.isBlockedBetween(memberId, recipientId))) return { error: 'blocked' }
+      const [low, high] = friendPairFor(senderId, recipientId)
+      if (!activeFriendMembership.get(low, high)) return { error: 'not_friends' }
+      if (activePartyForMember.get(recipientId)) return { error: 'already_in_party' }
+      const nowIso = new Date(now).toISOString()
+      const existing = pendingPartyInvitation.get(partyId, recipientId)
+      if (existing) return { invitationId: existing.id, status: 'pending', createdAt: existing.created_at, expiresAt: existing.expires_at, duplicate: true }
+      if (countPartyCapacity.get(partyId, partyId, nowIso).count >= PARTY_MAX_MEMBERS) return { error: 'full' }
+      const invitationId = randomUUID()
+      const expiresAt = new Date(now + PARTY_INVITATION_TTL_MS).toISOString()
+      insertPartyInvitation.run(invitationId, partyId, senderId, recipientId, nowIso, expiresAt)
+      const memberIds = [...members, recipientId]
+      notifyPartyEvent({ kind: 'invited', partyId, invitationId, actorId: senderId, targetId: recipientId, memberIds })
+      return { invitationId, status: 'pending', createdAt: nowIso, expiresAt, duplicate: false }
+    },
+    acceptPartyInvitation(invitationId, recipientId, now = Date.now()) {
+      expireParties(now)
+      let invitation = activePartyInvitationById.get(invitationId)
+      if (!invitation) return { error: 'not_found' }
+      if (invitation.recipient_guest_id !== recipientId) return { error: 'not_recipient' }
+      if (invitation.status === 'accepted') {
+        const existingParty = activePartyForMember.get(recipientId)
+        if (existingParty?.id === invitation.party_id) return { status: 'accepted', partyId: invitation.party_id, duplicate: true }
+      }
+      if (invitation.status === 'expired') return { error: 'expired' }
+      if (invitation.status !== 'pending') return { error: invitation.status === 'blocked' ? 'blocked' : 'invalid_state' }
+      const party = partyById.get(invitation.party_id)
+      if (!party || party.state !== 'active') return { error: 'party' }
+      if (new Date(invitation.expires_at).getTime() <= now) {
+        updatePartyInvitation.run('expired', invitationId)
+        return { error: 'expired' }
+      }
+      if (activePartyForMember.get(recipientId)) return { error: 'already_in_party' }
+      const members = partyMemberIds(invitation.party_id)
+      if (members.some(memberId => this.isBlockedBetween(memberId, recipientId))) {
+        updatePartyInvitation.run('blocked', invitationId)
+        return { error: 'blocked' }
+      }
+      const [low, high] = friendPairFor(invitation.sender_guest_id, recipientId)
+      if (!activeFriendMembership.get(low, high)) return { error: 'not_friends' }
+      if (members.length >= PARTY_MAX_MEMBERS) return { error: 'full' }
+      const nowIso = new Date(now).toISOString()
+      insertPartyMember.run(invitation.party_id, recipientId, nowIso)
+      updatePartyInvitation.run('accepted', invitationId)
+      db.prepare("UPDATE parties SET all_offline_since = NULL WHERE id = ? AND state = 'active'").run(invitation.party_id)
+      const memberIds = [...members, recipientId]
+      notifyPartyEvent({ kind: 'joined', partyId: invitation.party_id, invitationId, actorId: recipientId, targetId: invitation.sender_guest_id, memberIds })
+      return { status: 'accepted', partyId: invitation.party_id, duplicate: false }
+    },
+    declinePartyInvitation(invitationId, recipientId, now = Date.now()) {
+      expireParties(now)
+      const invitation = activePartyInvitationById.get(invitationId)
+      if (!invitation) return { error: 'not_found' }
+      if (invitation.recipient_guest_id !== recipientId) return { error: 'not_recipient' }
+      if (invitation.status === 'expired') return { error: 'expired' }
+      if (invitation.status === 'declined') return { status: 'declined', duplicate: true }
+      if (invitation.status !== 'pending') return { error: invitation.status === 'blocked' ? 'blocked' : 'invalid_state' }
+      updatePartyInvitation.run('declined', invitationId)
+      const members = partyMemberIds(invitation.party_id)
+      notifyPartyEvent({ kind: 'declined', partyId: invitation.party_id, invitationId, actorId: recipientId, targetId: invitation.sender_guest_id, memberIds: [...members, recipientId] })
+      return { status: 'declined', duplicate: false }
+    },
+    leaveParty(partyId, guestId, now = Date.now()) {
+      expireParties(now)
+      return leavePartyInternal(partyId, guestId, now)
+    },
     unblock(blockerId, blockedId) {
       deleteBlock.run(blockerId, blockedId)
       return true
@@ -282,6 +529,9 @@ export function createGuestStore(path) {
       if (!result.changes) return { error: 'not_friends' }
       removeFriendRequests.run(guestId, otherGuestId)
       removeFriendRequests.run(otherGuestId, guestId)
+      const pendingPartyInvites = db.prepare("SELECT id, party_id, sender_guest_id, recipient_guest_id FROM party_invitations WHERE status = 'pending' AND ((sender_guest_id = ? AND recipient_guest_id = ?) OR (sender_guest_id = ? AND recipient_guest_id = ?))").all(guestId, otherGuestId, otherGuestId, guestId)
+      cancelPartyInvitationPair.run(guestId, otherGuestId, otherGuestId, guestId)
+      for (const invite of pendingPartyInvites) notifyPartyEvent({ kind: 'invitation-cancelled', partyId: invite.party_id, invitationId: invite.id, actorId: guestId, targetId: otherGuestId, memberIds: [...new Set([...partyMemberIds(invite.party_id), invite.sender_guest_id, invite.recipient_guest_id])] })
       notifyFriendEvent({ kind: 'unfriended', actorId: guestId, targetId: otherGuestId })
       return { status: 'unfriended' }
     },
@@ -328,7 +578,7 @@ export function guestApi(store) {
       res.setHeader('Cache-Control', 'no-store')
       return res.end(JSON.stringify({ tracks: CATALOGUE }))
     }
-    if (!['/api/guest', '/api/saves', '/api/reports', '/api/blocks', '/api/friends', '/api/friend-requests', '/api/messages'].some(route => pathname === route || pathname.startsWith(`${route}/`))) return next()
+    if (!['/api/guest', '/api/saves', '/api/reports', '/api/blocks', '/api/friends', '/api/friend-requests', '/api/messages', '/api/parties', '/api/party-invitations'].some(route => pathname === route || pathname.startsWith(`${route}/`))) return next()
     res.setHeader('Content-Type', 'application/json; charset=utf-8')
     res.setHeader('Cache-Control', 'no-store')
     const reply = (status, body) => { res.statusCode = status; res.end(JSON.stringify(body)) }
@@ -437,6 +687,50 @@ export function guestApi(store) {
       const result = store.directMessages(id, conversationMatch[1])
       if (result.error === 'target') return reply(404, { error: 'Friend not found' })
       if (result.error) return reply(403, { error: 'Conversation unavailable' })
+      return reply(200, result)
+    }
+
+    if (pathname === '/api/parties/me' && req.method === 'GET') return reply(200, store.partyState(id))
+    if (pathname === '/api/parties' && req.method === 'POST') {
+      const result = store.createParty(id)
+      if (result.error === 'already_in_party') return reply(409, { error: 'Already in a party' })
+      if (result.error) return reply(404, { error: 'Guest not found' })
+      return reply(201, result)
+    }
+    const partyInvitationPath = pathname.match(/^\/api\/parties\/([0-9a-f-]{36})\/invitations$/i)
+    if (partyInvitationPath && req.method === 'POST') {
+      const parsed = await readJsonBody(req)
+      if (parsed.error) return reply(parsed.error === 'too_large' ? 413 : 400, { error: 'Invalid party invitation' })
+      const targetId = parsed.value?.targetGuestId
+      if (!UUID.test(targetId || '') || targetId === id) return reply(400, { error: 'Invalid party invitation target' })
+      const result = store.inviteToParty(partyInvitationPath[1], id, targetId)
+      if (result.error === 'target' || result.error === 'party') return reply(404, { error: 'Party or friend not found' })
+      if (result.error === 'blocked') return reply(403, { error: 'Party invitation unavailable' })
+      if (result.error === 'not_leader' || result.error === 'not_member') return reply(403, { error: 'Only the party leader can invite friends' })
+      if (result.error === 'not_friends') return reply(403, { error: 'Only an unblocked friend can be invited' })
+      if (result.error === 'already_in_party') return reply(409, { error: 'Friend is already in a party' })
+      if (result.error === 'full' || result.error === 'already_member') return reply(409, { error: 'Party is full or friend is already a member' })
+      return reply(result.duplicate ? 200 : 201, { ...result, expiresInSeconds: Math.max(0, Math.ceil((new Date(result.expiresAt).getTime() - Date.now()) / 1000)) })
+    }
+    const partyInviteAction = pathname.match(/^\/api\/party-invitations\/([0-9a-f-]{36})\/(accept|decline)$/i)
+    if (partyInviteAction && req.method === 'POST') {
+      const result = partyInviteAction[2].toLowerCase() === 'accept'
+        ? store.acceptPartyInvitation(partyInviteAction[1], id)
+        : store.declinePartyInvitation(partyInviteAction[1], id)
+      if (result.error === 'not_found' || result.error === 'party') return reply(404, { error: 'Party invitation is no longer available' })
+      if (result.error === 'not_recipient' || result.error === 'blocked') return reply(403, { error: 'Party invitation unavailable' })
+      if (result.error === 'expired') return reply(410, { error: 'Party invitation expired' })
+      if (result.error === 'full') return reply(409, { error: 'Party is full' })
+      if (result.error === 'already_in_party') return reply(409, { error: 'Leave your current party before joining another' })
+      if (result.error === 'not_friends') return reply(409, { error: 'Friendship changed; this invitation is no longer available' })
+      if (result.error) return reply(409, { error: 'Party invitation is no longer pending' })
+      return reply(200, result)
+    }
+    const leavePartyPath = pathname.match(/^\/api\/parties\/([0-9a-f-]{36})\/leave$/i)
+    if (leavePartyPath && req.method === 'POST') {
+      const result = store.leaveParty(leavePartyPath[1], id)
+      if (result.error === 'party') return reply(404, { error: 'Party not found' })
+      if (result.error) return reply(403, { error: 'You are not in this party' })
       return reply(200, result)
     }
 

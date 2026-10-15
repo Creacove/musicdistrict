@@ -425,8 +425,17 @@ Added an integration test that connects 20 real WebSocket test clients to an iso
 - **Verification:** Full suite passes 78 tests. TypeScript/Vite build and `git diff --check` succeed. App JS is 132.74 kB (43.70 kB gzip), CSS 43.19 kB (9.73 kB gzip), Three.js vendor 567.38 kB (140.97 kB gzip). Vite's >500 kB vendor-chunk warning remains nonfatal.
 - **Hosting boundary:** Netlify is still a static solo preview. Direct messages, friend privacy settings and shared live notices are available only through the self-hosted Node/SQLite/WebSocket prototype; no shared backend is deployed to the phone-testing URL.
 
-## Current next slices — updated 14 October 2026
+## M1 lightweight party membership — 15 October 2026
 
-1. Implement the Chapter 05 §12 lightweight party: maximum four actual guests, 10-minute invitations, member leave and leadership transfer. Then add destination proposals where every member opts in and no one is teleported without approval.
+- **Server:** Added authenticated SQLite party membership for at most four guests, friend-only leader invitations, explicit recipient acceptance/decline, ten-minute invitation expiry, party capacity reservation, member departure and longest-present leadership transfer. Blocks cancel pending invitations and remove a blocked member from a shared party. A party with every member offline expires after 30 minutes; a late reconnect cannot revive it.
+- **People UI:** Added party creation, live invitation notice, Join/Decline, member and pending-invite lists, leader-only friend invites, leave, and expiry refresh. A user already in a party cannot accept another invite. Group chat and travel remain clearly marked unavailable.
+- **GDD trace:** Fan & Social Chapter 05 §12, FS-017, and M1 quality gates. A party is temporary and does not pool money or grant event access.
+- **Live browser:** At a 390 × 844 viewport, two distinct authenticated guest tabs created a party, sent an invite, received it live, joined by choice and saw 2/4 membership. The leader left; the remaining member became leader and received the corresponding live update. Browser console errors: 0.
+- **Verification:** Full suite passes 84/84; all six focused party tests pass, including friend-only invitations, the four-member limit, ten-minute expiry, leadership transfer, dissolution, 30-minute idle expiry/late reconnect, rejoin after a fresh invite, and pending invites across leadership transfer. TypeScript/Vite production build and `git diff --check` succeed. App JS is 138.54 kB (45.17 kB gzip), CSS 44.11 kB (9.87 kB gzip), and Three.js vendor 567.38 kB (140.97 kB gzip); Vite retains its existing nonfatal vendor-chunk warning. Capture: `docs/evidence/m1-party-membership.png`.
+- **Hosting boundary:** Netlify remains a static solo preview; this social loop requires the self-hosted Node/SQLite/WebSocket server.
+
+## Current next slices — updated 15 October 2026
+
+1. Implement Chapter 05 §12 party group chat and consent-based destination proposals. Each member must opt in before travel; check destination availability and event capacity on the server; never force-teleport a member or clone sold-out inventory.
 2. Continue M1 physical-device and performance validation; the embedded Chromium mobile viewport is not a physical Android/iPhone test.
 3. Keep public chat and reports gated until age policy, moderation staffing, emergency escalation, and appeals have real owners.
