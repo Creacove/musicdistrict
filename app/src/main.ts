@@ -1675,10 +1675,10 @@ function startStageRehearsal(mode: 'record' | 'replay') {
   nextStageCue = 0
   masterAudioUrl = URL.createObjectURL(masterBlob)
   masterPlayer = new Audio(masterAudioUrl)
+  const player = masterPlayer
   masterPlayer.onended = () => { stopMasterPreview(); toast(mode === 'record' ? 'Rehearsal cues saved on this device' : 'Show replay finished') }
   performingOnStage = true
   palmRoom?.setStagePerformance(true)
-  $<HTMLElement>('stage-cue-hud').hidden = false
   $<HTMLElement>('stage-cue-title').textContent = mode === 'record' ? 'CUE THE LIGHTS' : 'REPLAYING YOUR SHOW'
   $<HTMLElement>('stage-cue-count').textContent = mode === 'record' ? 'Tap a light to cue it during your master.' : `${stageCues.length} saved light cues`
   document.querySelectorAll<HTMLButtonElement>('[data-cue-look]').forEach(button => { button.disabled = mode === 'replay' })
@@ -1693,14 +1693,16 @@ function startStageRehearsal(mode: 'record' | 'replay') {
       }
     }
   }, 100)
-  void masterPlayer.play().then(() => {
+  void player.play().then(() => {
+    if (masterPlayer !== player || stageCueMode !== mode) return
     stagePreviewPlayed = true
     try { localStorage.setItem('scene-stage-preview-played', 'true') } catch { /* stage history is optional local progress */ }
     $<HTMLButtonElement>('audio').innerHTML = '♫ <span>ON</span>'
     $<HTMLButtonElement>('audio').setAttribute('aria-label', 'Audio on')
     hideSheets(true)
+    $<HTMLElement>('stage-cue-hud').hidden = false
     toast(mode === 'record' ? 'Rehearsal started · cue the lights' : 'Your saved show is playing locally')
-  }).catch(() => { stopMasterPreview(); toast('Audio was blocked · Tap rehearsal again') })
+  }).catch(() => { if (masterPlayer === player) { stopMasterPreview(); toast('Audio was blocked · Tap rehearsal again') } })
 }
 
 function setRoute(target: Hotspot) {
