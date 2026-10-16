@@ -1525,6 +1525,14 @@ let equipmentPreviewVisible = savedStageTemplate.floorLightPreview
 let rehearsalMonitors = localStorage.getItem('scene-rehearsal-monitors') === 'true'
 let rehearsalBackdrop = localStorage.getItem('scene-rehearsal-backdrop') === 'true'
 let stageLook: StageLook = savedStageTemplate.lightLook
+type ShowDraft = { title: string; format: 'OPEN_MIC' | 'LISTENING_SESSION'; start: string }
+let showDraft: ShowDraft = { title: '', format: 'OPEN_MIC', start: '' }
+try {
+  const saved = JSON.parse(localStorage.getItem('scene-show-draft') || 'null')
+  if (saved && typeof saved.title === 'string' && (saved.format === 'OPEN_MIC' || saved.format === 'LISTENING_SESSION') && typeof saved.start === 'string') {
+    showDraft = { title: saved.title.slice(0, 60), format: saved.format, start: saved.start.slice(0, 16) }
+  }
+} catch { /* invalid local show draft starts empty */ }
 let dancing = false
 let beatPattern: BeatPattern = starterPattern(), beatPatternB: BeatPattern = toggleStep(starterPattern(), 0, 1)
 let beatKit: SoundKit = 'afrobeats', beatBpm = 104
@@ -2146,7 +2154,7 @@ function renderStageEventMetrics() {
     ledger.id = 'stage-ledger'
     ledger.className = 'stage-ledger'
     ledger.setAttribute('aria-label', 'Palm Room rehearsal metrics')
-    ledger.innerHTML = '<small>REHEARSAL SETUP · NO EVENT SALES</small><div><b>Other live sessions</b><span id="stage-live-sessions"></span></div><div class="stage-setup-picker"><small id="stage-setup-progress">0/3 pieces placed</small><div class="stage-setup-grid"><button type="button" data-stage-setup="light">Floor light</button><button type="button" data-stage-setup="monitors">Stage monitors</button><button type="button" data-stage-setup="backdrop">Backdrop</button></div><small>Arrange the rehearsal room. These are local trial pieces, not purchased inventory.</small></div><div class="stage-look-picker"><small>LIGHTING TEST · LOCAL PREVIEW</small><div class="stage-look-grid"><button type="button" data-stage-look="warm">Warm wash</button><button type="button" data-stage-look="sunset">Sunset</button><button type="button" data-stage-look="spotlight">Spot</button></div><button type="button" class="stage-save" data-stage-save="true">Save preview on this device</button></div>'
+    ledger.innerHTML = '<small>REHEARSAL SETUP · NO EVENT SALES</small><div><b>Other live sessions</b><span id="stage-live-sessions"></span></div><div class="stage-setup-picker"><small id="stage-setup-progress">0/3 pieces placed</small><div class="stage-setup-grid"><button type="button" data-stage-setup="light">Floor light</button><button type="button" data-stage-setup="monitors">Stage monitors</button><button type="button" data-stage-setup="backdrop">Backdrop</button></div><small>Arrange the rehearsal room. These are local trial pieces, not purchased inventory.</small></div><div class="stage-look-picker"><small>LIGHTING TEST · LOCAL PREVIEW</small><div class="stage-look-grid"><button type="button" data-stage-look="warm">Warm wash</button><button type="button" data-stage-look="sunset">Sunset</button><button type="button" data-stage-look="spotlight">Spot</button></div><button type="button" class="stage-save" data-stage-save="true">Save preview on this device</button></div><form id="show-draft-form" class="show-draft-form"><small>PLAN A SHOW · PRIVATE DRAFT</small><label>Show name<input name="title" maxlength="60" required placeholder="Friday at Palm Room" /></label><label>Format<select name="format"><option value="OPEN_MIC">Open mic</option><option value="LISTENING_SESSION">Listening session</option></select></label><label>Planned start<input name="start" type="datetime-local" required /></label><small id="show-draft-master"></small><button type="submit" class="stage-save">Save show draft</button><small id="show-draft-status"></small></form>'
     ledger.hidden = location !== 'venue' || nearby !== 'stage'
     ledger.addEventListener('click', event => {
       const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-stage-look]')
@@ -2168,6 +2176,22 @@ function renderStageEventMetrics() {
       stageLedger.querySelectorAll<HTMLButtonElement>('[data-stage-look]').forEach(item => item.setAttribute('aria-pressed', String(item.dataset.stageLook === stageLook)))
       toast(`${button!.textContent} · local lighting preview`)
     })
+    const showForm = ledger.querySelector<HTMLFormElement>('#show-draft-form')!
+    showForm.elements.namedItem('title') && ((showForm.elements.namedItem('title') as HTMLInputElement).value = showDraft.title)
+    ;(showForm.elements.namedItem('format') as HTMLSelectElement).value = showDraft.format
+    ;(showForm.elements.namedItem('start') as HTMLInputElement).value = showDraft.start
+    showForm.addEventListener('submit', event => {
+      event.preventDefault()
+      const form = event.currentTarget as HTMLFormElement
+      const title = (form.elements.namedItem('title') as HTMLInputElement).value.trim()
+      const format = (form.elements.namedItem('format') as HTMLSelectElement).value
+      const start = (form.elements.namedItem('start') as HTMLInputElement).value
+      if (!title || (format !== 'OPEN_MIC' && format !== 'LISTENING_SESSION') || !start) return
+      showDraft = { title: title.slice(0, 60), format, start }
+      try { localStorage.setItem('scene-show-draft', JSON.stringify(showDraft)) } catch { toast('Device storage unavailable'); return }
+      renderStageEventMetrics()
+      toast('Private show draft saved')
+    })
     copy.insertAdjacentElement('afterend', ledger)
   }
   ledger.querySelectorAll<HTMLButtonElement>('[data-stage-look]').forEach(item => item.setAttribute('aria-pressed', String(item.dataset.stageLook === stageLook)))
@@ -2175,6 +2199,10 @@ function renderStageEventMetrics() {
   ledger.querySelectorAll<HTMLButtonElement>('[data-stage-setup]').forEach(item => item.setAttribute('aria-pressed', String(setupState[item.dataset.stageSetup || ''])))
   const setupProgress = document.getElementById('stage-setup-progress')
   if (setupProgress) setupProgress.textContent = `${Number(equipmentPreviewVisible) + Number(rehearsalMonitors) + Number(rehearsalBackdrop)}/3 pieces placed`
+  const masterStatus = document.getElementById('show-draft-master')
+  if (masterStatus) masterStatus.textContent = masterBlob ? 'Your City Studio master is ready for a local stage audition.' : 'Render a master at City Studio to audition it here.'
+  const showStatus = document.getElementById('show-draft-status')
+  if (showStatus) showStatus.textContent = showDraft.title ? `Saved privately: ${showDraft.title}. No venue booking or public event exists.` : 'This plan stays on this device. It does not reserve the venue.'
   const count = new Set(connectedPlayers.filter(player => player.location === 'venue').map(player => player.id)).size
   const live = document.getElementById('stage-live-sessions')
   if (live) live.textContent = rehearsalMetrics(presenceConnected, count).liveSessions

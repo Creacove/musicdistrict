@@ -145,6 +145,12 @@ kbd{display:inline-grid;place-items:center;min-width:19px;height:19px;background
 .stage-setup-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
 .stage-setup-grid button{min-height:42px;padding:7px 4px;border:1px solid #ffffff40;border-radius:8px;background:#263c3b;color:#fff;font-size:10px;font-weight:800}
 .stage-setup-grid button[aria-pressed="true"]{background:#0ca878;border-color:#a6ebcb}
+.show-draft-form{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:12px;padding-top:12px;border-top:1px solid #ffffff30}
+.show-draft-form>small,.show-draft-form>button,.show-draft-form>label:first-of-type{grid-column:1/-1}
+.show-draft-form>small{font-size:10px;color:#c9dbd2;line-height:1.4}
+.show-draft-form>small:first-child{color:#f0c982;font-size:9px;font-weight:900;letter-spacing:.12em}
+.show-draft-form label{display:grid;gap:4px;font-size:10px;font-weight:800;color:#e9eee8}
+.show-draft-form input,.show-draft-form select{width:100%;min-width:0;min-height:38px;padding:8px;border:1px solid #ffffff45;border-radius:8px;background:#142a2a;color:#fff;font:inherit;color-scheme:dark}
 .stage-look-picker>small{display:block;color:#e0c89f;font-size:9px;line-height:1.35}
 .stage-look-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin:7px 0}
 .stage-look-grid button{min-width:0;min-height:37px;padding:7px 5px;border:1px solid #ffffff20;border-radius:8px;background:#25272e;color:#f3eee4;font:inherit;font-size:10px;font-weight:800}
