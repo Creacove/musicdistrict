@@ -13,7 +13,7 @@ import { peopleInLocation } from './people.ts'
 import { emotePose, idlePose, walkingPose } from './avatarMotion.ts'
 import { facingAngleForMovement } from './avatarFacing.ts'
 import { disposeSpriteResources } from './avatarLifecycle.ts'
-import { acceptGuestFriendRequest, acceptGuestPartyInvitation, blockGuest, cancelGuestFriendRequest, createGuestParty, declineGuestFriendRequest, declineGuestPartyInvitation, fetchCatalogue, fetchGuestBlocks, fetchGuestEventDraft, fetchGuestFriends, fetchGuestMessages, fetchGuestParty, fetchGuestPartyMessages, inviteGuestToParty, leaveGuestParty, openGuest, proposeGuestPartyTravel, removeGuestSave, requestGuestFriend, saveGuestEventDraft, saveGuestPreview, sendGuestMessage, sendGuestPartyMessage, setGuestMessagePreference, submitGuestReport, unfriendGuest, unblockGuest, voteGuestPartyTravel, type CatalogueTrack, type GuestDirectMessage, type GuestFriendState, type GuestPartyMessage, type GuestPartyState, type GuestReportReason } from './guest.ts'
+import { acceptGuestFriendRequest, acceptGuestPartyInvitation, blockGuest, cancelGuestFriendRequest, createGuestParty, declineGuestFriendRequest, declineGuestPartyInvitation, fetchCatalogue, fetchGuestBlocks, fetchGuestEventPlanning, fetchGuestFriends, fetchGuestMessages, fetchGuestParty, fetchGuestPartyMessages, inviteGuestEventPerformer, inviteGuestToParty, leaveGuestParty, openGuest, proposeGuestPartyTravel, removeGuestSave, requestGuestFriend, respondGuestEventInvitation, saveGuestEventDraft, saveGuestPreview, sendGuestMessage, sendGuestPartyMessage, setGuestMessagePreference, submitGuestReport, unfriendGuest, unblockGuest, voteGuestPartyTravel, type CatalogueTrack, type GuestDirectMessage, type GuestEventInvitation, type GuestEventPerformer, type GuestFriendState, type GuestPartyMessage, type GuestPartyState, type GuestReportReason } from './guest.ts'
 import { LIGHTING_PRESETS, getNextLightingMode, type LightingMode } from './lighting.ts'
 import { parseStageTemplate, serializeStageTemplate, type StageLook } from './stageTemplate.ts'
 import { RELEASE_JOURNEY, nextReleaseStation, previousReleaseStation, releaseStation, type ReleaseStationId } from './releaseJourney.ts'
@@ -1529,6 +1529,9 @@ let stageLook: StageLook = savedStageTemplate.lightLook
 type ShowDraft = { title: string; format: 'OPEN_MIC' | 'LISTENING_SESSION'; start: string }
 let showDraft: ShowDraft = { title: '', format: 'OPEN_MIC', start: '' }
 let showDraftSynced = false
+let showPerformers: GuestEventPerformer[] = []
+let showInvitations: GuestEventInvitation[] = []
+let showDraftSyncBusy = false
 try {
   const saved = JSON.parse(localStorage.getItem('scene-show-draft') || 'null')
   if (saved && typeof saved.title === 'string' && (saved.format === 'OPEN_MIC' || saved.format === 'LISTENING_SESSION') && typeof saved.start === 'string') {
@@ -1536,20 +1539,28 @@ try {
   }
 } catch { /* invalid local show draft starts empty */ }
 async function syncShowDraft() {
-  if (!guestSessionReady) return
-  const remote = await fetchGuestEventDraft()
-  const pending = localStorage.getItem('scene-show-draft-pending') === 'true'
-  if ((pending || !remote) && showDraft.title) {
-    await saveGuestEventDraft(showDraft)
-    localStorage.removeItem('scene-show-draft-pending')
-    showDraftSynced = true
-  } else if (remote) {
-    showDraft = { title: remote.title, format: remote.format, start: remote.start }
-    localStorage.setItem('scene-show-draft', JSON.stringify(showDraft))
-    showDraftSynced = true
+  if (!guestSessionReady || showDraftSyncBusy) return
+  showDraftSyncBusy = true
+  try {
+    const planning = await fetchGuestEventPlanning()
+    const remote = planning.draft
+    const pending = localStorage.getItem('scene-show-draft-pending') === 'true'
+    if ((pending || !remote) && showDraft.title) {
+      await saveGuestEventDraft(showDraft)
+      localStorage.removeItem('scene-show-draft-pending')
+      showDraftSynced = true
+    } else if (remote) {
+      showDraft = { title: remote.title, format: remote.format, start: remote.start }
+      localStorage.setItem('scene-show-draft', JSON.stringify(showDraft))
+      showDraftSynced = true
+    } else showDraftSynced = false
+    showPerformers = planning.performers
+    showInvitations = planning.invitations
+    renderStageEventMetrics()
+    if (!$<HTMLElement>('desk-sheet').hidden) renderDesk()
+  } finally {
+    showDraftSyncBusy = false
   }
-  renderStageEventMetrics()
-  if (!$<HTMLElement>('desk-sheet').hidden) renderDesk()
 }
 let dancing = false
 let beatPattern: BeatPattern = starterPattern(), beatPatternB: BeatPattern = toggleStep(starterPattern(), 0, 1)
@@ -2230,7 +2241,7 @@ function renderStageEventMetrics() {
     ledger.id = 'stage-ledger'
     ledger.className = 'stage-ledger'
     ledger.setAttribute('aria-label', 'Palm Room rehearsal metrics')
-    ledger.innerHTML = '<small>REHEARSAL SETUP · NO EVENT SALES</small><div><b>Other live sessions</b><span id="stage-live-sessions"></span></div><div class="stage-setup-picker"><small id="stage-setup-progress">0/3 pieces placed</small><div class="stage-setup-grid"><button type="button" data-stage-setup="light">Floor light</button><button type="button" data-stage-setup="monitors">Stage monitors</button><button type="button" data-stage-setup="backdrop">Backdrop</button></div><small>Arrange the rehearsal room. These are local trial pieces, not purchased inventory.</small></div><div class="stage-look-picker"><small>LIGHTING TEST · LOCAL PREVIEW</small><div class="stage-look-grid"><button type="button" data-stage-look="warm">Warm wash</button><button type="button" data-stage-look="sunset">Sunset</button><button type="button" data-stage-look="spotlight">Spot</button></div><button type="button" class="stage-save" data-stage-save="true">Save preview on this device</button></div><form id="show-draft-form" class="show-draft-form"><small>PLAN A SHOW · PRIVATE DRAFT</small><label>Show name<input name="title" maxlength="60" required placeholder="Friday at Palm Room" /></label><label>Format<select name="format"><option value="OPEN_MIC">Open mic</option><option value="LISTENING_SESSION">Listening session</option></select></label><label>Planned start<input name="start" type="datetime-local" required /></label><small id="show-draft-master"></small><button type="submit" class="stage-save">Save show draft</button><small id="show-draft-status"></small></form>'
+    ledger.innerHTML = '<small>REHEARSAL SETUP · NO EVENT SALES</small><div><b>Other live sessions</b><span id="stage-live-sessions"></span></div><div class="stage-setup-picker"><small id="stage-setup-progress">0/3 pieces placed</small><div class="stage-setup-grid"><button type="button" data-stage-setup="light">Floor light</button><button type="button" data-stage-setup="monitors">Stage monitors</button><button type="button" data-stage-setup="backdrop">Backdrop</button></div><small>Arrange the rehearsal room. These are local trial pieces, not purchased inventory.</small></div><div class="stage-look-picker"><small>LIGHTING TEST · LOCAL PREVIEW</small><div class="stage-look-grid"><button type="button" data-stage-look="warm">Warm wash</button><button type="button" data-stage-look="sunset">Sunset</button><button type="button" data-stage-look="spotlight">Spot</button></div><button type="button" class="stage-save" data-stage-save="true">Save preview on this device</button></div><form id="show-draft-form" class="show-draft-form"><small>PLAN A SHOW · PRIVATE DRAFT</small><label>Show name<input name="title" maxlength="60" required placeholder="Friday at Palm Room" /></label><label>Format<select name="format"><option value="OPEN_MIC">Open mic</option><option value="LISTENING_SESSION">Listening session</option></select></label><label>Planned start<input name="start" type="datetime-local" required /></label><small id="show-draft-master"></small><button type="submit" class="stage-save">Save show draft</button><small id="show-draft-status"></small></form><form id="show-invite-form" class="show-invite-form"><small>INVITE A REAL PERFORMER</small><label>Connected guest<select name="target" required><option value="">Choose a guest in Palm Room</option></select></label><button type="submit" class="stage-save">Invite to draft lineup</button><small id="show-invite-status">Save your show draft first. Performers must accept.</small><div id="show-performer-list" aria-live="polite"></div></form>'
     ledger.hidden = location !== 'venue' || nearby !== 'stage'
     ledger.addEventListener('click', event => {
       const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-stage-look]')
@@ -2270,6 +2281,21 @@ function renderStageEventMetrics() {
       renderStageEventMetrics()
       toast('Private show draft saved')
     })
+    const inviteForm = ledger.querySelector<HTMLFormElement>('#show-invite-form')!
+    inviteForm.addEventListener('submit', event => {
+      event.preventDefault()
+      const form = event.currentTarget as HTMLFormElement
+      const select = form.elements.namedItem('target') as HTMLSelectElement
+      const button = form.querySelector<HTMLButtonElement>('button[type="submit"]')!
+      button.disabled = true
+      void inviteGuestEventPerformer(select.value).then(async () => {
+        await syncShowDraft()
+        toast('Performer invitation sent · acceptance required')
+      }).catch(error => {
+        const status = document.getElementById('show-invite-status')
+        if (status) status.textContent = error instanceof Error ? error.message : 'Could not invite this performer'
+      }).finally(() => { button.disabled = false; renderStageEventMetrics() })
+    })
     copy.insertAdjacentElement('afterend', ledger)
   }
   ledger.querySelectorAll<HTMLButtonElement>('[data-stage-look]').forEach(item => item.setAttribute('aria-pressed', String(item.dataset.stageLook === stageLook)))
@@ -2281,6 +2307,33 @@ function renderStageEventMetrics() {
   if (masterStatus) masterStatus.textContent = masterBlob ? 'Your City Studio master is ready for a local stage audition.' : 'Render a master at City Studio to audition it here.'
   const showStatus = document.getElementById('show-draft-status')
   if (showStatus) showStatus.textContent = showDraft.title ? `Saved privately${showDraftSynced ? ' to your guest session' : ' on this device'}: ${showDraft.title}. No venue booking or public event exists.` : 'This plan does not reserve the venue.'
+  const inviteSelect = document.querySelector<HTMLSelectElement>('#show-invite-form [name="target"]')
+  if (inviteSelect && document.activeElement !== inviteSelect) {
+    const selected = inviteSelect.value
+    const alreadyInvited = new Set(showPerformers.map(performer => performer.guestId))
+    const candidates = connectedPlayers.filter(player => player.authenticated && player.location === 'venue' && !blockedIds.has(player.id) && !alreadyInvited.has(player.id))
+    inviteSelect.innerHTML = '<option value="">Choose a guest in Palm Room</option>' + candidates.map(player => `<option value="${escapeHtml(player.id)}">${escapeHtml(player.name?.trim() || `Guest · ${player.id.slice(0, 6)}`)}</option>`).join('')
+    if (candidates.some(player => player.id === selected)) inviteSelect.value = selected
+  }
+  const inviteButton = document.querySelector<HTMLButtonElement>('#show-invite-form button[type="submit"]')
+  if (inviteButton) inviteButton.disabled = !showDraftSynced || !inviteSelect?.value || showPerformers.filter(performer => performer.status !== 'declined').length >= 5
+  const inviteStatus = document.getElementById('show-invite-status')
+  if (inviteStatus) inviteStatus.textContent = !showDraftSynced
+    ? 'Save your show draft first. Performers must accept.'
+    : showPerformers.filter(performer => performer.status !== 'declined').length >= 5
+      ? 'This draft has five invited performers.'
+      : !connectedPlayers.some(player => player.authenticated && player.location === 'venue' && !blockedIds.has(player.id) && !showPerformers.some(performer => performer.guestId === player.id))
+        ? 'Invite a connected guest who is in Palm Room. They must accept to join this draft.'
+        : 'Only real connected guests in Palm Room can be invited. Acceptance joins the draft lineup; event terms and rights remain to be agreed.'
+  const performerList = document.getElementById('show-performer-list')
+  if (performerList) performerList.innerHTML = showPerformers.length
+    ? showPerformers.map(performer => {
+      const player = connectedPlayers.find(item => item.id === performer.guestId)
+      const name = player?.name?.trim() || `Guest · ${performer.guestId.slice(0, 6)}`
+      const status = performer.status === 'accepted' ? 'Accepted · draft lineup' : performer.status === 'declined' ? 'Declined' : 'Waiting for reply'
+      return `<div class="show-performer"><b>${escapeHtml(name)}</b><small>${status}</small></div>`
+    }).join('')
+    : '<small>No performer invitations yet.</small>'
   const count = new Set(connectedPlayers.filter(player => player.location === 'venue').map(player => player.id)).size
   const live = document.getElementById('stage-live-sessions')
   if (live) live.textContent = rehearsalMetrics(presenceConnected, count).liveSessions
@@ -2423,13 +2476,41 @@ function renderDesk() {
     cards.innerHTML = `<div class="ask-panel"><b>Ask Desk Bot</b><p>Ask about a known activity. Answers come from the local guide and routes stay physical.</p><form id="desk-question-form" class="ask-question"><label for="desk-question">What do you want to do?</label><div class="ask-input-row"><input id="desk-question" type="search" placeholder="e.g. How do I make a beat?" autocomplete="off" /><button type="submit">Ask</button></div></form>${answerMarkup}<div class="ask-quick-actions" aria-label="Suggested questions"><button type="button" data-ask-query="make a beat">Make a beat</button><button type="button" data-ask-query="prepare a release">Prepare a release</button><button type="button" data-ask-query="listen to music">Listen to music</button><button type="button" data-ask-query="visit Palm Room">Visit Palm Room</button></div></div>`
   } else {
     const showTitle = showDraft.title.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
+    const performerSummary = showPerformers.map(performer => {
+      const player = connectedPlayers.find(item => item.id === performer.guestId)
+      const name = escapeHtml(player?.name?.trim() || `Guest · ${performer.guestId.slice(0, 6)}`)
+      const status = performer.status === 'accepted' ? 'Accepted · draft lineup' : performer.status === 'declined' ? 'Declined' : 'Waiting for reply'
+      return `<small class="plan-performer"><b>${name}</b> · ${status}</small>`
+    }).join('')
     const showPlan = showDraft.title
-      ? `<article><div class="card-icon">♛</div><div><b>${showTitle}</b><p>Private ${showDraft.format === 'OPEN_MIC' ? 'open mic' : 'listening session'} plan at Palm Room · ${showDraft.start.replace('T', ' ')}. No booking or public event yet.</p></div><button data-show-route="true">Go to stage ↗</button></article>`
+      ? `<article><div class="card-icon">♛</div><div><b>${showTitle}</b><p>Private ${showDraft.format === 'OPEN_MIC' ? 'open mic' : 'listening session'} plan at Palm Room · ${showDraft.start.replace('T', ' ')}. No booking or public event yet.</p>${performerSummary}</div><button data-show-route="true">Go to stage ↗</button></article>`
       : `<article><div class="card-icon">♛</div><div><b>Plan a show</b><p>Visit the Palm Room stage to draft an open mic or listening session.</p></div><button data-show-route="true">Go to stage ↗</button></article>`
-    cards.innerHTML = `<div class="ask-panel"><b>Your local session</b><p>${savedPreview ? '♫ Tone preview saved for this session.' : 'No tone preview saved yet.'}</p><p>${beatDraftSaved ? '♫ A private beat pattern is saved on this device.' : 'No beat pattern saved yet.'}</p><p>${masterBlob ? '♫ 30-second master rendered and ready.' : 'No audio master rendered yet.'}</p><p>${releaseDraft.title ? '▣ Private sleeve: ' + releaseDraft.title.replaceAll('&', '&amp;').replaceAll('<', '&lt;') : 'No release sleeve saved yet.'}</p><p>${equipmentPreviewVisible ? '☼ Temporary floor-light preview is visible.' : 'No stage preview is shown.'}</p><p>${routeTarget ? '↗ A walking route is active.' : 'No walking route selected.'}</p></div>${showPlan}`
+    const incomingInvitations = showInvitations.length
+      ? showInvitations.map(invitation => {
+        const inviter = connectedPlayers.find(player => player.id === invitation.organiserGuestId)
+        const inviterName = escapeHtml(inviter?.name?.trim() || `Guest · ${invitation.organiserGuestId.slice(0, 6)}`)
+        const title = escapeHtml(invitation.title)
+        const format = invitation.format === 'OPEN_MIC' ? 'open mic' : 'listening session'
+        const actions = invitation.status === 'invited'
+          ? `<div class="event-invitation-actions"><button type="button" data-event-response="accept" data-invitation-id="${escapeHtml(invitation.invitationId)}">Join draft lineup</button><button type="button" data-event-response="decline" data-invitation-id="${escapeHtml(invitation.invitationId)}">Decline</button></div>`
+          : `<small class="plan-performer">${invitation.status === 'accepted' ? 'You accepted · draft lineup' : 'You declined'}</small>`
+        return `<article><div class="card-icon">♫</div><div><b>${title}</b><p>${inviterName} invited you to a ${format} draft at Palm Room · ${invitation.start.replace('T', ' ')}. Joining the draft is not a booking or music-rights approval.</p>${actions}</div><button data-show-route="true">Go to Palm Room ↗</button></article>`
+      }).join('')
+      : ''
+    cards.innerHTML = `<div class="ask-panel"><b>Your local session</b><p>${savedPreview ? '♫ Tone preview saved for this session.' : 'No tone preview saved yet.'}</p><p>${beatDraftSaved ? '♫ A private beat pattern is saved on this device.' : 'No beat pattern saved yet.'}</p><p>${masterBlob ? '♫ 30-second master rendered and ready.' : 'No audio master rendered yet.'}</p><p>${releaseDraft.title ? '▣ Private sleeve: ' + releaseDraft.title.replaceAll('&', '&amp;').replaceAll('<', '&lt;') : 'No release sleeve saved yet.'}</p><p>${equipmentPreviewVisible ? '☼ Temporary floor-light preview is visible.' : 'No stage preview is shown.'}</p><p>${routeTarget ? '↗ A walking route is active.' : 'No walking route selected.'}</p></div>${showPlan}${incomingInvitations}`
   }
   cards.querySelectorAll<HTMLButtonElement>('[data-route]').forEach(button => button.addEventListener('click', () => setRoute(button.dataset.route as Hotspot)))
-  cards.querySelector<HTMLButtonElement>('[data-show-route]')?.addEventListener('click', () => location === 'venue' ? setRoute('stage') : mapRoute('palmEntrance'))
+  cards.querySelectorAll<HTMLButtonElement>('[data-show-route]').forEach(button => button.addEventListener('click', () => location === 'venue' ? setRoute('stage') : mapRoute('palmEntrance')))
+  cards.querySelectorAll<HTMLButtonElement>('[data-event-response]').forEach(button => button.addEventListener('click', () => {
+    const invitationId = button.dataset.invitationId
+    const decision = button.dataset.eventResponse
+    if (!invitationId || (decision !== 'accept' && decision !== 'decline')) return
+    button.disabled = true
+    void respondGuestEventInvitation(invitationId, decision).then(async () => {
+      await syncShowDraft()
+      toast(decision === 'accept' ? 'Joined the draft lineup · terms still need agreement' : 'Performer invitation declined')
+    }).catch(() => { button.disabled = false; toast('Could not update this performer invitation') })
+  }))
   cards.querySelectorAll<HTMLButtonElement>('[data-close]').forEach(button => button.addEventListener('click', closeSheets))
   if (deskTab === 'ask') {
     const question = cards.querySelector<HTMLInputElement>('#desk-question')!
@@ -2455,8 +2536,14 @@ function openDesk(tab: 'today' | 'ask' | 'plans' = 'today') {
   sheet = 'desk'
   document.querySelectorAll<HTMLButtonElement>('.desk-tabs button').forEach(button => { const active = button.dataset.tab === deskTab; button.classList.toggle('active', active); button.setAttribute('aria-selected', String(active)) })
   renderDesk()
+  if (tab === 'plans' && guestSessionReady) void syncShowDraft().catch(() => {})
   refreshContext()
 }
+
+window.setInterval(() => {
+  if (SOLO_PREVIEW || !guestSessionReady) return
+  if ((sheet === 'desk' && deskTab === 'plans') || (sheet === 'action' && nearby === 'stage')) void syncShowDraft().catch(() => {})
+}, 5000)
 
 function openMap() {
   closeSheets()

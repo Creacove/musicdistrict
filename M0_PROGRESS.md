@@ -495,11 +495,12 @@ Added an integration test that connects 20 real WebSocket test clients to an iso
 - **Verification:** Full suite passes 104/104 when test files are serialized; the parallel run overloaded an existing timed WebSocket notice test. The focused presence suite passes 13/13. Netlify-mode TypeScript/Vite production build passes. WebSocket integration opened 21 clients, confirmed the first 20 share one instance, the 21st is isolated, and movement does not cross instances.
 - **Hosting boundary:** The stable Netlify phone preview remains solo/static. Runtime instance routing runs only on the self-hosted Node/SQLite/WebSocket server and is not active at that URL.
 
-## Current next slices — updated 15 October 2026
+## Current next slices — updated 16 October 2026
 
-1. Connect approved party travel to public room capacity with a group-compatible destination result; keep ticketed admission blocked until the authoritative Chapter 06 EventService validates each attendee and global capacity.
-2. Validate FPS, thermals, touch comfort, and network recovery on physical Android/iPhone devices.
-3. Keep public chat and reports gated until age policy, moderation staffing, emergency escalation, and appeals have real owners.
+1. Finish unanimous party travel with one capacity-checked destination instance for the whole group, preserving physical doorways. Ticketed admission remains blocked until Chapter 06 EventService validates attendees and capacity.
+2. Build the first safe free-show runtime only after its venue, performer, audio-rights, timeline, and attendance authority is concrete; accepted draft invitations alone do not confirm performers.
+3. Validate FPS, thermals, touch comfort, and network recovery on physical Android/iPhone devices.
+4. Keep public chat and reports gated until age policy, moderation staffing, emergency escalation, and appeals have real owners.
 
 ## Shared-room identity handoff — 16 October 2026
 
@@ -533,3 +534,12 @@ Added an integration test that connects 20 real WebSocket test clients to an iso
 - Self-hosted Node/SQLite now stores one authenticated private Palm Room show draft per guest, validates format/title/time, and exposes it only to that guest. The client keeps an offline device copy and syncs it when the guest service is available. A live local Chrome run followed the world route, saved a show draft, and read the same title from the authenticated endpoint. Focused tests prove guest isolation and persistence across SQLite restart. No venue calendar hold, public event, attendee count, or booking is created. The Netlify phone link remains a solo preview and keeps the draft on its device until a persistent Node host is deployed.
 - Rebuilt the Netlify artifact with `VITE_SCENE_DEMO_MODE=true`. The first live check caught an early presence callback reading the show draft before state initialization; the stage panel now waits until that state exists. The corrected solo artifact opens in Chrome with a rendered 3D canvas and no page errors.
 - Deployed the corrected solo artifact to `https://musicdistrict.netlify.app/` (Netlify deploy `6ad29d3a0147acd54c77e725`). Headed Chrome at 390 × 844 loaded the exact live URL, rendered the 3D canvas, opened Desk and the reactions control, and reported no page errors. The hosted link remains solo while the SQLite/WebSocket server needs a persistent host.
+
+## Palm Room performer consent loop — 16 October 2026
+
+- Built a connected event-planning slice on the existing walkable Palm Room stage: save a private open-mic/listening-session draft, invite a guest currently connected in Palm Room, and show the pending/accepted/declined state to both guests in Desk Plans and the stage panel.
+- The invitee must explicitly accept before being added to the private draft lineup. The server rejects offline targets, blocked pairs, duplicate invites and more than five simultaneous invites; UI presence checks are backed by the live WebSocket session registry rather than trusted client input.
+- This is not a confirmed performer booking or public show. It creates no calendar hold, fee, ticket, attendance count, music-rights permission or public audio; those Chapter 06 gates remain closed.
+- **GDD trace:** Chapter 06 §§3, 11–12 and its performer-appearance state machine; Master GDD §5 event/contract invariants. A draft invitation is not a confirmed act, and performer terms and approved audio remain required before publication or playback.
+- **Verification:** Full suite passes 108/108; `npm run build` passes. Headed Chrome at 390 × 844 completed the physical map walk from Music Square to Palm Room in two independent guest contexts, drafted an open mic, invited the other connected guest, accepted on the second device, and observed `Accepted · draft lineup` on the organiser. Browser page errors: 0. Repeatable check: `app/event-invitation-browser-check.mjs`. Captures: `docs/evidence/local-palm-room-performer-invite-mobile.png` and `docs/evidence/local-open-mic-performer-plan-mobile.png`.
+- **Phone preview:** the multiplayer client is served by the self-hosted Node/WebSocket process at `http://10.122.72.26:4173/` for devices on the same Wi-Fi. Netlify remains the solo/static preview and cannot sync invitations between phones until a persistent multiplayer host is deployed.

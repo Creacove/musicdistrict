@@ -35,6 +35,7 @@ export function attachPresence(httpServer, { store } = {}) {
   const players = new Map()
   const roomDirectory = createRuntimeRoomDirectory()
   wss.roomDirectory = roomDirectory
+  wss.isGuestConnectedAtLocation = (guestId, location) => [...players.values()].some(player => player.id === guestId && player.authenticated && player.location === location)
   let closing = false
   const send = (socket, message) => { if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message)) }
   const isBlockedBetween = (a, b) => {

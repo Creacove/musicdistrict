@@ -43,6 +43,51 @@ test('private event draft survives SQLite restart for its guest', () => {
   } finally { rmSync(dir, { recursive: true, force: true }) }
 })
 
+test('Palm Room draft performer invitations require explicit guest acceptance', async () => {
+  const store = createGuestStore(':memory:')
+  const connectedAtVenue = new Set()
+  const api = guestApi(store, { isGuestConnectedAtLocation: (id, location) => location === 'venue' && connectedAtVenue.has(id) })
+  const server = createServer((req, res) => api(req, res, () => { res.statusCode = 404; res.end() }))
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  const base = `http://127.0.0.1:${server.address().port}`
+  try {
+    const owner = await (await fetch(`${base}/api/guest`, { method: 'POST' })).json()
+    const performer = await (await fetch(`${base}/api/guest`, { method: 'POST' })).json()
+    const stranger = await (await fetch(`${base}/api/guest`, { method: 'POST' })).json()
+    const ownerAuth = { Authorization: `Bearer ${owner.token}`, 'Content-Type': 'application/json' }
+    const performerAuth = { Authorization: `Bearer ${performer.token}`, 'Content-Type': 'application/json' }
+    const save = await fetch(`${base}/api/event-draft`, { method: 'PUT', headers: ownerAuth, body: JSON.stringify({ title: 'Friday Open Mic', format: 'OPEN_MIC', start: '2026-10-23T19:00' }) })
+    assert.equal(save.status, 200)
+    const invitations = `${base}/api/event-draft/invitations`
+    assert.equal((await fetch(invitations, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ targetGuestId: performer.id }) })).status, 401)
+    assert.equal((await fetch(invitations, { method: 'POST', headers: ownerAuth, body: JSON.stringify({ targetGuestId: owner.id }) })).status, 400)
+    const offline = await fetch(invitations, { method: 'POST', headers: ownerAuth, body: JSON.stringify({ targetGuestId: stranger.id }) })
+    assert.equal(offline.status, 409, 'an offline guest cannot be invited through the API')
+    connectedAtVenue.add(performer.id)
+    store.block(performer.id, owner.id)
+    assert.equal((await fetch(invitations, { method: 'POST', headers: ownerAuth, body: JSON.stringify({ targetGuestId: performer.id }) })).status, 403, 'a guest who blocked the organiser cannot be invited')
+    store.unblock(performer.id, owner.id)
+    const invited = await fetch(invitations, { method: 'POST', headers: ownerAuth, body: JSON.stringify({ targetGuestId: performer.id }) })
+    assert.equal(invited.status, 201)
+    const invitation = await invited.json()
+    assert.equal(invitation.invitation.status, 'invited')
+    assert.equal((await fetch(invitations, { method: 'POST', headers: ownerAuth, body: JSON.stringify({ targetGuestId: performer.id }) })).status, 409)
+    const incoming = await (await fetch(`${base}/api/event-planning`, { headers: performerAuth })).json()
+    assert.equal(incoming.planning.invitations[0].title, 'Friday Open Mic')
+    assert.equal(incoming.planning.invitations[0].status, 'invited')
+    assert.deepEqual((await (await fetch(`${base}/api/event-planning`, { headers: { Authorization: `Bearer ${stranger.token}` } })).json()).planning.invitations, [])
+    store.block(owner.id, performer.id)
+    assert.equal((await fetch(`${invitations}/${invitation.invitation.invitationId}/response`, { method: 'POST', headers: performerAuth, body: JSON.stringify({ decision: 'accept' }) })).status, 403, 'a blocked invitation cannot be accepted')
+    store.unblock(owner.id, performer.id)
+    const response = await fetch(`${invitations}/${invitation.invitation.invitationId}/response`, { method: 'POST', headers: performerAuth, body: JSON.stringify({ decision: 'accept' }) })
+    assert.equal(response.status, 200)
+    assert.equal((await response.json()).invitation.status, 'accepted')
+    const ownerView = await (await fetch(`${base}/api/event-planning`, { headers: { Authorization: `Bearer ${owner.token}` } })).json()
+    assert.equal(ownerView.planning.performers[0].status, 'accepted')
+    assert.equal((await fetch(`${invitations}/${invitation.invitation.invitationId}/response`, { method: 'POST', headers: performerAuth, body: JSON.stringify({ decision: 'decline' }) })).status, 409)
+  } finally { server.close(); store.close() }
+})
+
 test('guest save is authenticated, idempotent and resumes from SQLite', async () => {
   const store = createGuestStore(':memory:')
   const api = guestApi(store)

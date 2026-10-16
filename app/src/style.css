@@ -159,6 +159,18 @@ kbd{display:inline-grid;place-items:center;min-width:19px;height:19px;background
 .show-draft-form>small:first-child{color:#f0c982;font-size:9px;font-weight:900;letter-spacing:.12em}
 .show-draft-form label{display:grid;gap:4px;font-size:10px;font-weight:800;color:#e9eee8}
 .show-draft-form input,.show-draft-form select{width:100%;min-width:0;min-height:38px;padding:8px;border:1px solid #ffffff45;border-radius:8px;background:#142a2a;color:#fff;font:inherit;color-scheme:dark}
+.show-invite-form{display:grid;grid-template-columns:1fr;gap:8px;margin-top:12px;padding-top:12px;border-top:1px solid #ffffff30}
+.show-invite-form>small:first-child{color:#f0c982;font-size:9px;font-weight:900;letter-spacing:.12em}
+.show-invite-form label{display:grid;gap:4px;font-size:10px;font-weight:800;color:#e9eee8}
+.show-invite-form select{width:100%;min-height:38px;padding:8px;border:1px solid #ffffff45;border-radius:8px;background:#142a2a;color:#fff;font:inherit;color-scheme:dark}
+.show-invite-form button.stage-save:disabled{opacity:.48;cursor:not-allowed}
+#show-performer-list{display:grid;gap:5px}
+.show-performer{display:flex;justify-content:space-between;gap:8px;padding:7px 8px;border-radius:7px;background:#ffffff0c;font-size:10px}
+.show-performer small{color:#c9ddd3;text-align:right}
+.plan-performer{display:block;margin-top:3px;color:#52645d;font-size:10px}
+.event-invitation-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.event-invitation-actions button{min-height:36px;padding:6px 10px;border:0;border-radius:8px;background:#0b9d70;color:#fff;font-size:10px;font-weight:850}
+.event-invitation-actions button+button{background:#e9edf0;color:#283338}
 .stage-look-picker>small{display:block;color:#e0c89f;font-size:9px;line-height:1.35}
 .stage-look-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin:7px 0}
 .stage-look-grid button{min-width:0;min-height:37px;padding:7px 5px;border:1px solid #ffffff20;border-radius:8px;background:#25272e;color:#f3eee4;font:inherit;font-size:10px;font-weight:800}

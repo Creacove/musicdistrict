@@ -34,6 +34,9 @@ export type GuestPartyState = {
   incoming: { invitationId: string; partyId: string; senderId: string; leaderId: string; createdAt: string; expiresAt: string }[]
 }
 export type GuestEventDraft = { venueId: 'palm-room'; title: string; format: 'OPEN_MIC' | 'LISTENING_SESSION'; start: string; status: 'DRAFT'; updatedAt: string }
+export type GuestEventPerformer = { invitationId: string; guestId: string; status: 'invited' | 'accepted' | 'declined'; createdAt: string; respondedAt: string | null }
+export type GuestEventInvitation = { invitationId: string; organiserGuestId: string; title: string; format: 'OPEN_MIC' | 'LISTENING_SESSION'; start: string; status: 'invited' | 'accepted' | 'declined'; createdAt: string; respondedAt: string | null }
+export type GuestEventPlanning = { draft: GuestEventDraft | null; performers: GuestEventPerformer[]; invitations: GuestEventInvitation[] }
 let token = ''
 const SOLO_PREVIEW = import.meta.env?.VITE_SCENE_DEMO_MODE === 'true'
 const PREVIEW_CATALOGUE: CatalogueTrack[] = [
@@ -104,6 +107,28 @@ export async function fetchGuestEventDraft(): Promise<GuestEventDraft | null> {
   if (!response.ok) throw new Error('Show draft unavailable')
   const data = await response.json() as { draft: GuestEventDraft | null }
   return data.draft
+}
+
+export async function fetchGuestEventPlanning(): Promise<GuestEventPlanning> {
+  const response = await guestRequest('/api/event-planning')
+  if (!response.ok) throw new Error('Show plans unavailable')
+  const data = await response.json() as { planning: GuestEventPlanning }
+  return data.planning
+}
+
+export async function inviteGuestEventPerformer(targetGuestId: string): Promise<GuestEventPerformer> {
+  const response = await guestRequest('/api/event-draft/invitations', { method: 'POST', body: JSON.stringify({ targetGuestId }) })
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({})) as { error?: string }
+    const messages: Record<string, string> = { draft: 'Save your show plan before inviting a performer.', target: 'That player is no longer available.', offline: 'That guest has left Palm Room.', blocked: 'This guest is unavailable.', already_invited: 'This player already has an invitation.', full: 'This draft has reached its five invited performer limit.' }
+    throw new Error(messages[data.error || ''] || 'Could not invite this performer')
+  }
+  return (await response.json() as { invitation: GuestEventPerformer }).invitation
+}
+
+export async function respondGuestEventInvitation(invitationId: string, decision: 'accept' | 'decline'): Promise<void> {
+  const response = await guestRequest(`/api/event-draft/invitations/${encodeURIComponent(invitationId)}/response`, { method: 'POST', body: JSON.stringify({ decision }) })
+  if (!response.ok) throw new Error('This performer invitation is no longer available')
 }
 
 export async function saveGuestEventDraft(draft: Pick<GuestEventDraft, 'title' | 'format' | 'start'>): Promise<GuestEventDraft> {

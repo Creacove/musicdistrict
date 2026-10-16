@@ -18,6 +18,7 @@ const PARTY_TRAVEL_PROPOSAL_TTL_MS = 5 * 60 * 1000
 const PARTY_TRAVEL_DESTINATIONS = new Set(['studio', 'palmEntrance', 'releaseEntrance', 'kiosk'])
 const PARTY_MAX_MEMBERS = 4
 const EVENT_DRAFT_FORMATS = new Set(['OPEN_MIC', 'LISTENING_SESSION'])
+const EVENT_DRAFT_MAX_INVITES = 5
 const PARTY_INVITATION_TTL_MS = 10 * 60 * 1000
 const PARTY_IDLE_TTL_MS = 30 * 60 * 1000
 
@@ -36,6 +37,16 @@ export function createGuestStore(path) {
       status TEXT NOT NULL CHECK (status = 'DRAFT'),
       updated_at TEXT NOT NULL,
       PRIMARY KEY (guest_id, venue_id)
+    );
+    CREATE TABLE IF NOT EXISTS event_draft_invitations (
+      id TEXT PRIMARY KEY,
+      owner_guest_id TEXT NOT NULL REFERENCES guests(id),
+      invitee_guest_id TEXT NOT NULL REFERENCES guests(id),
+      status TEXT NOT NULL CHECK (status IN ('invited', 'accepted', 'declined')),
+      created_at TEXT NOT NULL,
+      responded_at TEXT,
+      UNIQUE (owner_guest_id, invitee_guest_id),
+      CHECK (owner_guest_id <> invitee_guest_id)
     );
     CREATE TABLE IF NOT EXISTS blocked_guests (
       blocker_guest_id TEXT NOT NULL REFERENCES guests(id),
@@ -161,6 +172,16 @@ export function createGuestStore(path) {
   const upsertEventDraft = db.prepare(`INSERT INTO event_drafts (guest_id, venue_id, title, format, planned_start, status, updated_at)
     VALUES (?, 'palm-room', ?, ?, ?, 'DRAFT', ?)
     ON CONFLICT (guest_id, venue_id) DO UPDATE SET title = excluded.title, format = excluded.format, planned_start = excluded.planned_start, updated_at = excluded.updated_at`)
+  const outgoingEventInvitations = db.prepare(`SELECT id, invitee_guest_id, status, created_at, responded_at
+    FROM event_draft_invitations WHERE owner_guest_id = ? ORDER BY created_at, id`)
+  const incomingEventInvitations = db.prepare(`SELECT i.id, i.owner_guest_id, d.title, d.format, d.planned_start, i.status, i.created_at, i.responded_at
+    FROM event_draft_invitations i JOIN event_drafts d ON d.guest_id = i.owner_guest_id AND d.venue_id = 'palm-room'
+    WHERE i.invitee_guest_id = ? ORDER BY i.created_at DESC, i.id`)
+  const eventInvitationById = db.prepare('SELECT id, owner_guest_id, invitee_guest_id, status, created_at, responded_at FROM event_draft_invitations WHERE id = ?')
+  const eventInvitationForPair = db.prepare('SELECT id, status FROM event_draft_invitations WHERE owner_guest_id = ? AND invitee_guest_id = ?')
+  const countEventPerformers = db.prepare("SELECT count(*) AS count FROM event_draft_invitations WHERE owner_guest_id = ? AND status IN ('invited', 'accepted')")
+  const insertEventInvitation = db.prepare("INSERT INTO event_draft_invitations (id, owner_guest_id, invitee_guest_id, status, created_at) VALUES (?, ?, ?, 'invited', ?)")
+  const updateEventInvitation = db.prepare("UPDATE event_draft_invitations SET status = ?, responded_at = ? WHERE id = ? AND status = 'invited'")
   const hasGuest = db.prepare('SELECT 1 AS found FROM guests WHERE id = ?')
   const listBlocks = db.prepare('SELECT blocked_guest_id FROM blocked_guests WHERE blocker_guest_id = ? ORDER BY created_at, blocked_guest_id')
   const insertBlock = db.prepare('INSERT OR IGNORE INTO blocked_guests (blocker_guest_id, blocked_guest_id, created_at) VALUES (?, ?, ?)')
@@ -419,6 +440,38 @@ export function createGuestStore(path) {
       if (!title || title.length > 60 || !EVENT_DRAFT_FORMATS.has(input.format) || typeof input.start !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(input.start) || Number.isNaN(Date.parse(input.start))) return { error: 'invalid' }
       upsertEventDraft.run(id, title, input.format, input.start, new Date().toISOString())
       return this.eventDraft(id)
+    },
+    eventPlanning(id) {
+      return {
+        draft: this.eventDraft(id),
+        performers: outgoingEventInvitations.all(id).map(row => ({ invitationId: row.id, guestId: row.invitee_guest_id, status: row.status, createdAt: row.created_at, respondedAt: row.responded_at })),
+        invitations: incomingEventInvitations.all(id).map(row => ({ invitationId: row.id, organiserGuestId: row.owner_guest_id, title: row.title, format: row.format, start: row.planned_start, status: row.status, createdAt: row.created_at, respondedAt: row.responded_at })),
+      }
+    },
+    inviteEventPerformer(ownerId, inviteeId, isGuestConnectedAtLocation = () => false) {
+      if (!hasGuest.get(ownerId) || !this.eventDraft(ownerId)) return { error: 'draft' }
+      if (typeof inviteeId !== 'string' || !UUID.test(inviteeId) || inviteeId === ownerId || !hasGuest.get(inviteeId)) return { error: 'target' }
+      if (this.isBlockedBetween(ownerId, inviteeId)) return { error: 'blocked' }
+      if (typeof isGuestConnectedAtLocation !== 'function' || !isGuestConnectedAtLocation(inviteeId, 'venue')) return { error: 'offline' }
+      const existing = eventInvitationForPair.get(ownerId, inviteeId)
+      if (existing) return { error: 'already_invited' }
+      if (countEventPerformers.get(ownerId).count >= EVENT_DRAFT_MAX_INVITES) return { error: 'full' }
+      const id = randomUUID(), createdAt = new Date().toISOString()
+      insertEventInvitation.run(id, ownerId, inviteeId, createdAt)
+      return { invitationId: id, ownerGuestId: ownerId, inviteeGuestId: inviteeId, status: 'invited', createdAt, respondedAt: null }
+    },
+    respondEventInvitation(inviteeId, invitationId, decision) {
+      if (!['accept', 'decline'].includes(decision)) return { error: 'invalid' }
+      const row = eventInvitationById.get(invitationId)
+      if (!row || row.invitee_guest_id !== inviteeId) return { error: 'not_found' }
+      if (this.isBlockedBetween(inviteeId, row.owner_guest_id)) return { error: 'blocked' }
+      const status = decision === 'accept' ? 'accepted' : 'declined'
+      if (row.status !== 'invited') return row.status === status
+        ? { invitationId: row.id, ownerGuestId: row.owner_guest_id, inviteeGuestId: row.invitee_guest_id, status: row.status, createdAt: row.created_at, respondedAt: row.responded_at }
+        : { error: 'responded' }
+      const respondedAt = new Date().toISOString()
+      updateEventInvitation.run(status, respondedAt, row.id)
+      return { invitationId: row.id, ownerGuestId: row.owner_guest_id, inviteeGuestId: row.invitee_guest_id, status, createdAt: row.created_at, respondedAt }
     },
     hasGuest(id) { return typeof id === 'string' && hasGuest.get(id) !== undefined },
     blocks(id) { return listBlocks.all(id).map(row => row.blocked_guest_id) },
@@ -766,7 +819,7 @@ const CATALOGUE = [
   { id: 'lagos-golden-hour', title: 'Golden Hour Jam', artist: 'Victoria Island Collective', genre: 'Afro-fusion', duration: 30, released: true },
 ]
 
-export function guestApi(store) {
+export function guestApi(store, { isGuestConnectedAtLocation = () => false } = {}) {
   return async (req, res, next) => {
     let pathname
     try { pathname = new URL(req.url || '/', 'http://localhost').pathname } catch { res.statusCode = 400; return res.end() }
@@ -775,7 +828,7 @@ export function guestApi(store) {
       res.setHeader('Cache-Control', 'no-store')
       return res.end(JSON.stringify({ tracks: CATALOGUE }))
     }
-    if (!['/api/guest', '/api/saves', '/api/event-draft', '/api/reports', '/api/blocks', '/api/friends', '/api/friend-requests', '/api/messages', '/api/parties', '/api/party-invitations'].some(route => pathname === route || pathname.startsWith(`${route}/`))) return next()
+    if (!['/api/guest', '/api/saves', '/api/event-draft', '/api/event-planning', '/api/reports', '/api/blocks', '/api/friends', '/api/friend-requests', '/api/messages', '/api/parties', '/api/party-invitations'].some(route => pathname === route || pathname.startsWith(`${route}/`))) return next()
     res.setHeader('Content-Type', 'application/json; charset=utf-8')
     res.setHeader('Cache-Control', 'no-store')
     const reply = (status, body) => { res.statusCode = status; res.end(JSON.stringify(body)) }
@@ -787,6 +840,30 @@ export function guestApi(store) {
     }
     const id = token && store.resume(token)
     if (!id) return reply(401, { error: 'Guest session required' })
+    if (pathname === '/api/event-planning' && req.method === 'GET') return reply(200, { planning: store.eventPlanning(id) })
+    if (pathname === '/api/event-draft/invitations' && req.method === 'POST') {
+      const parsed = await readJsonBody(req)
+      if (parsed.error) return reply(400, { error: parsed.error })
+      const invitation = store.inviteEventPerformer(id, parsed.value?.targetGuestId, isGuestConnectedAtLocation)
+      if (invitation.error === 'draft') return reply(409, invitation)
+      if (invitation.error === 'target') return reply(400, invitation)
+      if (invitation.error === 'offline') return reply(409, invitation)
+      if (invitation.error === 'blocked') return reply(403, invitation)
+      if (invitation.error === 'already_invited') return reply(409, invitation)
+      if (invitation.error === 'full') return reply(409, invitation)
+      return reply(201, { invitation })
+    }
+    const eventInvitationResponse = pathname.match(/^\/api\/event-draft\/invitations\/([0-9a-f-]{36})\/response$/i)
+    if (eventInvitationResponse && req.method === 'POST') {
+      const parsed = await readJsonBody(req)
+      if (parsed.error) return reply(400, { error: parsed.error })
+      const invitation = store.respondEventInvitation(id, eventInvitationResponse[1], parsed.value?.decision)
+      if (invitation.error === 'invalid') return reply(400, invitation)
+      if (invitation.error === 'not_found') return reply(404, invitation)
+      if (invitation.error === 'blocked') return reply(403, invitation)
+      if (invitation.error === 'responded') return reply(409, invitation)
+      return reply(200, { invitation })
+    }
     if (pathname === '/api/event-draft' && req.method === 'GET') return reply(200, { draft: store.eventDraft(id) })
     if (pathname === '/api/event-draft' && req.method === 'PUT') {
       const parsed = await readJsonBody(req)
