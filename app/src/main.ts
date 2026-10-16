@@ -2221,6 +2221,7 @@ function saveStageTemplate() {
 }
 
 function renderStageEventMetrics() {
+  if (!showDraft) return
   const copy = document.getElementById('action-copy')
   if (!copy) return
   let ledger = document.getElementById('stage-ledger')

@@ -18,8 +18,9 @@ try {
   const evidencePrefix = targetUrl.startsWith('https:') ? 'netlify-' : ''
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } })
   const pageErrors = []
-  page.on('pageerror', error => pageErrors.push(error.message))
-  await page.goto(targetUrl, { waitUntil: 'networkidle', timeout: 30000 })
+  page.on('pageerror', error => pageErrors.push(error.stack || error.message))
+  await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 45000 })
+  await page.locator('canvas').first().waitFor({ state: 'visible', timeout: 15000 })
   const canvasCount = await page.locator('canvas').count()
   assert.ok(canvasCount > 0, 'the 3D game canvas should render')
   assert.deepEqual(pageErrors, [], 'the browser should not report page errors')
