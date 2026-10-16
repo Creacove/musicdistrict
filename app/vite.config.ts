@@ -6,7 +6,10 @@ import { resolve } from 'node:path'
 
 const store = createGuestStore(resolve(process.cwd(), 'data', 'scene-dev.sqlite'))
 let presence: ReturnType<typeof attachPresence> | undefined
-const api = guestApi(store, { isGuestConnectedAtLocation: (guestId, location) => presence?.isGuestConnectedAtLocation(guestId, location) ?? false })
+const api = guestApi(store, {
+  isGuestConnectedAtLocation: (guestId, location) => presence?.isGuestConnectedAtLocation(guestId, location) ?? false,
+  getPartyTravelAssignment: guestId => presence?.getPartyTravelAssignment(guestId) ?? null,
+})
 const attach = (server: { httpServer: import('node:http').Server | null; middlewares: { use: (middleware: ReturnType<typeof guestApi>) => void } }) => {
   server.middlewares.use(releaseWindowApi)
   server.middlewares.use(api)

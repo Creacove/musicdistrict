@@ -12,6 +12,7 @@ export type FriendRequestReceipt = { requestId: string; status: 'pending'; expir
 export type GuestDirectMessage = { id: string; senderGuestId: string; recipientGuestId: string; text: string; sentAt: string }
 export type GuestPartyMessage = { id: string; senderGuestId: string; text: string; sentAt: string }
 export type GuestPartyTravelVote = { guestId: string; decision: 'approve' | 'decline' | null }
+export type GuestPartyTravelAssignment = { proposalId: string; destinationId: string; location: string; spaceId: string | null; instanceId: string | null; groupSize: number; arrivedMembers: number; remainingMembers: number; reservedSlots: number; expiresAt: string; error: string | null }
 export type GuestPartyTravelProposal = {
   proposalId: string
   destinationId: string
@@ -28,6 +29,7 @@ export type GuestParty = {
   members: { guestId: string; joinedAt: string; leader: boolean }[]
   invitations: { invitationId: string; guestId: string; createdAt: string; expiresAt: string }[]
   travelProposal: GuestPartyTravelProposal | null
+  travelAssignment: GuestPartyTravelAssignment | null
 }
 export type GuestPartyState = {
   party: GuestParty | null

@@ -16,7 +16,10 @@ export function createSceneServer({ databasePath = dataPath, staticRoot = distRo
   if (!existsSync(resolve(root, 'index.html'))) throw new Error(`Built game missing at ${root}. Run npm run build first.`)
   const store = createGuestStore(databasePath)
   let presence
-  const api = guestApi(store, { isGuestConnectedAtLocation: (guestId, location) => presence?.isGuestConnectedAtLocation(guestId, location) ?? false })
+  const api = guestApi(store, {
+    isGuestConnectedAtLocation: (guestId, location) => presence?.isGuestConnectedAtLocation(guestId, location) ?? false,
+    getPartyTravelAssignment: guestId => presence?.getPartyTravelAssignment(guestId) ?? null,
+  })
   const server = createServer((req, res) => {
     releaseWindowApi(req, res, () => api(req, res, () => {
       if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405).end(); return }

@@ -869,7 +869,10 @@ async function handlePartyTravelVote(proposalId: string, decision: 'approve' | '
   try {
     const status = await voteGuestPartyTravel(party.partyId, proposalId, decision)
     await refreshPartyState()
-    toast(status === 'approved' ? 'Everyone agreed · choose when you are ready to walk' : status === 'declined' ? 'Travel proposal declined' : 'Your decision is recorded')
+    const assignment = partyState.party?.travelAssignment
+    toast(status === 'approved'
+      ? assignment?.error ? 'Travel approved, but this party cannot share that room right now' : assignment ? 'Shared public room reserved · walk there when ready' : 'Everyone agreed · selecting a shared room'
+      : status === 'declined' ? 'Travel proposal declined' : 'Your decision is recorded')
   } catch (error) {
     toast(error instanceof Error ? error.message : 'Could not record your travel decision')
   }
@@ -1049,9 +1052,16 @@ function renderPartyState() {
     const proposalUi = proposal && destination ? (() => {
       const ownVote = proposal.votes.find(vote => vote.guestId === ownId)
       const waiting = proposal.votes.filter(vote => vote.decision === null).length
+      const assignment = party.travelAssignment
       const votes = proposal.votes.map(vote => `<div class="party-travel-vote"><span>${vote.guestId === ownId ? 'You' : escapeHtml(socialDisplayName(vote.guestId))}</span><small>${vote.decision === 'approve' ? 'Approved' : vote.decision === 'decline' ? 'Declined' : 'Waiting'}</small></div>`).join('')
       const controls = proposal.status === 'approved'
-        ? `<p class="party-travel-status">Everyone agreed. Each guest chooses when to walk.</p><button type="button" class="social-action accept party-travel-route" data-party-travel-route="${destination.id}">Show my walking route</button>`
+        ? assignment?.error === 'party_split_in_destination'
+          ? '<p class="party-travel-status">Your party is already split across public rooms. Meet at one physical room entrance before proposing this route.</p>'
+          : assignment?.error
+            ? '<p class="party-travel-status">A shared public room is unavailable. Choose another place.</p>'
+            : assignment
+              ? `<p class="party-travel-status">Shared room reserved · ${assignment.arrivedMembers}/${assignment.groupSize} guests there · ${assignment.arrivedMembers === assignment.groupSize ? 'group together' : `${assignment.reservedSlots} ${assignment.reservedSlots === 1 ? 'place' : 'places'} held`}. Each guest still walks through the physical door.</p>${location === assignment.location ? '<p class="party-travel-status">You are already here · wait for your group in this room.</p>' : `<button type="button" class="social-action accept party-travel-route" data-party-travel-route="${destination.id}">Show my walking route</button>`}`
+              : '<p class="party-travel-status">Choosing one public room with enough space for the whole party…</p>'
         : ownVote?.decision
           ? `<p class="party-travel-status">Your choice is recorded · waiting for ${waiting} member${waiting === 1 ? '' : 's'}.</p>`
           : `<div class="party-travel-actions"><button type="button" class="social-action accept" data-party-travel-vote="approve" data-proposal-id="${escapeHtml(proposal.proposalId)}">Approve</button><button type="button" class="social-action decline" data-party-travel-vote="decline" data-proposal-id="${escapeHtml(proposal.proposalId)}">Decline</button></div>`
@@ -1060,7 +1070,7 @@ function renderPartyState() {
     const travelComposer = !proposal && party.leaderId === ownId
       ? `<form class="party-travel-form" data-party-travel-form><label for="party-travel-destination">Propose a public destination</label><select id="party-travel-destination" data-party-destination required><option value="">Choose a place</option>${mapDestinations.map(item => `<option value="${item.id}">${item.name}</option>`).join('')}</select><button type="submit" class="social-action party-travel-propose">Propose route</button></form>`
       : ''
-    overview.innerHTML = `<div class="party-summary"><b>${party.members.length}/4 guests · ${party.leaderId === ownId ? 'You lead' : `${escapeHtml(socialDisplayName(party.leaderId))} leads`}</b><div class="party-members" role="list">${memberRows}${inviteRows}</div><small class="party-travel-note">Public places only · everyone must be online and approve. No tickets or room are reserved; each guest chooses and walks their own route.</small>${travelComposer}${proposalUi}<button class="social-action" data-party-action="leave" data-party-id="${escapeHtml(party.partyId)}">Leave party</button></div>`
+    overview.innerHTML = `<div class="party-summary"><b>${party.members.length}/4 guests · ${party.leaderId === ownId ? 'You lead' : `${escapeHtml(socialDisplayName(party.leaderId))} leads`}</b><div class="party-members" role="list">${memberRows}${inviteRows}</div><small class="party-travel-note">Public places only · everyone must be online and approve. After unanimous approval, one shared room is reserved and every guest walks through the physical door. No event tickets or admissions are included.</small>${travelComposer}${proposalUi}<button class="social-action" data-party-action="leave" data-party-id="${escapeHtml(party.partyId)}">Leave party</button></div>`
   }
   incoming.innerHTML = partyState.incoming.map(invite => `<div class="social-entry social-request" role="listitem"><span><b>${escapeHtml(socialDisplayName(invite.leaderId))}</b><small>Invited you to a party · expires ${new Date(invite.expiresAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</small></span><button class="social-action accept" data-party-action="accept" data-invitation-id="${escapeHtml(invite.invitationId)}" ${party ? 'disabled title="Leave your current party before joining another"' : ''}>Join</button><button class="social-action decline" data-party-action="decline" data-invitation-id="${escapeHtml(invite.invitationId)}">Decline</button></div>`).join('')
   wirePartyActions(section)
@@ -1394,10 +1404,23 @@ function handleIncomingChat(id: string, name: string, text: string) {
   }
 }
 
+let lastPeoplePanelSignature = ''
+function peoplePanelSignature(players: PresencePlayer[], connected: boolean) {
+  const entries = players
+    .filter(player => !blockedIds.has(player.id))
+    .map(player => [player.id, player.name || '', player.location, player.dancing ? '1' : '0'].join(':'))
+    .sort()
+  return JSON.stringify([connected, location, [...blockedIds].sort(), entries])
+}
+
 function renderPresence(players: PresencePlayer[], connected: boolean, reconnectAttempts: number) {
   connectedPlayers = players
   presenceConnected = connected
-  renderPeople(players, connected)
+  const panelSignature = peoplePanelSignature(players, connected)
+  if (panelSignature !== lastPeoplePanelSignature) {
+    lastPeoplePanelSignature = panelSignature
+    renderPeople(players, connected)
+  }
   renderStageEventMetrics()
   const visible = new Set(players.filter(player => player.location === location && !blockedIds.has(player.id)).map(player => player.id))
   for (const [id, model] of remoteAvatars) if (!visible.has(id)) {

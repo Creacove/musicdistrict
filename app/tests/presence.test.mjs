@@ -487,6 +487,79 @@ test('20 connected test clients get a real room snapshot and shared movement', a
   }
 })
 
+test('unanimous party travel reserves capacity and moves members only through the studio doorway', async () => {
+  const store = createGuestStore(':memory:')
+  const leader = store.create(), member = store.create()
+  const friendship = store.requestFriend(leader.id, member.id)
+  store.acceptFriendRequest(friendship.requestId, member.id)
+  const server = createServer((req, res) => api(req, res, () => { res.statusCode = 404; res.end() }))
+  let hub
+  const api = guestApi(store, { getPartyTravelAssignment: guestId => hub?.getPartyTravelAssignment(guestId) || null })
+  hub = attachPresence(server, { store })
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  const port = server.address().port
+  const a = new WebSocket(`ws://127.0.0.1:${port}/presence?token=${leader.token}`)
+  let b
+  try {
+    const welcomeA = await nextMessageWithin(a, 'party leader presence')
+    b = new WebSocket(`ws://127.0.0.1:${port}/presence?token=${member.token}`)
+    const welcomeB = await nextMessageWithin(b, 'party member presence')
+    assert.equal(welcomeA.type, 'welcome')
+    assert.equal(welcomeA.location, undefined)
+    assert.equal(welcomeB.type, 'welcome')
+
+    const party = store.createParty(leader.id)
+    const invite = store.inviteToParty(party.partyId, leader.id, member.id)
+    store.acceptPartyInvitation(invite.invitationId, member.id)
+    const createResponse = await fetch(`http://127.0.0.1:${port}/api/parties/${party.partyId}/travel-proposals`, {
+      method: 'POST', headers: { Authorization: `Bearer ${leader.token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ destinationId: 'studio' }),
+    })
+    assert.equal(createResponse.status, 201)
+    const proposal = (await createResponse.json()).travelProposal
+    const vote = guest => fetch(`http://127.0.0.1:${port}/api/parties/${party.partyId}/travel-proposals/${proposal.proposalId}/votes`, {
+      method: 'POST', headers: { Authorization: `Bearer ${guest.token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ decision: 'approve' }),
+    })
+    await vote(member)
+    assert.equal((await (await vote(leader)).json()).status, 'approved')
+
+    const partyState = await (await fetch('http://127.0.0.1:' + port + '/api/parties/me', { headers: { Authorization: `Bearer ${leader.token}` } })).json()
+    const assignment = partyState.party.travelAssignment
+    assert.equal(assignment.groupSize, 2)
+    assert.equal(assignment.reservedSlots, 2)
+    assert.equal(assignment.arrivedMembers, 0)
+
+    const reservationRoom = hub.roomDirectory.list('studio').find(room => room.instanceId === assignment.instanceId)
+    assert.equal(reservationRoom.availableSlots, reservationRoom.capacity - 2)
+    const walkIns = []
+    for (let index = 0; index < reservationRoom.capacity - 2; index++) {
+      walkIns.push(hub.roomDirectory.join(`walk-in-${index}`, 'studio'))
+    }
+    assert.ok(walkIns.every(room => room.instanceId === assignment.instanceId))
+    assert.notEqual(hub.roomDirectory.join('walk-in-overflow', 'studio').instanceId, assignment.instanceId)
+
+    const walkToDoor = async socket => {
+      const positions = Array.from({ length: 6 }, (_, index) => ({ x: -4 + 17 * (index + 1) / 6, z: 7 - 15 * (index + 1) / 6 }))
+      for (const position of positions) {
+        socket.send(JSON.stringify({ type: 'move', ...position, angle: 0, dancing: false, location: 'square' }))
+        await new Promise(resolve => setTimeout(resolve, 90))
+      }
+      const entered = nextMessageMatching(socket, 'reserved studio room entry', message => message.type === 'instance')
+      socket.send(JSON.stringify({ type: 'move', x: 0, z: 7, angle: 0, dancing: false, location: 'studio' }))
+      return entered
+    }
+    const travelUpdateA = nextMessageMatching(a, 'party arrival update', message => message.type === 'party-update' && message.kind === 'travel-update')
+    const travelUpdateB = nextMessageMatching(b, 'party arrival update', message => message.type === 'party-update' && message.kind === 'travel-update')
+    const [arrivedA, arrivedB] = await Promise.all([walkToDoor(a), walkToDoor(b)])
+    assert.equal(arrivedA.instanceId, assignment.instanceId)
+    assert.equal(arrivedB.instanceId, assignment.instanceId)
+    assert.equal((await travelUpdateA).partyId, party.partyId)
+    assert.equal((await travelUpdateB).partyId, party.partyId)
+    assert.equal(hub.getPartyTravelAssignment(leader.id).arrivedMembers, 2)
+  } finally { a.terminate(); b?.terminate(); hub.close(); server.close(); store.close() }
+})
+
 test('a 21st public-room client gets a new runtime instance and isolated movement', async () => {
   const server = createServer()
   const hub = attachPresence(server)

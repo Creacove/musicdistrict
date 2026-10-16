@@ -29,6 +29,7 @@ const DOORWAYS = {
   studio: [{ target: 'square', x: -10, z: 9 }],
   release: [{ target: 'square', x: -10, z: 9 }],
 }
+const PARTY_DESTINATION_LOCATIONS = Object.freeze({ studio: 'studio', palmEntrance: 'venue', releaseEntrance: 'release', kiosk: 'square' })
 
 export function attachPresence(httpServer, { store } = {}) {
   const wss = new WebSocketServer({ server: httpServer, path: '/presence', maxPayload: 256 })
@@ -36,6 +37,7 @@ export function attachPresence(httpServer, { store } = {}) {
   const roomDirectory = createRuntimeRoomDirectory()
   wss.roomDirectory = roomDirectory
   wss.isGuestConnectedAtLocation = (guestId, location) => [...players.values()].some(player => player.id === guestId && player.authenticated && player.location === location)
+  const partyTravelAssignments = new Map()
   let closing = false
   const send = (socket, message) => { if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message)) }
   const isBlockedBetween = (a, b) => {
@@ -55,11 +57,88 @@ export function attachPresence(httpServer, { store } = {}) {
     try {
       const memberIds = new Set(store.partyState(guestId)?.party?.members?.map(member => member.guestId) || [])
       if (!memberIds.size) return []
-      return [...new Set([...players.values()]
+      const assigned = partyTravelAssignments.get(store.partyState(guestId)?.party?.partyId)
+      const preferred = assigned?.location === location && assigned.instanceId ? [assigned.instanceId] : []
+      return [...new Set([...preferred, ...[...players.values()]
         .filter(other => memberIds.has(other.id) && other.location === location)
         .map(other => other.instanceId)
-        .filter(Boolean))]
+        .filter(Boolean)])]
     } catch { return [] }
+  }
+  const updatePartyTravelAssignment = event => {
+    if (!store || !event?.partyId) return
+    const previous = partyTravelAssignments.get(event.partyId)
+    const state = (event.memberIds || []).map(guestId => store.partyState(guestId)).find(result => result.party?.partyId === event.partyId)
+    const proposal = state?.party?.travelProposal
+    if (!proposal || proposal.status !== 'approved') {
+      if (previous?.reserved) roomDirectory.cancelReservation(previous.proposalId)
+      partyTravelAssignments.delete(event.partyId)
+      return
+    }
+    if (previous?.proposalId === proposal.proposalId) return
+    if (previous?.reserved) roomDirectory.cancelReservation(previous.proposalId)
+    const location = PARTY_DESTINATION_LOCATIONS[proposal.destinationId]
+    const memberIds = state.party.members.map(member => member.guestId)
+    const presentAtTarget = [...players.entries()]
+      .filter(([, player]) => memberIds.includes(player.id) && player.location === location)
+      .map(([sessionId, player]) => ({ ...player, sessionId }))
+    const presentInstances = [...new Set(presentAtTarget.map(player => player.instanceId))]
+    if (presentInstances.length > 1) {
+      partyTravelAssignments.set(event.partyId, { partyId: event.partyId, proposalId: proposal.proposalId, destinationId: proposal.destinationId, location, groupSize: memberIds.length, expiresAt: proposal.expiresAt, error: 'party_split_in_destination' })
+      return
+    }
+    const alreadyArrivedGuests = presentAtTarget.map(player => ({ guestId: player.id, sessionId: player.sessionId }))
+    const preferred = presentInstances.length
+      ? presentInstances
+      : preferredPartyInstances(memberIds[0], location)
+    const reserved = roomDirectory.reserveGroup(proposal.proposalId, location, memberIds, preferred, proposal.expiresAt, alreadyArrivedGuests)
+    if (reserved.error) {
+      partyTravelAssignments.set(event.partyId, { partyId: event.partyId, proposalId: proposal.proposalId, destinationId: proposal.destinationId, location, groupSize: memberIds.length, expiresAt: proposal.expiresAt, error: reserved.error })
+      return
+    }
+    partyTravelAssignments.set(event.partyId, {
+      partyId: event.partyId,
+      proposalId: proposal.proposalId,
+      destinationId: proposal.destinationId,
+      location,
+      spaceId: reserved.spaceId,
+      instanceId: reserved.instanceId,
+      groupSize: reserved.groupSize,
+      expiresAt: reserved.expiresAt,
+      reserved: true,
+    })
+  }
+  wss.getPartyTravelAssignment = guestId => {
+    if (!store) return null
+    const party = store.partyState(guestId).party
+    const proposal = party?.travelProposal
+    const assignment = party && partyTravelAssignments.get(party.partyId)
+    if (!proposal || proposal.status !== 'approved' || !assignment || assignment.proposalId !== proposal.proposalId) return null
+    const reservation = assignment.reserved ? roomDirectory.reservation(assignment.proposalId) : null
+    return {
+      proposalId: assignment.proposalId,
+      destinationId: assignment.destinationId,
+      location: assignment.location,
+      spaceId: assignment.spaceId || null,
+      instanceId: assignment.instanceId || null,
+      groupSize: assignment.groupSize,
+      arrivedMembers: reservation?.arrivedMembers || 0,
+      remainingMembers: reservation?.remainingMembers || 0,
+      reservedSlots: reservation?.reservedSlots || 0,
+      expiresAt: assignment.expiresAt,
+      error: assignment.error || null,
+    }
+  }
+  const notifyPartyTravelProgress = guestId => {
+    if (!store) return
+    const party = store.partyState(guestId).party
+    const proposal = party?.travelProposal
+    const assignment = party && partyTravelAssignments.get(party.partyId)
+    if (!proposal || proposal.status !== 'approved' || !assignment?.reserved || assignment.proposalId !== proposal.proposalId) return
+    for (const [socket, recipient] of players) {
+      if (!party.members.some(member => member.guestId === recipient.id)) continue
+      send(socket, { type: 'party-update', kind: 'travel-update', partyId: party.partyId, otherId: guestId })
+    }
   }
   const stopBlockListener = store?.onBlock?.(({ blockerId, blockedId }) => {
     for (const [socket, player] of players) {
@@ -89,6 +168,7 @@ export function attachPresence(httpServer, { store } = {}) {
     }
   })
   const stopPartyListener = store?.onPartyEvent?.(event => {
+    if (event.kind === 'travel-update') updatePartyTravelAssignment(event)
     for (const [socket, player] of players) {
       if (!event.memberIds?.includes(player.id)) continue
       if (event.kind === 'invited' && player.id !== event.targetId) continue
@@ -213,13 +293,20 @@ export function attachPresence(httpServer, { store } = {}) {
       const sanitizedName = typeof name === 'string' && name.trim() ? name.trim().slice(0, 16) : player.name
       if (location !== player.location) {
         const previousRoom = { ...player }
-        const nextRoom = roomDirectory.move(socket, location, preferredPartyInstances(player.id, location))
+        const party = store?.partyState?.(player.id)?.party
+        const proposal = party?.travelProposal
+        const assignment = party && partyTravelAssignments.get(party.partyId)
+        const travel = proposal?.status === 'approved' && assignment?.proposalId === proposal.proposalId && assignment.location === location && !assignment.error
+          ? { reservationId: proposal.proposalId, guestId: player.id }
+          : {}
+        const nextRoom = roomDirectory.move(socket, location, preferredPartyInstances(player.id, location), travel)
         if (nextRoom.error) return
         Object.assign(player, { x, z, angle, dancing, location, name: sanitizedName, spaceId: nextRoom.room.spaceId, instanceId: nextRoom.room.instanceId })
         lastMove = now
         broadcast({ type: 'leave', id }, socket, previousRoom)
         broadcast({ type: 'join', player }, socket, player)
         send(socket, { type: 'instance', spaceId: player.spaceId, instanceId: player.instanceId })
+        notifyPartyTravelProgress(id)
         return
       }
       Object.assign(player, { x, z, angle, dancing, location, name: sanitizedName })

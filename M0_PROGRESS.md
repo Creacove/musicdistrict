@@ -495,9 +495,9 @@ Added an integration test that connects 20 real WebSocket test clients to an iso
 - **Verification:** Full suite passes 104/104 when test files are serialized; the parallel run overloaded an existing timed WebSocket notice test. The focused presence suite passes 13/13. Netlify-mode TypeScript/Vite production build passes. WebSocket integration opened 21 clients, confirmed the first 20 share one instance, the 21st is isolated, and movement does not cross instances.
 - **Hosting boundary:** The stable Netlify phone preview remains solo/static. Runtime instance routing runs only on the self-hosted Node/SQLite/WebSocket server and is not active at that URL.
 
-## Current next slices — updated 16 October 2026
+## Current next slices — updated 17 October 2026
 
-1. Finish unanimous party travel with one capacity-checked destination instance for the whole group, preserving physical doorways. Ticketed admission remains blocked until Chapter 06 EventService validates attendees and capacity.
+1. Build a private My Music playlist loop using only the released catalogue: create, rename, reorder, and remove tracks; keep lists private until permissioned sharing is implemented.
 2. Build the first safe free-show runtime only after its venue, performer, audio-rights, timeline, and attendance authority is concrete; accepted draft invitations alone do not confirm performers.
 3. Validate FPS, thermals, touch comfort, and network recovery on physical Android/iPhone devices.
 4. Keep public chat and reports gated until age policy, moderation staffing, emergency escalation, and appeals have real owners.
@@ -518,6 +518,15 @@ Added an integration test that connects 20 real WebSocket test clients to an iso
 - Gave the open Desk a separate third-person camera framing. At phone size the avatar, kiosk and live stage remain visible above the Today panel (`docs/evidence/music-square-desk-mobile.png`), while closing Desk restores the closer exploration view.
 - Added a suspended City Studio arrow within the actual plaza, visible from spawn in both camera modes. It points toward the existing walkable Studio entrance and avoids made-up distance or travel-time claims.
 - Published the solo preview to `https://musicdistrict.netlify.app/` (Netlify deploy `6ad21a142dddc92db7e5b04b`). Opened the deployed game in headed Edge at 390 × 844: 3D canvas present, no page errors, reaction tray toggled and Desk opened. Live captures: `docs/evidence/netlify-music-square-clean-mobile.png` and `docs/evidence/netlify-music-square-desk-mobile.png`. The separate multiplayer Node/WebSocket runtime is still not hosted by Netlify.
+
+## M1 capacity-reserved party travel — 17 October 2026
+
+- **Server:** After unanimous approval, the room directory reserves enough capacity for every party member in one non-ticketed public instance. Existing members already in that instance count as arrived, consuming their real occupied slots instead of double-reserving. Walk-ins cannot use held places; the reservation expires with the proposal and releases on cancellation or departure.
+- **Physical arrival:** Each player still walks to and crosses the server-validated doorway. Outsiders cannot enter through a party reservation. Arrival progress updates the whole party. Ticketed event sessions remain outside this resolver and cannot gain capacity or admissions from technical shards.
+- **Mobile controls:** Presence movement no longer rebuilds the People/Party panels for every avatar coordinate update, so live multiplayer movement does not detach buttons during a tap.
+- **GDD trace:** Fan & Social Chapter 05 §12 and FS-017. This is ordinary public-room travel; no event ticket, event hold, booking, performance, or attendance is created.
+- **Verification:** Full suite passed 112/112 before the final progress-notice change; the focused presence and room-instance suite passed 22/22 after it. Production TypeScript/Vite build passed with the existing nonfatal Three.js chunk-size warning. A headed two-player Chrome run at 390 × 844 created a friend party, proposed City Studio, recorded both approvals, reserved two places, walked both avatars through the physical door, and showed both in the same room. Live assignment ended at 2/2 arrivals; browser page errors: 0. Captures: `docs/evidence/local-party-travel-reserved-mobile.png` and `docs/evidence/local-party-travel-shared-studio-mobile.png`; repeatable flow: `app/party-travel-browser-check.mjs`.
+- **Hosting boundary:** The multiplayer proof uses the local Node/SQLite/WebSocket runtime at `http://127.0.0.1:4173/` (also available to a phone on the same Wi-Fi at `http://172.20.10.2:4173/`). Netlify remains a static solo preview and cannot synchronize parties.
 - Added an original authored Music Square mural as a compressed 186 KB texture on the real stage wall, retaining separate 3D stage geometry and a text overlay. Added stage depth and a drum kit, and changed the default dusk palette to a lighter Lagos evening. Browser capture at 390 × 844 shows the new wall art and no page errors. Asset provenance is in `app/src/assets/README.md`. This improves the focal area, but the overall facade and avatar are still stylized blockouts compared with V26.
 
 ## Palm Room rehearsal setup — 16 October 2026

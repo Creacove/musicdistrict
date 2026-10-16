@@ -819,7 +819,7 @@ const CATALOGUE = [
   { id: 'lagos-golden-hour', title: 'Golden Hour Jam', artist: 'Victoria Island Collective', genre: 'Afro-fusion', duration: 30, released: true },
 ]
 
-export function guestApi(store, { isGuestConnectedAtLocation = () => false } = {}) {
+export function guestApi(store, { isGuestConnectedAtLocation = () => false, getPartyTravelAssignment = () => null } = {}) {
   return async (req, res, next) => {
     let pathname
     try { pathname = new URL(req.url || '/', 'http://localhost').pathname } catch { res.statusCode = 400; return res.end() }
@@ -971,7 +971,11 @@ export function guestApi(store, { isGuestConnectedAtLocation = () => false } = {
       return reply(200, result)
     }
 
-    if (pathname === '/api/parties/me' && req.method === 'GET') return reply(200, store.partyState(id))
+    if (pathname === '/api/parties/me' && req.method === 'GET') {
+      const state = store.partyState(id)
+      if (state.party) state.party.travelAssignment = getPartyTravelAssignment(id) || null
+      return reply(200, state)
+    }
     const partyMessagesPath = pathname.match(/^\/api\/parties\/([0-9a-f-]{36})\/messages$/i)
     if (partyMessagesPath && req.method === 'GET') {
       const result = store.partyMessages(id, partyMessagesPath[1])
