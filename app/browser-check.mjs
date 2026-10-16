@@ -14,10 +14,12 @@ const installedBrowser = [
 assert.ok(installedBrowser, 'an installed Chrome or Edge browser is required for this live check')
 const browser = await chromium.launch({ headless: false, executablePath: installedBrowser })
 try {
+  const targetUrl = process.env.SCENE_CHECK_URL || 'http://127.0.0.1:4173/'
+  const evidencePrefix = targetUrl.startsWith('https:') ? 'netlify-' : ''
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } })
   const pageErrors = []
   page.on('pageerror', error => pageErrors.push(error.message))
-  await page.goto('http://127.0.0.1:4173/', { waitUntil: 'networkidle', timeout: 30000 })
+  await page.goto(targetUrl, { waitUntil: 'networkidle', timeout: 30000 })
   const canvasCount = await page.locator('canvas').count()
   assert.ok(canvasCount > 0, 'the 3D game canvas should render')
   assert.deepEqual(pageErrors, [], 'the browser should not report page errors')
@@ -25,11 +27,11 @@ try {
   assert.equal(await page.locator('#emote-actions').isVisible(), true, 'reactions should open on demand')
   await page.locator('#emote-toggle').click()
   assert.equal(await page.locator('#emote-actions').isVisible(), false, 'reactions should close to clear the scene')
-  await page.screenshot({ path: '../docs/evidence/music-square-clean-mobile.png', fullPage: true })
+  await page.screenshot({ path: `../docs/evidence/${evidencePrefix}music-square-clean-mobile.png`, fullPage: true })
   await page.locator('#desk-trigger').click()
   assert.equal(await page.locator('#desk-sheet').isVisible(), true, 'Desk should open from the game')
   await page.waitForTimeout(1200)
-  await page.screenshot({ path: '../docs/evidence/music-square-desk-mobile.png', fullPage: true })
+  await page.screenshot({ path: `../docs/evidence/${evidencePrefix}music-square-desk-mobile.png`, fullPage: true })
   console.log(JSON.stringify({ url: page.url(), title: await page.title(), canvasCount, pageErrors }))
 } finally {
   await browser.close()
