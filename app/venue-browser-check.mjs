@@ -3,7 +3,9 @@ import { chromium } from 'playwright'
 const browser = await chromium.launch({ headless: true, executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe' })
 try {
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } })
-  await page.goto('https://musicdistrict.netlify.app/', { waitUntil: 'domcontentloaded' })
+  const target = process.env.SCENE_CHECK_URL || 'https://musicdistrict.netlify.app/'
+  const serverMode = target.startsWith('http://127.0.0.1:')
+  await page.goto(target, { waitUntil: 'domcontentloaded' })
   await page.locator('#map-button').click()
   await page.locator('#map-places [data-map-target="palmEntrance"]').click()
   await page.waitForTimeout(6000)
@@ -24,9 +26,17 @@ try {
   assert.match(await page.locator('#stage-setup-progress').innerText(), /3\/3/)
   assert.match(await page.locator('#show-draft-status').innerText(), /Friday Open Mic/)
   assert.equal(await page.evaluate(() => localStorage.getItem('scene-show-draft')?.includes('Friday Open Mic')), true)
-  await page.screenshot({ path: '../docs/evidence/netlify-palm-room-stage-plan-mobile.png', fullPage: true })
+  if (serverMode) {
+    await page.waitForFunction(() => document.querySelector('#show-draft-status')?.textContent?.includes('guest session'), null, { timeout: 15000 })
+    const stored = await page.evaluate(async () => {
+      const token = localStorage.getItem('scene-guest-token')
+      const response = await fetch('/api/event-draft', { headers: { Authorization: `Bearer ${token}` } })
+      return response.json()
+    })
+    assert.equal(stored.draft.title, 'Friday Open Mic')
+  } else await page.screenshot({ path: '../docs/evidence/netlify-palm-room-stage-plan-mobile.png', fullPage: true })
   await page.locator('#action-close').click()
-  await page.screenshot({ path: '../docs/evidence/netlify-palm-room-stage-placed-mobile.png', fullPage: true })
+  if (!serverMode) await page.screenshot({ path: '../docs/evidence/netlify-palm-room-stage-placed-mobile.png', fullPage: true })
   await page.locator('#desk-trigger').click()
   await page.locator('.desk-tabs [data-tab="plans"]').click()
   assert.match(await page.locator('#desk-cards').innerText(), /Friday Open Mic/)

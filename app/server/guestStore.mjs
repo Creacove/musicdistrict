@@ -17,6 +17,7 @@ const PARTY_MESSAGE_MAX_LENGTH = 280
 const PARTY_TRAVEL_PROPOSAL_TTL_MS = 5 * 60 * 1000
 const PARTY_TRAVEL_DESTINATIONS = new Set(['studio', 'palmEntrance', 'releaseEntrance', 'kiosk'])
 const PARTY_MAX_MEMBERS = 4
+const EVENT_DRAFT_FORMATS = new Set(['OPEN_MIC', 'LISTENING_SESSION'])
 const PARTY_INVITATION_TTL_MS = 10 * 60 * 1000
 const PARTY_IDLE_TTL_MS = 30 * 60 * 1000
 
@@ -26,6 +27,16 @@ export function createGuestStore(path) {
   db.exec(`PRAGMA foreign_keys = ON;
     CREATE TABLE IF NOT EXISTS guests (id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS saved_items (guest_id TEXT NOT NULL REFERENCES guests(id), item_id TEXT NOT NULL, saved_at TEXT NOT NULL, PRIMARY KEY (guest_id, item_id));
+    CREATE TABLE IF NOT EXISTS event_drafts (
+      guest_id TEXT NOT NULL REFERENCES guests(id),
+      venue_id TEXT NOT NULL CHECK (venue_id = 'palm-room'),
+      title TEXT NOT NULL CHECK (length(title) BETWEEN 1 AND 60),
+      format TEXT NOT NULL CHECK (format IN ('OPEN_MIC', 'LISTENING_SESSION')),
+      planned_start TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (status = 'DRAFT'),
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (guest_id, venue_id)
+    );
     CREATE TABLE IF NOT EXISTS blocked_guests (
       blocker_guest_id TEXT NOT NULL REFERENCES guests(id),
       blocked_guest_id TEXT NOT NULL REFERENCES guests(id),
@@ -146,6 +157,10 @@ export function createGuestStore(path) {
   const save = db.prepare('INSERT OR IGNORE INTO saved_items (guest_id, item_id, saved_at) VALUES (?, ?, ?)')
   const list = db.prepare('SELECT item_id FROM saved_items WHERE guest_id = ? ORDER BY saved_at')
   const remove = db.prepare('DELETE FROM saved_items WHERE guest_id = ? AND item_id = ?')
+  const eventDraftByGuest = db.prepare('SELECT venue_id, title, format, planned_start, status, updated_at FROM event_drafts WHERE guest_id = ? AND venue_id = ?')
+  const upsertEventDraft = db.prepare(`INSERT INTO event_drafts (guest_id, venue_id, title, format, planned_start, status, updated_at)
+    VALUES (?, 'palm-room', ?, ?, ?, 'DRAFT', ?)
+    ON CONFLICT (guest_id, venue_id) DO UPDATE SET title = excluded.title, format = excluded.format, planned_start = excluded.planned_start, updated_at = excluded.updated_at`)
   const hasGuest = db.prepare('SELECT 1 AS found FROM guests WHERE id = ?')
   const listBlocks = db.prepare('SELECT blocked_guest_id FROM blocked_guests WHERE blocker_guest_id = ? ORDER BY created_at, blocked_guest_id')
   const insertBlock = db.prepare('INSERT OR IGNORE INTO blocked_guests (blocker_guest_id, blocked_guest_id, created_at) VALUES (?, ?, ?)')
@@ -393,6 +408,17 @@ export function createGuestStore(path) {
     removeSave(id, item) {
       remove.run(id, item)
       return true
+    },
+    eventDraft(id) {
+      const row = eventDraftByGuest.get(id, 'palm-room')
+      return row ? { venueId: row.venue_id, title: row.title, format: row.format, start: row.planned_start, status: row.status, updatedAt: row.updated_at } : null
+    },
+    saveEventDraft(id, input) {
+      if (!input || typeof input !== 'object' || Array.isArray(input)) return { error: 'invalid' }
+      const title = typeof input.title === 'string' ? input.title.trim() : ''
+      if (!title || title.length > 60 || !EVENT_DRAFT_FORMATS.has(input.format) || typeof input.start !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(input.start) || Number.isNaN(Date.parse(input.start))) return { error: 'invalid' }
+      upsertEventDraft.run(id, title, input.format, input.start, new Date().toISOString())
+      return this.eventDraft(id)
     },
     hasGuest(id) { return typeof id === 'string' && hasGuest.get(id) !== undefined },
     blocks(id) { return listBlocks.all(id).map(row => row.blocked_guest_id) },
@@ -749,7 +775,7 @@ export function guestApi(store) {
       res.setHeader('Cache-Control', 'no-store')
       return res.end(JSON.stringify({ tracks: CATALOGUE }))
     }
-    if (!['/api/guest', '/api/saves', '/api/reports', '/api/blocks', '/api/friends', '/api/friend-requests', '/api/messages', '/api/parties', '/api/party-invitations'].some(route => pathname === route || pathname.startsWith(`${route}/`))) return next()
+    if (!['/api/guest', '/api/saves', '/api/event-draft', '/api/reports', '/api/blocks', '/api/friends', '/api/friend-requests', '/api/messages', '/api/parties', '/api/party-invitations'].some(route => pathname === route || pathname.startsWith(`${route}/`))) return next()
     res.setHeader('Content-Type', 'application/json; charset=utf-8')
     res.setHeader('Cache-Control', 'no-store')
     const reply = (status, body) => { res.statusCode = status; res.end(JSON.stringify(body)) }
@@ -761,6 +787,13 @@ export function guestApi(store) {
     }
     const id = token && store.resume(token)
     if (!id) return reply(401, { error: 'Guest session required' })
+    if (pathname === '/api/event-draft' && req.method === 'GET') return reply(200, { draft: store.eventDraft(id) })
+    if (pathname === '/api/event-draft' && req.method === 'PUT') {
+      const parsed = await readJsonBody(req)
+      if (parsed.error) return reply(400, { error: parsed.error })
+      const draft = store.saveEventDraft(id, parsed.value)
+      return draft.error ? reply(400, draft) : reply(200, { draft })
+    }
     if (pathname === '/api/saves' && req.method === 'GET') return reply(200, { saves: store.saves(id) })
     const saveMatch = pathname.match(/^\/api\/saves\/([a-z0-9-]+)$/)
     if (saveMatch && req.method === 'PUT') {

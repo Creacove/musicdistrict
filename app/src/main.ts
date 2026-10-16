@@ -13,7 +13,7 @@ import { peopleInLocation } from './people.ts'
 import { emotePose, idlePose, walkingPose } from './avatarMotion.ts'
 import { facingAngleForMovement } from './avatarFacing.ts'
 import { disposeSpriteResources } from './avatarLifecycle.ts'
-import { acceptGuestFriendRequest, acceptGuestPartyInvitation, blockGuest, cancelGuestFriendRequest, createGuestParty, declineGuestFriendRequest, declineGuestPartyInvitation, fetchCatalogue, fetchGuestBlocks, fetchGuestFriends, fetchGuestMessages, fetchGuestParty, fetchGuestPartyMessages, inviteGuestToParty, leaveGuestParty, openGuest, proposeGuestPartyTravel, removeGuestSave, requestGuestFriend, saveGuestPreview, sendGuestMessage, sendGuestPartyMessage, setGuestMessagePreference, submitGuestReport, unfriendGuest, unblockGuest, voteGuestPartyTravel, type CatalogueTrack, type GuestDirectMessage, type GuestFriendState, type GuestPartyMessage, type GuestPartyState, type GuestReportReason } from './guest.ts'
+import { acceptGuestFriendRequest, acceptGuestPartyInvitation, blockGuest, cancelGuestFriendRequest, createGuestParty, declineGuestFriendRequest, declineGuestPartyInvitation, fetchCatalogue, fetchGuestBlocks, fetchGuestEventDraft, fetchGuestFriends, fetchGuestMessages, fetchGuestParty, fetchGuestPartyMessages, inviteGuestToParty, leaveGuestParty, openGuest, proposeGuestPartyTravel, removeGuestSave, requestGuestFriend, saveGuestEventDraft, saveGuestPreview, sendGuestMessage, sendGuestPartyMessage, setGuestMessagePreference, submitGuestReport, unfriendGuest, unblockGuest, voteGuestPartyTravel, type CatalogueTrack, type GuestDirectMessage, type GuestFriendState, type GuestPartyMessage, type GuestPartyState, type GuestReportReason } from './guest.ts'
 import { LIGHTING_PRESETS, getNextLightingMode, type LightingMode } from './lighting.ts'
 import { parseStageTemplate, serializeStageTemplate, type StageLook } from './stageTemplate.ts'
 import { RELEASE_JOURNEY, nextReleaseStation, previousReleaseStation, releaseStation, type ReleaseStationId } from './releaseJourney.ts'
@@ -1528,12 +1528,29 @@ let rehearsalBackdrop = localStorage.getItem('scene-rehearsal-backdrop') === 'tr
 let stageLook: StageLook = savedStageTemplate.lightLook
 type ShowDraft = { title: string; format: 'OPEN_MIC' | 'LISTENING_SESSION'; start: string }
 let showDraft: ShowDraft = { title: '', format: 'OPEN_MIC', start: '' }
+let showDraftSynced = false
 try {
   const saved = JSON.parse(localStorage.getItem('scene-show-draft') || 'null')
   if (saved && typeof saved.title === 'string' && (saved.format === 'OPEN_MIC' || saved.format === 'LISTENING_SESSION') && typeof saved.start === 'string') {
     showDraft = { title: saved.title.slice(0, 60), format: saved.format, start: saved.start.slice(0, 16) }
   }
 } catch { /* invalid local show draft starts empty */ }
+async function syncShowDraft() {
+  if (!guestSessionReady) return
+  const remote = await fetchGuestEventDraft()
+  const pending = localStorage.getItem('scene-show-draft-pending') === 'true'
+  if ((pending || !remote) && showDraft.title) {
+    await saveGuestEventDraft(showDraft)
+    localStorage.removeItem('scene-show-draft-pending')
+    showDraftSynced = true
+  } else if (remote) {
+    showDraft = { title: remote.title, format: remote.format, start: remote.start }
+    localStorage.setItem('scene-show-draft', JSON.stringify(showDraft))
+    showDraftSynced = true
+  }
+  renderStageEventMetrics()
+  if (!$<HTMLElement>('desk-sheet').hidden) renderDesk()
+}
 let dancing = false
 let beatPattern: BeatPattern = starterPattern(), beatPatternB: BeatPattern = toggleStep(starterPattern(), 0, 1)
 let beatKit: SoundKit = 'afrobeats', beatBpm = 104
@@ -1597,6 +1614,7 @@ void openGuest().then(async guest => {
     if (!guest.saves.includes(id)) await saveGuestPreview(id).catch(() => {})
   }
   guestSessionReady = !SOLO_PREVIEW
+  await syncShowDraft().catch(() => { /* device draft remains available offline */ })
   presence.auth(guest.token)
   const savedBlocks = await fetchGuestBlocks().catch(() => [])
   blockedIds.clear()
@@ -2245,7 +2263,9 @@ function renderStageEventMetrics() {
       const start = (form.elements.namedItem('start') as HTMLInputElement).value
       if (!title || (format !== 'OPEN_MIC' && format !== 'LISTENING_SESSION') || !start) return
       showDraft = { title: title.slice(0, 60), format, start }
-      try { localStorage.setItem('scene-show-draft', JSON.stringify(showDraft)) } catch { toast('Device storage unavailable'); return }
+      try { localStorage.setItem('scene-show-draft', JSON.stringify(showDraft)); localStorage.setItem('scene-show-draft-pending', 'true') } catch { toast('Device storage unavailable'); return }
+      showDraftSynced = false
+      void syncShowDraft().catch(() => { toast('Draft saved on this device; server sync unavailable') })
       renderStageEventMetrics()
       toast('Private show draft saved')
     })
@@ -2259,7 +2279,7 @@ function renderStageEventMetrics() {
   const masterStatus = document.getElementById('show-draft-master')
   if (masterStatus) masterStatus.textContent = masterBlob ? 'Your City Studio master is ready for a local stage audition.' : 'Render a master at City Studio to audition it here.'
   const showStatus = document.getElementById('show-draft-status')
-  if (showStatus) showStatus.textContent = showDraft.title ? `Saved privately: ${showDraft.title}. No venue booking or public event exists.` : 'This plan stays on this device. It does not reserve the venue.'
+  if (showStatus) showStatus.textContent = showDraft.title ? `Saved privately${showDraftSynced ? ' to your guest session' : ' on this device'}: ${showDraft.title}. No venue booking or public event exists.` : 'This plan does not reserve the venue.'
   const count = new Set(connectedPlayers.filter(player => player.location === 'venue').map(player => player.id)).size
   const live = document.getElementById('stage-live-sessions')
   if (live) live.textContent = rehearsalMetrics(presenceConnected, count).liveSessions

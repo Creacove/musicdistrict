@@ -33,6 +33,7 @@ export type GuestPartyState = {
   party: GuestParty | null
   incoming: { invitationId: string; partyId: string; senderId: string; leaderId: string; createdAt: string; expiresAt: string }[]
 }
+export type GuestEventDraft = { venueId: 'palm-room'; title: string; format: 'OPEN_MIC' | 'LISTENING_SESSION'; start: string; status: 'DRAFT'; updatedAt: string }
 let token = ''
 const SOLO_PREVIEW = import.meta.env?.VITE_SCENE_DEMO_MODE === 'true'
 const PREVIEW_CATALOGUE: CatalogueTrack[] = [
@@ -96,6 +97,20 @@ async function guestRequest(path: string, init: RequestInit = {}): Promise<Respo
   headers.set('Authorization', `Bearer ${token}`)
   if (init.body) headers.set('Content-Type', 'application/json')
   return fetch(path, { ...init, headers })
+}
+
+export async function fetchGuestEventDraft(): Promise<GuestEventDraft | null> {
+  const response = await guestRequest('/api/event-draft')
+  if (!response.ok) throw new Error('Show draft unavailable')
+  const data = await response.json() as { draft: GuestEventDraft | null }
+  return data.draft
+}
+
+export async function saveGuestEventDraft(draft: Pick<GuestEventDraft, 'title' | 'format' | 'start'>): Promise<GuestEventDraft> {
+  const response = await guestRequest('/api/event-draft', { method: 'PUT', body: JSON.stringify(draft) })
+  if (!response.ok) throw new Error('Could not sync show draft')
+  const data = await response.json() as { draft: GuestEventDraft }
+  return data.draft
 }
 
 export async function fetchGuestBlocks(): Promise<string[]> {

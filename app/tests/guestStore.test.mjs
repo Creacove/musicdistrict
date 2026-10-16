@@ -1,7 +1,47 @@
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
 import { test } from 'node:test'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { createGuestStore, guestApi } from '../server/guestStore.mjs'
+
+test('private Palm Room event drafts require a guest and never reserve a venue', async () => {
+  const store = createGuestStore(':memory:')
+  const api = guestApi(store)
+  const server = createServer((req, res) => api(req, res, () => { res.statusCode = 404; res.end() }))
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  const base = `http://127.0.0.1:${server.address().port}`
+  try {
+    const owner = await (await fetch(`${base}/api/guest`, { method: 'POST' })).json()
+    const other = await (await fetch(`${base}/api/guest`, { method: 'POST' })).json()
+    const input = { title: 'Friday Open Mic', format: 'OPEN_MIC', start: '2026-10-23T19:00' }
+    assert.equal((await fetch(`${base}/api/event-draft`)).status, 401)
+    assert.equal((await fetch(`${base}/api/event-draft`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) })).status, 401)
+    const auth = { Authorization: `Bearer ${owner.token}`, 'Content-Type': 'application/json' }
+    assert.equal((await fetch(`${base}/api/event-draft`, { method: 'PUT', headers: auth, body: JSON.stringify({ ...input, format: 'FESTIVAL' }) })).status, 400)
+    const saved = await (await fetch(`${base}/api/event-draft`, { method: 'PUT', headers: auth, body: JSON.stringify(input) })).json()
+    assert.deepEqual({ title: saved.draft.title, format: saved.draft.format, start: saved.draft.start, status: saved.draft.status }, { ...input, status: 'DRAFT' })
+    assert.equal(saved.draft.venueId, 'palm-room')
+    assert.deepEqual((await (await fetch(`${base}/api/event-draft`, { headers: { Authorization: `Bearer ${other.token}` } })).json()).draft, null)
+    assert.equal((await (await fetch(`${base}/api/event-draft`, { headers: auth })).json()).draft.title, input.title)
+  } finally { server.close(); store.close() }
+})
+
+test('private event draft survives SQLite restart for its guest', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'scene-draft-'))
+  const path = join(dir, 'scene.sqlite')
+  try {
+    const first = createGuestStore(path)
+    const guest = first.create()
+    first.saveEventDraft(guest.id, { title: 'Listening Night', format: 'LISTENING_SESSION', start: '2026-11-01T20:00' })
+    first.close()
+    const reopened = createGuestStore(path)
+    assert.equal(reopened.resume(guest.token), guest.id)
+    assert.equal(reopened.eventDraft(guest.id).title, 'Listening Night')
+    reopened.close()
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+})
 
 test('guest save is authenticated, idempotent and resumes from SQLite', async () => {
   const store = createGuestStore(':memory:')
