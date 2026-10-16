@@ -2831,16 +2831,17 @@ function frame() {
     leftArm.rotation.z = -.15; rightArm.rotation.z = .15
   }
   applyActiveAvatarEmote(avatar, { body: avatarBody, leftArm, rightArm, leftElbow, rightElbow })
-  const cameraDistance = (location === 'venue' ? 10.6 : 6.2) + cameraZoom
-  const cameraHeight = (location === 'venue' ? 4.9 : 3.15) + cameraPitch
+  const deskFraming = location === 'square' && sheet === 'desk'
+  const cameraDistance = (location === 'venue' ? 10.6 : deskFraming ? 10.2 : 6.2) + cameraZoom
+  const cameraHeight = (location === 'venue' ? 4.9 : deskFraming ? 4.1 : 3.15) + cameraPitch
   const desired = avatar.position.clone().add(new THREE.Vector3(Math.sin(yaw) * cameraDistance, cameraHeight, Math.cos(yaw) * cameraDistance))
   const b = BOUNDARIES[location]
   const camPad = location === 'square' ? 3.5 : location === 'venue' ? 7.5 : 1.2
   desired.x = THREE.MathUtils.clamp(desired.x, b.minX - camPad, b.maxX + camPad)
   desired.z = THREE.MathUtils.clamp(desired.z, b.minZ - camPad, b.maxZ + camPad)
   camera.position.lerp(desired, 1 - Math.exp(-7 * dt))
-  const lookAhead = location === 'square' ? 1.4 : 0
-  camera.lookAt(avatar.position.x + Math.sin(yaw) * lookAhead, avatar.position.y + 1.78, avatar.position.z - Math.cos(yaw) * lookAhead)
+  const lookAhead = location === 'square' ? deskFraming ? -2.2 : 1.4 : 0
+  camera.lookAt(avatar.position.x + Math.sin(yaw) * lookAhead, avatar.position.y + (deskFraming ? .35 : 1.78), avatar.position.z - Math.cos(yaw) * lookAhead)
   const next = getNearby(location, avatar.position.x, avatar.position.z)
   if (now - lastPresenceSend > 125) {
     presence.send({ x: avatar.position.x, z: avatar.position.z, angle: avatar.rotation.y, dancing, location, name: playerName })

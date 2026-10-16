@@ -26,6 +26,10 @@ try {
   await page.locator('#emote-toggle').click()
   assert.equal(await page.locator('#emote-actions').isVisible(), false, 'reactions should close to clear the scene')
   await page.screenshot({ path: '../docs/evidence/music-square-clean-mobile.png', fullPage: true })
+  await page.locator('#desk-trigger').click()
+  assert.equal(await page.locator('#desk-sheet').isVisible(), true, 'Desk should open from the game')
+  await page.waitForTimeout(1200)
+  await page.screenshot({ path: '../docs/evidence/music-square-desk-mobile.png', fullPage: true })
   console.log(JSON.stringify({ url: page.url(), title: await page.title(), canvasCount, pageErrors }))
 } finally {
   await browser.close()
