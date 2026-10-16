@@ -343,7 +343,7 @@ world.appendChild(renderer.domElement)
 
 const square = makeSquare()
 scene.add(square)
-type PalmRoom = { root: THREE.Group; update: (time: number) => void; setEquipmentPreview: (visible: boolean) => void; setStageLook: (look: StageLook) => void; setStagePerformance: (active: boolean) => void }
+type PalmRoom = { root: THREE.Group; update: (time: number) => void; setEquipmentPreview: (visible: boolean) => void; setRehearsalMonitors: (visible: boolean) => void; setRehearsalBackdrop: (visible: boolean) => void; setStageLook: (look: StageLook) => void; setStagePerformance: (active: boolean) => void }
 let palmRoom: PalmRoom | null = null
 let studioRoom: THREE.Group | null = null
 let releaseRoom: THREE.Group | null = null
@@ -1522,6 +1522,8 @@ let deskAskQuery = ''
 let savedPreview = false, previewOpened = false, playing = false
 const savedStageTemplate = parseStageTemplate(localStorage.getItem('scene-stage-template'))
 let equipmentPreviewVisible = savedStageTemplate.floorLightPreview
+let rehearsalMonitors = localStorage.getItem('scene-rehearsal-monitors') === 'true'
+let rehearsalBackdrop = localStorage.getItem('scene-rehearsal-backdrop') === 'true'
 let stageLook: StageLook = savedStageTemplate.lightLook
 let dancing = false
 let beatPattern: BeatPattern = starterPattern(), beatPatternB: BeatPattern = toggleStep(starterPattern(), 0, 1)
@@ -1878,6 +1880,8 @@ async function showVenue() {
     palmRoom = makePalmRoom()
     palmRoom.setStageLook(stageLook)
     palmRoom.setEquipmentPreview(equipmentPreviewVisible)
+    palmRoom.setRehearsalMonitors(rehearsalMonitors)
+    palmRoom.setRehearsalBackdrop(rehearsalBackdrop)
     scene.add(palmRoom.root)
   }
   square.visible = false
@@ -2125,6 +2129,8 @@ function leaveVenue() {
 function saveStageTemplate() {
   try {
     localStorage.setItem('scene-stage-template', serializeStageTemplate({ version: 1, lightLook: stageLook, floorLightPreview: equipmentPreviewVisible }))
+    localStorage.setItem('scene-rehearsal-monitors', String(rehearsalMonitors))
+    localStorage.setItem('scene-rehearsal-backdrop', String(rehearsalBackdrop))
     toast('Stage preview saved on this device')
   } catch {
     toast('Could not save this stage preview')
@@ -2140,11 +2146,19 @@ function renderStageEventMetrics() {
     ledger.id = 'stage-ledger'
     ledger.className = 'stage-ledger'
     ledger.setAttribute('aria-label', 'Palm Room rehearsal metrics')
-    ledger.innerHTML = '<small>REHEARSAL PREVIEW · NO EVENT SALES</small><div><b>Other live sessions</b><span id="stage-live-sessions"></span></div><div><b>Tickets sold</b><span>Not a ticketed event</span></div><div><b>Checked-in humans</b><span>Not recorded</span></div><div class="stage-look-picker"><small>LIGHTING TEST · LOCAL PREVIEW</small><div class="stage-look-grid"><button type="button" data-stage-look="warm">Warm wash</button><button type="button" data-stage-look="sunset">Sunset</button><button type="button" data-stage-look="spotlight">Spot</button></div><button type="button" class="stage-save" data-stage-save="true">Save preview on this device</button><small>Visual test only · no gear installed</small></div>'
+    ledger.innerHTML = '<small>REHEARSAL SETUP · NO EVENT SALES</small><div><b>Other live sessions</b><span id="stage-live-sessions"></span></div><div class="stage-setup-picker"><small id="stage-setup-progress">0/3 pieces placed</small><div class="stage-setup-grid"><button type="button" data-stage-setup="light">Floor light</button><button type="button" data-stage-setup="monitors">Stage monitors</button><button type="button" data-stage-setup="backdrop">Backdrop</button></div><small>Arrange the rehearsal room. These are local trial pieces, not purchased inventory.</small></div><div class="stage-look-picker"><small>LIGHTING TEST · LOCAL PREVIEW</small><div class="stage-look-grid"><button type="button" data-stage-look="warm">Warm wash</button><button type="button" data-stage-look="sunset">Sunset</button><button type="button" data-stage-look="spotlight">Spot</button></div><button type="button" class="stage-save" data-stage-save="true">Save preview on this device</button></div>'
     ledger.hidden = location !== 'venue' || nearby !== 'stage'
     ledger.addEventListener('click', event => {
       const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-stage-look]')
+      const setupButton = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-stage-setup]')
       const saveButton = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-stage-save]')
+      if (setupButton) {
+        if (setupButton.dataset.stageSetup === 'light') { equipmentPreviewVisible = !equipmentPreviewVisible; palmRoom?.setEquipmentPreview(equipmentPreviewVisible) }
+        if (setupButton.dataset.stageSetup === 'monitors') { rehearsalMonitors = !rehearsalMonitors; palmRoom?.setRehearsalMonitors(rehearsalMonitors) }
+        if (setupButton.dataset.stageSetup === 'backdrop') { rehearsalBackdrop = !rehearsalBackdrop; palmRoom?.setRehearsalBackdrop(rehearsalBackdrop) }
+        renderStageEventMetrics()
+        return
+      }
       if (saveButton) { saveStageTemplate(); return }
       const selected = button?.dataset.stageLook
       if (selected !== 'warm' && selected !== 'sunset' && selected !== 'spotlight') return
@@ -2157,6 +2171,10 @@ function renderStageEventMetrics() {
     copy.insertAdjacentElement('afterend', ledger)
   }
   ledger.querySelectorAll<HTMLButtonElement>('[data-stage-look]').forEach(item => item.setAttribute('aria-pressed', String(item.dataset.stageLook === stageLook)))
+  const setupState: Record<string, boolean> = { light: equipmentPreviewVisible, monitors: rehearsalMonitors, backdrop: rehearsalBackdrop }
+  ledger.querySelectorAll<HTMLButtonElement>('[data-stage-setup]').forEach(item => item.setAttribute('aria-pressed', String(setupState[item.dataset.stageSetup || ''])))
+  const setupProgress = document.getElementById('stage-setup-progress')
+  if (setupProgress) setupProgress.textContent = `${Number(equipmentPreviewVisible) + Number(rehearsalMonitors) + Number(rehearsalBackdrop)}/3 pieces placed`
   const count = new Set(connectedPlayers.filter(player => player.location === 'venue').map(player => player.id)).size
   const live = document.getElementById('stage-live-sessions')
   if (live) live.textContent = rehearsalMetrics(presenceConnected, count).liveSessions
@@ -2241,29 +2259,16 @@ function interact() {
           refreshContext()
           interact()
         },
-        {
-          label: equipmentPreviewVisible ? 'Hide floor light' : 'Floor light preview',
-          action: () => {
-            equipmentPreviewVisible = !equipmentPreviewVisible
-            palmRoom?.setEquipmentPreview(equipmentPreviewVisible)
-            toast(equipmentPreviewVisible ? 'Temporary preview shown' : 'Preview hidden')
-            refreshContext()
-            interact()
-          },
-        },
+        undefined,
         performingOnStage
       )
     } else {
       openAction(
-        'Stage setup preview',
-        equipmentPreviewVisible ? 'A temporary floor light preview is visible at this snap point. It is a local visual preview, not owned or installed equipment.' : 'Preview a floor light at this snap point. You can also render a master at City Studio to perform here.',
-        equipmentPreviewVisible ? 'Hide preview' : 'Show floor light preview',
+        'Stage rehearsal setup',
+        'Place the trial stage pieces below, choose a lighting look, then save this room setup on your device. Render a master at City Studio to audition it here.',
+        'Save room setup',
         () => {
-          equipmentPreviewVisible = !equipmentPreviewVisible
-          palmRoom?.setEquipmentPreview(equipmentPreviewVisible)
-          toast(equipmentPreviewVisible ? 'Temporary preview shown' : 'Preview hidden')
-          refreshContext()
-          interact()
+          saveStageTemplate()
         }
       )
     }
@@ -2292,7 +2297,7 @@ function refreshContext() {
     palmEntrance: ['PALM ROOM', 'Enter the music venue'],
     stage: [
       performingOnStage ? 'STAGE PREVIEW PLAYING' : masterBlob ? 'PREVIEW ON STAGE' : 'STAGE PREVIEW',
-      performingOnStage ? 'Stop local preview' : masterBlob ? 'Play your City Studio master locally' : equipmentPreviewVisible ? 'Temporary floor light shown' : 'Inspect stage snap point',
+      performingOnStage ? 'Stop local preview' : masterBlob ? 'Play your City Studio master locally' : 'Arrange a local rehearsal setup',
     ],
     venueExit: ['MUSIC SQUARE', 'Leave the venue'],
   }

@@ -432,6 +432,22 @@ export function makePalmRoom() {
   equipment.add(equipmentLight)
   equipment.visible = false
   root.add(equipment)
+  const monitors = new THREE.Group()
+  for (const x of [-2.25, 2.25]) {
+    const wedge = box(monitors, 1.1, .42, .72, black, x, 1.04, -5.95)
+    wedge.rotation.x = -.22
+    box(monitors, .78, .08, .09, brass, x, 1.29, -5.57)
+  }
+  monitors.visible = false
+  root.add(monitors)
+  const backdrop = new THREE.Group()
+  for (const x of [-5.4, 5.4]) {
+    box(backdrop, .72, 3.8, .18, violet, x, 2.8, -11.7)
+    box(backdrop, .12, 3.8, .22, brass, x + (x < 0 ? .39 : -.39), 2.8, -11.58)
+  }
+  box(backdrop, 11.3, .27, .22, brass, 0, 4.76, -11.64)
+  backdrop.visible = false
+  root.add(backdrop)
   type StageLook = 'warm' | 'sunset' | 'spotlight'
   let currentLook: StageLook = 'warm'
   let performanceActive = false
@@ -461,6 +477,8 @@ export function makePalmRoom() {
     root,
     update(time: number) { updateServiceNpc(usher, time) },
     setEquipmentPreview(visible: boolean) { equipment.visible = visible },
+    setRehearsalMonitors(visible: boolean) { monitors.visible = visible },
+    setRehearsalBackdrop(visible: boolean) { backdrop.visible = visible },
     setStageLook(look: StageLook) { currentLook = look; applyStageLook() },
     setStagePerformance(active: boolean) {
       performanceActive = active
