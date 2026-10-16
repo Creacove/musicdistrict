@@ -322,7 +322,7 @@ const world = $<HTMLDivElement>('world')
 const scene = new THREE.Scene()
 scene.background = new THREE.Color('#413243')
 scene.fog = new THREE.Fog('#413243', 32, 72)
-const camera = new THREE.PerspectiveCamera(62, 1, .1, 90)
+const camera = new THREE.PerspectiveCamera(56, 1, .1, 90)
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' })
 type Quality = 'saver' | 'balanced' | 'quality'
 let quality: Quality = (['saver', 'balanced', 'quality'].includes(localStorage.getItem('scene-quality') || '') ? localStorage.getItem('scene-quality') : 'balanced') as Quality
@@ -1489,7 +1489,7 @@ const presence = connectPresence(renderPresence, handleIncomingEmote, handleInco
 window.addEventListener('beforeunload', () => presence.close())
 
 const keys = new Set<string>()
-let yaw = 0, dragging = false, previousX = 0, pointerStartX = 0, pointerStartY = 0, pointerMoved = false, touchX = 0, touchY = 0
+let yaw = 0, cameraPitch = 0, cameraZoom = 0, dragging = false, previousX = 0, previousY = 0, pointerStartX = 0, pointerStartY = 0, pointerMoved = false, touchX = 0, touchY = 0
 let walkTarget: THREE.Vector3 | null = null
 let walkPath: WalkPoint[] = []
 const walkMarker = new THREE.Mesh(new THREE.RingGeometry(.45, .58, 28), new THREE.MeshBasicMaterial({ color: '#36e8b8', side: THREE.DoubleSide, depthTest: false }))
@@ -2665,8 +2665,9 @@ window.addEventListener('keydown', event => {
 })
 window.addEventListener('keyup', event => keys.delete(event.key.toLowerCase()))
 window.addEventListener('blur', () => keys.clear())
-world.addEventListener('pointerdown', event => { dragging = true; previousX = pointerStartX = event.clientX; pointerStartY = event.clientY; pointerMoved = false; world.setPointerCapture(event.pointerId) })
-world.addEventListener('pointermove', event => { if (dragging) { if (Math.hypot(event.clientX - pointerStartX, event.clientY - pointerStartY) > 7) pointerMoved = true; if (pointerMoved) yaw += (event.clientX - previousX) * .004; previousX = event.clientX } })
+world.addEventListener('pointerdown', event => { dragging = true; previousX = pointerStartX = event.clientX; previousY = pointerStartY = event.clientY; pointerMoved = false; world.setPointerCapture(event.pointerId) })
+world.addEventListener('pointermove', event => { if (dragging) { if (Math.hypot(event.clientX - pointerStartX, event.clientY - pointerStartY) > 7) pointerMoved = true; if (pointerMoved) { yaw += (event.clientX - previousX) * .004; cameraPitch = THREE.MathUtils.clamp(cameraPitch + (event.clientY - previousY) * .012, -1.1, 1.1) } previousX = event.clientX; previousY = event.clientY } })
+world.addEventListener('wheel', event => { cameraZoom = THREE.MathUtils.clamp(cameraZoom + Math.sign(event.deltaY) * .45, -1.5, 2.5) }, { passive: true })
 world.addEventListener('pointerup', event => {
   dragging = false
   if (pointerMoved || sheet !== 'none') return
@@ -2822,15 +2823,15 @@ function frame() {
     leftArm.rotation.z = -.15; rightArm.rotation.z = .15
   }
   applyActiveAvatarEmote(avatar, { body: avatarBody, leftArm, rightArm, leftElbow, rightElbow })
-  const cameraDistance = location === 'venue' ? 10.6 : 7.1
-  const cameraHeight = location === 'venue' ? 4.9 : 3.85
+  const cameraDistance = (location === 'venue' ? 10.6 : 6.2) + cameraZoom
+  const cameraHeight = (location === 'venue' ? 4.9 : 3.15) + cameraPitch
   const desired = avatar.position.clone().add(new THREE.Vector3(Math.sin(yaw) * cameraDistance, cameraHeight, Math.cos(yaw) * cameraDistance))
   const b = BOUNDARIES[location]
   const camPad = location === 'square' ? 3.5 : location === 'venue' ? 7.5 : 1.2
   desired.x = THREE.MathUtils.clamp(desired.x, b.minX - camPad, b.maxX + camPad)
   desired.z = THREE.MathUtils.clamp(desired.z, b.minZ - camPad, b.maxZ + camPad)
-  camera.position.lerp(desired, 1 - Math.exp(-5 * dt))
-  camera.lookAt(avatar.position.x, avatar.position.y + 1.52, avatar.position.z)
+  camera.position.lerp(desired, 1 - Math.exp(-7 * dt))
+  camera.lookAt(avatar.position.x, avatar.position.y + 1.78, avatar.position.z - (location === 'square' ? 1.4 : 0))
   const next = getNearby(location, avatar.position.x, avatar.position.z)
   if (now - lastPresenceSend > 125) {
     presence.send({ x: avatar.position.x, z: avatar.position.z, angle: avatar.rotation.y, dancing, location, name: playerName })
@@ -2883,7 +2884,8 @@ function frame() {
   if (location === 'venue') palmRoom?.update(elapsed)
   if (location === 'square') {
     (square.userData.updateConcierge as ((time: number) => void) | undefined)?.(elapsed);
-    (square.userData.updateAmbientPedestrians as ((time: number, enabled: boolean) => void) | undefined)?.(elapsed, quality !== 'saver')
+    (square.userData.updateAmbientPedestrians as ((time: number, enabled: boolean) => void) | undefined)?.(elapsed, quality !== 'saver');
+    (square.userData.updatePerformer as ((time: number) => void) | undefined)?.(elapsed)
   }
   if (location === 'studio') (studioRoom?.userData.updateServiceNpc as ((time: number) => void) | undefined)?.(elapsed)
   renderer.render(scene, camera)

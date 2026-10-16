@@ -500,3 +500,9 @@ Added an integration test that connects 20 real WebSocket test clients to an iso
 1. Connect approved party travel to public room capacity with a group-compatible destination result; keep ticketed admission blocked until the authoritative Chapter 06 EventService validates each attendee and global capacity.
 2. Validate FPS, thermals, touch comfort, and network recovery on physical Android/iPhone devices.
 3. Keep public chat and reports gated until age policy, moderation staffing, emergency escalation, and appeals have real owners.
+## Music Square demo camera and stage pass — 16 October 2026
+
+- Brought the default third-person camera closer to the avatar and stage, tightened its follow response, and added constrained vertical drag and wheel zoom while preserving tap-to-walk and joystick movement.
+- Added a visible stage performer, warm light beams, and layered palm fronds to make the square read more like a live music venue.
+- Built the production client and opened it in headed Edge at 390 × 844. The 3D canvas rendered with no page errors. Evidence: `docs/evidence/music-square-camera-stage-mobile.png`.
+- The screenshot still falls substantially short of V26: the world uses simple procedural geometry, the mobile HUD crowds the lower view, and character materials and lighting lack the reference's detail. The next demo work should replace the stage/storefront and avatar blockouts with authored art and simplify the on-screen controls before adding more backend features.

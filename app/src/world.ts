@@ -172,12 +172,16 @@ function lamp(parent: THREE.Group, x: number, z: number, height = 4.6) {
 function palm(parent: THREE.Group, x: number, z: number, height = 5.4) {
   const trunk = cylinder(parent, .19, .33, height, wood, x, height / 2, z, 8)
   trunk.rotation.z = .07
-  for (let i = 0; i < 7; i++) {
-    const leaf = new THREE.Mesh(new THREE.ConeGeometry(.65, 4.3, 4), foliage)
-    leaf.position.set(x + Math.cos(i * Math.PI * 2 / 7) * 1.35, height + .06, z + Math.sin(i * Math.PI * 2 / 7) * 1.35)
-    leaf.rotation.z = Math.PI / 2.7
-    leaf.rotation.y = i * Math.PI * 2 / 7
-    parent.add(leaf)
+  for (let i = 0; i < 9; i++) {
+    const angle = i * Math.PI * 2 / 9
+    const direction = new THREE.Vector3(Math.cos(angle), -.28, Math.sin(angle))
+    for (let segment = 0; segment < 3; segment++) {
+      const start = segment * .82
+      const leaf = new THREE.Mesh(new THREE.ConeGeometry(.28 - segment * .055, 1.75, 5), foliage)
+      leaf.position.set(x + direction.x * (start + .8), height + direction.y * (start + .8), z + direction.z * (start + .8))
+      leaf.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction.clone().normalize())
+      parent.add(leaf)
+    }
   }
 }
 
@@ -299,6 +303,18 @@ export function makeSquare() {
   speaker(root, -11, 1.63, -8.35, 1.05)
   speaker(root, 0, 1.63, -8.35, 1.05)
   microphone(root, -5.5, -9.7)
+  const performer = createAmbientPedestrian(1)
+  performer.position.set(-6.8, .75, -10.5)
+  performer.rotation.y = Math.PI
+  root.add(performer)
+  root.userData.updatePerformer = (time: number) => updateAmbientPedestrian(performer, time * .38)
+  // Warm visible beams put the live act at the centre of the square at dusk.
+  const beamMaterial = new THREE.MeshBasicMaterial({ color: '#ffe2ab', transparent: true, opacity: .065, depthWrite: false, side: THREE.DoubleSide })
+  for (const x of [-9.7, -5.5, -1.3]) {
+    const beam = new THREE.Mesh(new THREE.ConeGeometry(1.25, 3.45, 16, 1, true), beamMaterial)
+    beam.position.set(x, 2.25, -9.8)
+    root.add(beam)
+  }
   for (const x of [-9.7, -5.5, -1.3]) {
     const light = new THREE.PointLight('#ffc883', 2.5, 8)
     light.position.set(x, 4.1, -9.4)
