@@ -56,6 +56,8 @@ button:disabled{cursor:not-allowed;opacity:.48}
 #mini-play{width:36px;font-size:16px;background:#0d8062;color:#fff}
 .emote-bar{position:absolute;z-index:7;right:clamp(15px,3vw,45px);bottom:130px;display:flex;flex-direction:column;align-items:flex-end;gap:6px}
 .dance-button{min-height:42px;padding:8px 14px;border:1px solid #d5bb85;border-radius:10px;background:#1b3035e8;color:#f7e8c6;font-size:12px;font-weight:850;box-shadow:0 8px 22px #1118;transition:all .15s ease}.dance-button[aria-pressed="true"]{background:#0c886c;border-color:#b8f1cd;color:white}
+.reaction-toggle{min-height:42px;padding:8px 13px;border:1px solid #ffffff70;border-radius:10px;background:#193a39e8;color:#fff;font-size:12px;font-weight:850;box-shadow:0 8px 22px #1119}
+.reaction-toggle[aria-expanded="true"]{background:#0c886c}
 .emote-actions{display:flex;gap:5px;background:#142228d4;border:1px solid #ffffff24;padding:4px 6px;border-radius:12px;box-shadow:0 6px 20px #0008;backdrop-filter:blur(8px)}
 .emote-actions button{display:flex;flex-direction:column;align-items:center;justify-content:center;min-width:38px;height:40px;background:#ffffff12;border:1px solid #ffffff1a;border-radius:8px;font-size:16px;color:#fff;padding:2px 4px;transition:transform .1s ease,background .15s}
 .emote-actions button:hover{background:#ffffff2b;transform:scale(1.08)}

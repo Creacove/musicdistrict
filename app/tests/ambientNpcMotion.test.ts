@@ -4,7 +4,7 @@ import { AMBIENT_ACTOR_TRUTH, MUSIC_SQUARE_AMBIENT_WALKERS, sampleAmbientWalker 
 import { getNearby, isPointBlocked } from '../src/worldModel.ts'
 
 test('Music Square ambient pedestrians stay on clear paths outside interaction hotspots', () => {
-  assert.equal(MUSIC_SQUARE_AMBIENT_WALKERS.length, 2)
+  assert.equal(MUSIC_SQUARE_AMBIENT_WALKERS.length, 4)
   for (const route of MUSIC_SQUARE_AMBIENT_WALKERS) {
     for (let step = 0; step < 120; step++) {
       const pose = sampleAmbientWalker(route, step * 0.5)

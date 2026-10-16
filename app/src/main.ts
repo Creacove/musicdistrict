@@ -80,7 +80,8 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
   </section>
   <div class="emote-bar" aria-label="Social reactions">
     <button id="dance" class="dance-button" aria-pressed="false" title="Dance to music">♪ Dance</button>
-    <div class="emote-actions">
+    <button id="emote-toggle" class="reaction-toggle" aria-expanded="false" aria-controls="emote-actions">☺ Reactions</button>
+    <div id="emote-actions" class="emote-actions" hidden>
       <button data-emote="cheer" title="Cheer" aria-label="Cheer emote">🙌<small>Cheer</small></button>
       <button data-emote="wave" title="Wave" aria-label="Wave emote">👋<small>Wave</small></button>
       <button data-emote="heart" title="Heart" aria-label="Heart emote">❤️<small>Love</small></button>
@@ -597,7 +598,7 @@ function createNameTexture(name: string): THREE.Texture {
   canvas.width = 256
   canvas.height = 64
   const ctx = canvas.getContext('2d')!
-  ctx.fillStyle = '#171e2bf0'
+  ctx.fillStyle = '#1479bce8'
   if (ctx.roundRect) {
     ctx.beginPath()
     ctx.roundRect(8, 8, 240, 48, 12)
@@ -619,6 +620,8 @@ function createNameTexture(name: string): THREE.Texture {
 }
 
 function updateAvatarNameTag(targetGroup: THREE.Group, name: string, id: string) {
+  // The local player is already centered by the camera; their own plate obscures the stage.
+  if (id === 'self') return
   let sprite = nameTags.get(id)
   if (!sprite) {
     const mat = new THREE.SpriteMaterial({ map: createNameTexture(name), depthTest: false })
@@ -2408,6 +2411,11 @@ $<HTMLButtonElement>('chat-toggle').onclick = () => {
   const menu = $<HTMLElement>('chat-menu')
   menu.hidden = !menu.hidden
 }
+$<HTMLButtonElement>('emote-toggle').onclick = () => {
+  const actions = $<HTMLElement>('emote-actions')
+  actions.hidden = !actions.hidden
+  $<HTMLButtonElement>('emote-toggle').setAttribute('aria-expanded', String(!actions.hidden))
+}
 $<HTMLButtonElement>('chat-channel-toggle').onclick = () => {
   roomChatOptedIn = !roomChatOptedIn
   presence.setChatOptIn(roomChatOptedIn)
@@ -2831,7 +2839,8 @@ function frame() {
   desired.x = THREE.MathUtils.clamp(desired.x, b.minX - camPad, b.maxX + camPad)
   desired.z = THREE.MathUtils.clamp(desired.z, b.minZ - camPad, b.maxZ + camPad)
   camera.position.lerp(desired, 1 - Math.exp(-7 * dt))
-  camera.lookAt(avatar.position.x, avatar.position.y + 1.78, avatar.position.z - (location === 'square' ? 1.4 : 0))
+  const lookAhead = location === 'square' ? 1.4 : 0
+  camera.lookAt(avatar.position.x + Math.sin(yaw) * lookAhead, avatar.position.y + 1.78, avatar.position.z - Math.cos(yaw) * lookAhead)
   const next = getNearby(location, avatar.position.x, avatar.position.z)
   if (now - lastPresenceSend > 125) {
     presence.send({ x: avatar.position.x, z: avatar.position.z, angle: avatar.rotation.y, dancing, location, name: playerName })

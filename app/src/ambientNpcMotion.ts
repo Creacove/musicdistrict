@@ -23,8 +23,10 @@ function makeRoute(centerX: number, centerZ: number, radiusX: number, radiusZ: n
 }
 
 export const MUSIC_SQUARE_AMBIENT_WALKERS: readonly AmbientWalkerRoute[] = [
-  makeRoute(1.5, 7.3, .6, .12, 10, 1, 0),
-  makeRoute(-5.4, 9.5, .4, .1, 12, -1, 1),
+  makeRoute(3.2, -1.5, 1.1, .35, 11, 1, 0),
+  makeRoute(-10.6, -2.2, .8, .3, 13, -1, 1),
+  makeRoute(1.8, -6.1, .55, .25, 15, 1, 1),
+  makeRoute(-2.8, -4.4, .7, .3, 14, -1, 0),
 ]
 
 export function sampleAmbientWalker(route: AmbientWalkerRoute, time: number) {

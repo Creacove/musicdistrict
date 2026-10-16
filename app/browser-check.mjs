@@ -21,7 +21,11 @@ try {
   const canvasCount = await page.locator('canvas').count()
   assert.ok(canvasCount > 0, 'the 3D game canvas should render')
   assert.deepEqual(pageErrors, [], 'the browser should not report page errors')
-  await page.screenshot({ path: '../docs/evidence/music-square-camera-stage-mobile.png', fullPage: true })
+  await page.locator('#emote-toggle').click()
+  assert.equal(await page.locator('#emote-actions').isVisible(), true, 'reactions should open on demand')
+  await page.locator('#emote-toggle').click()
+  assert.equal(await page.locator('#emote-actions').isVisible(), false, 'reactions should close to clear the scene')
+  await page.screenshot({ path: '../docs/evidence/music-square-clean-mobile.png', fullPage: true })
   console.log(JSON.stringify({ url: page.url(), title: await page.title(), canvasCount, pageErrors }))
 } finally {
   await browser.close()

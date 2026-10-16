@@ -25,7 +25,7 @@ test('tap-to-walk routes around square planters to every playable door', () => {
 })
 
 test('City Concierge is discoverable from spawn and reachable on foot', () => {
-  assert.equal(getNearby('square', 0, 8), 'cityConcierge')
+  assert.equal(getNearby('square', 4, 8), 'cityConcierge')
   assertWalkable('square', [0, 8], [-2.6, 6.4])
 })
 

@@ -130,8 +130,8 @@ export function createAmbientPedestrian(variant: 0 | 1): THREE.Group {
   if (!passerbyPlate) passerbyPlate = rolePlateTexture('NPC · PASSERBY', colors.accent)
   const label = new THREE.Sprite(new THREE.SpriteMaterial({ map: passerbyPlate, depthWrite: false }))
   label.name = 'NPC · PASSERBY role label'
-  label.position.set(0, 2.22, 0)
-  label.scale.set(1.12, .28, 1)
+  label.position.set(0, 2.13, 0)
+  label.scale.set(.86, .215, 1)
   actor.add(label)
   actor.userData.walkPose = { torso, legs, arms, phase: variant * Math.PI }
   return actor
@@ -237,8 +237,8 @@ export function createServiceNpc(role: ServiceNpcRole): THREE.Group {
   badge.position.set(0, .52, .295)
   const rolePlate = new THREE.Sprite(new THREE.SpriteMaterial({ map: rolePlateTexture(spec.badge, spec.shirtAccent), depthWrite: false }))
   rolePlate.name = 'NPC role identification'
-  rolePlate.position.set(0, 2.31, 0)
-  rolePlate.scale.set(1.12, .28, 1)
+  rolePlate.position.set(0, 2.24, 0)
+  rolePlate.scale.set(.86, .215, 1)
   actor.add(rolePlate)
   const lanyardPath = new THREE.CatmullRomCurve3([
     new THREE.Vector3(-.075, .76, .268), new THREE.Vector3(-.045, .65, .286), new THREE.Vector3(0, .58, .294), new THREE.Vector3(.045, .65, .286), new THREE.Vector3(.075, .76, .268),

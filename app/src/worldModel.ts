@@ -110,7 +110,7 @@ export const OBSTACLES: Record<Location, { boxes: ObstacleBox[]; circles: Obstac
 const hotspots: Record<Location, { id: Hotspot; x: number; z: number; radius: number }[]> = {
   square: [
     { id: 'kiosk', x: -8, z: 2, radius: 3.2 },
-    { id: 'cityConcierge', x: -2.6, z: 6.4, radius: 3.2 },
+    { id: 'cityConcierge', x: 3.8, z: 6.3, radius: 2.5 },
     { id: 'studio', x: 13, z: -8, radius: 3.2 },
     { id: 'releaseEntrance', x: -13, z: -8, radius: 3.3 },
     { id: 'palmEntrance', x: 10, z: 2, radius: 3.3 },

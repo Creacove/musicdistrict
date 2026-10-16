@@ -304,7 +304,7 @@ export function makeSquare() {
   speaker(root, 0, 1.63, -8.35, 1.05)
   microphone(root, -5.5, -9.7)
   const performer = createAmbientPedestrian(1)
-  performer.position.set(-6.8, .75, -10.5)
+  performer.position.set(-10.1, .75, -10.5)
   performer.rotation.y = Math.PI
   root.add(performer)
   root.userData.updatePerformer = (time: number) => updateAmbientPedestrian(performer, time * .38)
@@ -369,8 +369,8 @@ export function makeSquare() {
   box(root, 2.5, 3.8, .12, black, 20, 2, -1.5)
   sign(root, ['LAGOS', 'CREATES', 'STARS'], 2.35, 3.6, 20, 2, -1.41, { bg: '#4b2c32', ink: '#f1dac0', size: 92 })
   const concierge = createServiceNpc('city-concierge')
-  concierge.position.set(-2.6, 0, 6.4)
-  concierge.rotation.y = Math.atan2(2.6, 1.6)
+  concierge.position.set(3.8, 0, 6.3)
+  concierge.rotation.y = -Math.PI / 2
   root.add(concierge)
   root.userData.updateConcierge = (time: number) => updateServiceNpc(concierge, time)
   const crowd = new THREE.Group()
