@@ -70,6 +70,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
   </section>
 
   <div id="context" class="context" hidden><div><span id="context-icon">✦</span><div><b id="context-name"></b><small id="context-help">Approach and interact</small></div></div><button id="interact">Interact <kbd>E</kbd></button></div>
+  <div id="stage-cue-hud" class="stage-cue-hud" hidden aria-label="Local stage rehearsal controls"><div><b id="stage-cue-title">REHEARSAL</b><span id="stage-cue-time">0:00 / 0:30</span></div><div class="stage-cue-actions"><button data-cue-look="warm">Warm</button><button data-cue-look="sunset">Sunset</button><button data-cue-look="spotlight">Spot</button><button id="stage-cue-stop" aria-label="Stop rehearsal">Stop</button></div><small id="stage-cue-count">Tap a light to cue it during your master.</small></div>
   <section id="mini-player" class="mini-player" hidden aria-label="Personal music preview">
     <div class="mini-art">♫</div>
     <div class="mini-copy"><b id="mini-title">Square Sketch</b><small id="mini-artist">Original demo · private preview</small></div>
@@ -1538,6 +1539,15 @@ let beatPattern: BeatPattern = starterPattern(), beatPatternB: BeatPattern = tog
 let beatKit: SoundKit = 'afrobeats', beatBpm = 104
 let beatSection: 'a' | 'b' = 'a', beatPlaying = false, beatTimer: number | undefined, beatStep = 0, beatBar = 0, beatDraftSaved = false
 let masterBlob: Blob | null = null, masterPlayer: HTMLAudioElement | null = null, masterAudioUrl: string | null = null, performingOnStage = false
+type StageCue = { at: number; look: StageLook }
+let stageCues: StageCue[] = []
+let stageCueMode: 'record' | 'replay' | null = null
+let nextStageCue = 0
+let stageCueTimer: number | null = null
+try {
+  const saved = JSON.parse(localStorage.getItem('scene-stage-cues') || '[]')
+  if (Array.isArray(saved)) stageCues = saved.filter((cue): cue is StageCue => cue && Number.isFinite(cue.at) && cue.at >= 0 && cue.at <= 30 && ['warm', 'sunset', 'spotlight'].includes(cue.look)).slice(0, 64)
+} catch { /* invalid cue timeline starts empty */ }
 let releaseDraftSaved = false, releaseAuditionPlayed = false, stagePreviewPlayed = false
 let releaseDraft: ReleaseDraft = blankReleaseDraft()
 let activeReleaseStation: ReleaseStationId = 'intake'
@@ -1638,6 +1648,13 @@ function stopDance() {
 }
 
 function stopMasterPreview() {
+  if (stageCueMode === 'record') {
+    try { localStorage.setItem('scene-stage-cues', JSON.stringify(stageCues)) } catch { /* rehearsal cues are optional local progress */ }
+  }
+  stageCueMode = null
+  if (stageCueTimer !== null) window.clearInterval(stageCueTimer)
+  stageCueTimer = null
+  $<HTMLElement>('stage-cue-hud').hidden = true
   masterPlayer?.pause(); masterPlayer = null
   if (masterAudioUrl) URL.revokeObjectURL(masterAudioUrl)
   masterAudioUrl = null
@@ -1646,6 +1663,44 @@ function stopMasterPreview() {
     palmRoom?.setStagePerformance(false)
   }
   if (!playing && !beatPlaying) { $<HTMLButtonElement>('audio').innerHTML = '♫ <span>OFF</span>'; $<HTMLButtonElement>('audio').setAttribute('aria-label', 'Audio off') }
+}
+
+function startStageRehearsal(mode: 'record' | 'replay') {
+  if (!masterBlob) return
+  stopPreview()
+  stopBeat()
+  stopMasterPreview()
+  if (mode === 'record') stageCues = []
+  stageCueMode = mode
+  nextStageCue = 0
+  masterAudioUrl = URL.createObjectURL(masterBlob)
+  masterPlayer = new Audio(masterAudioUrl)
+  masterPlayer.onended = () => { stopMasterPreview(); toast(mode === 'record' ? 'Rehearsal cues saved on this device' : 'Show replay finished') }
+  performingOnStage = true
+  palmRoom?.setStagePerformance(true)
+  $<HTMLElement>('stage-cue-hud').hidden = false
+  $<HTMLElement>('stage-cue-title').textContent = mode === 'record' ? 'CUE THE LIGHTS' : 'REPLAYING YOUR SHOW'
+  $<HTMLElement>('stage-cue-count').textContent = mode === 'record' ? 'Tap a light to cue it during your master.' : `${stageCues.length} saved light cues`
+  document.querySelectorAll<HTMLButtonElement>('[data-cue-look]').forEach(button => { button.disabled = mode === 'replay' })
+  stageCueTimer = window.setInterval(() => {
+    if (!masterPlayer || !stageCueMode) return
+    const seconds = masterPlayer.currentTime
+    $<HTMLElement>('stage-cue-time').textContent = `0:${String(Math.min(30, Math.floor(seconds))).padStart(2, '0')} / 0:30`
+    if (stageCueMode === 'replay') {
+      while (nextStageCue < stageCues.length && stageCues[nextStageCue].at <= seconds) {
+        stageLook = stageCues[nextStageCue++].look
+        palmRoom?.setStageLook(stageLook)
+      }
+    }
+  }, 100)
+  void masterPlayer.play().then(() => {
+    stagePreviewPlayed = true
+    try { localStorage.setItem('scene-stage-preview-played', 'true') } catch { /* stage history is optional local progress */ }
+    $<HTMLButtonElement>('audio').innerHTML = '♫ <span>ON</span>'
+    $<HTMLButtonElement>('audio').setAttribute('aria-label', 'Audio on')
+    hideSheets(true)
+    toast(mode === 'record' ? 'Rehearsal started · cue the lights' : 'Your saved show is playing locally')
+  }).catch(() => { stopMasterPreview(); toast('Audio was blocked · Tap rehearsal again') })
 }
 
 function setRoute(target: Hotspot) {
@@ -2254,40 +2309,22 @@ function interact() {
   if (nearby === 'stage') {
     if (masterBlob) {
       openAction(
-        performingOnStage ? 'Stage preview · Playing' : 'Palm Room Stage',
+        performingOnStage ? 'Stage rehearsal · Playing' : 'Palm Room Stage',
         performingOnStage
-          ? 'Your 30-second City Studio master is playing locally on this device while the stage lights are active.'
-          : 'Preview your rendered City Studio master on this stage. Audio plays only on your device.',
-        performingOnStage ? 'Stop preview' : 'Preview master on stage',
+          ? 'Your City Studio master is playing locally while the stage lights are active.'
+          : 'Rehearse with your private City Studio master. Cue the lights live, then replay the saved sequence here. Audio plays only on your device.',
+        performingOnStage ? 'Stop rehearsal' : stageCues.length ? 'Replay saved show' : 'Rehearse light cues',
         () => {
           if (performingOnStage) {
             stopMasterPreview()
-            toast('Stage preview ended')
+            toast('Rehearsal ended')
           } else {
-            stopPreview()
-            stopBeat()
-            stopMasterPreview()
-            masterAudioUrl = URL.createObjectURL(masterBlob!)
-            masterPlayer = new Audio(masterAudioUrl)
-            masterPlayer.onended = () => { stopMasterPreview(); if (nearby === 'stage') interact() }
-            performingOnStage = true
-            palmRoom?.setStagePerformance(true)
-            void masterPlayer.play().then(() => {
-              stagePreviewPlayed = true
-              try { localStorage.setItem('scene-stage-preview-played', 'true') } catch { /* stage history is optional local progress */ }
-              $<HTMLButtonElement>('audio').innerHTML = '♫ <span>ON</span>'
-              $<HTMLButtonElement>('audio').setAttribute('aria-label', 'Audio on')
-              toast('Stage preview · Playing locally')
-            }).catch(() => {
-              stopMasterPreview()
-              if (nearby === 'stage') interact()
-              toast('Audio was blocked · Tap preview again')
-            })
+            startStageRehearsal(stageCues.length ? 'replay' : 'record')
           }
           refreshContext()
-          interact()
+          if (!performingOnStage) interact()
         },
-        undefined,
+        !performingOnStage && stageCues.length ? { label: 'Record new cues', action: () => startStageRehearsal('record') } : undefined,
         performingOnStage
       )
     } else {
@@ -2755,6 +2792,15 @@ function movePad(event: PointerEvent) {
 pad.addEventListener('pointerdown', event => { clearWalkTarget(); pad.setPointerCapture(event.pointerId); movePad(event) })
 pad.addEventListener('pointermove', event => { if (pad.hasPointerCapture(event.pointerId)) movePad(event) })
 for (const name of ['pointerup', 'pointercancel']) pad.addEventListener(name, () => { touchX = touchY = 0; stick.style.transform = 'translate(0,0)' })
+document.querySelectorAll<HTMLButtonElement>('[data-cue-look]').forEach(button => button.addEventListener('click', () => {
+  if (stageCueMode !== 'record' || !masterPlayer || stageCues.length >= 64) return
+  const look = button.dataset.cueLook as StageLook
+  stageLook = look
+  palmRoom?.setStageLook(look)
+  stageCues.push({ at: Math.round(masterPlayer.currentTime * 10) / 10, look })
+  $<HTMLElement>('stage-cue-count').textContent = `${stageCues.length} light cue${stageCues.length === 1 ? '' : 's'} recorded · saved when you stop`
+}))
+$<HTMLButtonElement>('stage-cue-stop').onclick = () => { stopMasterPreview(); toast('Local rehearsal ended · light cues saved') }
 window.addEventListener('pagehide', () => { stopPreview(); stopBeat(); stopMasterPreview() })
 
 // Development-only visual entry point for inspecting the room in a browser.
