@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import musicSquareMuralUrl from './assets/music-square-mural.webp'
 import { instanceStaticBoxes } from './instanceBoxes.ts'
 import { createAmbientPedestrian, createServiceNpc, updateAmbientPedestrian, updateServiceNpc } from './serviceNpc.ts'
 import { MUSIC_SQUARE_AMBIENT_WALKERS, sampleAmbientWalker } from './ambientNpcMotion.ts'
@@ -47,57 +48,21 @@ function sign(parent: THREE.Group, lines: string[], width: number, height: numbe
   lines.forEach((line, i) => ctx.fillText(line, canvas.width / 2, start + lineHeight * i, canvas.width - 70))
   const texture = new THREE.CanvasTexture(canvas)
   texture.colorSpace = THREE.SRGBColorSpace
-  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(width, height), new THREE.MeshBasicMaterial({ map: texture }))
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(width, height), new THREE.MeshBasicMaterial({ map: texture, transparent: true }))
   mesh.position.set(x, y, z)
   parent.add(mesh)
   return mesh
 }
 
 function squareMural(parent: THREE.Group) {
-  const canvas = document.createElement('canvas')
-  canvas.width = 1024
-  canvas.height = 360
-  const c = canvas.getContext('2d')!
-  const wash = c.createLinearGradient(0, 0, 1024, 360)
-  wash.addColorStop(0, '#33243b')
-  wash.addColorStop(.55, '#71405a')
-  wash.addColorStop(1, '#c46652')
-  c.fillStyle = wash
-  c.fillRect(0, 0, 1024, 360)
-  // Original painted skyline and rhythmic blocks, not a concept image texture.
-  for (let i = 0; i < 22; i++) {
-    const x = i * 49 - 10
-    const h = 46 + (i * 37 % 125)
-    c.fillStyle = i % 3 === 0 ? '#db8a5f' : '#a75666'
-    c.fillRect(x, 360 - h, 43, h)
-    c.fillStyle = '#f2ad70'
-    for (let y = 360 - h + 14; y < 340; y += 24) for (let wx = x + 8; wx < x + 42; wx += 15) c.fillRect(wx, y, 5, 7)
-  }
-  c.save()
-  c.translate(790, 145)
-  c.rotate(-.13)
-  c.fillStyle = '#f5b66c'
-  c.font = '900 170px Arial'
-  c.fillText('♪', 0, 0)
-  c.restore()
-  c.textAlign = 'left'
-  c.shadowColor = '#211622'
-  c.shadowBlur = 13
-  c.fillStyle = '#ffe2a0'
-  c.font = '900 82px Arial'
-  c.fillText('GOOD MUSIC', 46, 116)
-  c.fillStyle = '#ffffff'
-  c.font = '900 76px Arial'
-  c.fillText('BRIGHTER LAGOS', 46, 208)
-  c.shadowBlur = 0
-  c.fillStyle = '#ffc996'
-  c.font = '700 25px Arial'
-  c.fillText('THE SCENE  •  MUSIC SQUARE', 50, 268)
-  const texture = new THREE.CanvasTexture(canvas)
+  // Original mural art is a texture on the physical stage wall, never a flattened scene.
+  const texture = new THREE.TextureLoader().load(musicSquareMuralUrl)
   texture.colorSpace = THREE.SRGBColorSpace
-  const mural = new THREE.Mesh(new THREE.PlaneGeometry(11.4, 3.45), new THREE.MeshBasicMaterial({ map: texture }))
+  texture.anisotropy = 4
+  const mural = new THREE.Mesh(new THREE.PlaneGeometry(11.4, 3.45), new THREE.MeshStandardMaterial({ map: texture, roughness: 1, emissive: '#523824', emissiveIntensity: .16 }))
   mural.position.set(-5.5, 2.55, -12.7)
   parent.add(mural)
+  sign(parent, ['GOOD MUSIC', 'BRIGHTER LAGOS'], 7.2, 2.05, -5.5, 2.65, -12.58, { bg: 'rgba(0,0,0,0)', ink: '#fff4d8', size: 102 })
 }
 
 function tileFloor(parent: THREE.Group, width: number, depth: number, color: string, grout: string) {
@@ -215,6 +180,20 @@ function microphone(parent: THREE.Group, x: number, z: number) {
   cylinder(parent, .3, .3, .04, black, x, .73, z)
 }
 
+function drumKit(parent: THREE.Group, x: number, z: number) {
+  const shell = mat('#8d4e35', .2)
+  const cymbal = mat('#d4a85e', .72)
+  cylinder(parent, .5, .5, .48, shell, x, 1.05, z, 18)
+  const drumFace = new THREE.Mesh(new THREE.CircleGeometry(.41, 20), mat('#f4e9d1'))
+  drumFace.position.set(x, 1.05, z + .505)
+  parent.add(drumFace)
+  for (const side of [-1, 1]) {
+    cylinder(parent, .3, .3, .34, shell, x + side * .65, 1.75, z - .25, 14)
+    cylinder(parent, .025, .03, 1.72, black, x + side * 1.25, 1.55, z -.3, 6)
+    cylinder(parent, .36, .36, .045, cymbal, x + side * 1.25, 2.42, z -.3, 16)
+  }
+}
+
 // Cheap, authored festoon lighting gives the square its evening street identity.
 // Bulbs share materials and geometry; only the existing street lamps cast light.
 function festoon(parent: THREE.Group, from: [number, number, number], to: [number, number, number], count = 15) {
@@ -287,6 +266,7 @@ export function makeSquare() {
     box(root, 1.98, 2.23, .09, i % 3 ? mat('#a3775b') : violet, x, 1.65, -16.24)
   }
   box(root, 13, .75, 4.7, charcoal, -5.5, .37, -10.5)
+  box(root, 13.7, .19, 5.2, wood, -5.5, .78, -10.5)
   box(root, 13.4, .15, .18, brass, -5.5, .8, -8.1)
   box(root, 11.6, 3.4, .18, mat('#3d263a'), -5.5, 2.55, -12.84)
   squareMural(root)
@@ -303,6 +283,19 @@ export function makeSquare() {
   speaker(root, -11, 1.63, -8.35, 1.05)
   speaker(root, 0, 1.63, -8.35, 1.05)
   microphone(root, -5.5, -9.7)
+  drumKit(root, -3.35, -10.65)
+  // Framed stage depth: side wings, warm trims, and a visible backstage opening.
+  for (const x of [-12.05, 1.05]) {
+    box(root, .35, 4.1, 3.4, charcoal, x, 2.75, -10.75)
+    box(root, .08, 3.85, .18, brass, x + (x < 0 ? .22 : -.22), 2.68, -8.2)
+  }
+  box(root, 13.4, .3, 4.9, charcoal, -5.5, 4.68, -10.55)
+  for (const x of [-11.75, -7.7, -3.4, .7]) {
+    const downlight = new THREE.Mesh(new THREE.CircleGeometry(.13, 10), new THREE.MeshBasicMaterial({ color: '#ffe6b7' }))
+    downlight.rotation.x = -Math.PI / 2
+    downlight.position.set(x, 4.5, -8.65)
+    root.add(downlight)
+  }
   const performer = createAmbientPedestrian(1)
   performer.position.set(-10.1, .75, -10.5)
   performer.rotation.y = Math.PI
