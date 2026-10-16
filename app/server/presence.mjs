@@ -146,8 +146,10 @@ export function attachPresence(httpServer, { store } = {}) {
         if (store && typeof token === 'string') {
           const guestId = store.resume(token)
           if (guestId) {
+            const temporaryId = id
             const needsPartyTrack = !partyTracked || id !== guestId
             if (partyTracked && id !== guestId) store.partySessionDisconnected?.(id)
+            if (temporaryId !== guestId) broadcast({ type: 'leave', id: temporaryId }, socket, player)
             player.id = id = guestId
             player.authenticated = authenticated = true
             if (needsPartyTrack) { store.partySessionConnected?.(guestId); partyTracked = true }

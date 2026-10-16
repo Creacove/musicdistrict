@@ -27,6 +27,20 @@ function nextMessageWithin(socket, label, waitMs = 1500) {
   })
 }
 
+function nextMessageMatching(socket, label, matches, waitMs = 1500) {
+  return new Promise((resolve, reject) => {
+    const onMessage = raw => {
+      const message = JSON.parse(raw.toString())
+      if (!matches(message)) return
+      clearTimeout(timer)
+      socket.off('message', onMessage)
+      resolve(message)
+    }
+    const timer = setTimeout(() => { socket.off('message', onMessage); reject(new Error(`Timed out waiting for ${label}`)) }, waitMs)
+    socket.on('message', onMessage)
+  })
+}
+
 test('connected people join, move, and leave without invented players', async () => {
   const server = createServer()
   const hub = attachPresence(server)
@@ -57,6 +71,42 @@ test('connected people join, move, and leave without invented players', async ()
       assert.equal((await left).id, second.id)
     } finally { b.terminate() }
   } finally { a.terminate(); hub.close(); server.close() }
+})
+
+test('guest authentication replaces its temporary presence identity for existing peers', async () => {
+  const store = createGuestStore(':memory:')
+  const guests = [store.create(), store.create()]
+  const server = createServer()
+  const hub = attachPresence(server, { store })
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  const port = server.address().port
+  const a = new WebSocket(`ws://127.0.0.1:${port}/presence`)
+  let b
+  try {
+    const welcomeA = await nextMessageWithin(a, 'first anonymous welcome')
+    const joinB = nextMessageWithin(a, 'second anonymous join')
+    b = new WebSocket(`ws://127.0.0.1:${port}/presence`)
+    const welcomeB = await nextMessageWithin(b, 'second anonymous welcome')
+    assert.equal((await joinB).type, 'join')
+    const oldA = welcomeA.id, oldB = welcomeB.id
+    assert.notEqual(oldA, oldB)
+
+    const aAuth = nextMessageWithin(a, 'first guest authentication')
+    const removeA = nextMessageMatching(b, 'first temporary identity removal', message => message.type === 'leave' && message.id === oldA)
+    const moveA = nextMessageMatching(b, 'first authenticated identity', message => message.type === 'move' && message.player?.id === guests[0].id)
+    a.send(JSON.stringify({ type: 'auth', token: guests[0].token }))
+    assert.equal((await aAuth).id, guests[0].id)
+    assert.deepEqual(await removeA, { type: 'leave', id: oldA })
+    assert.equal((await moveA).player.id, guests[0].id)
+
+    const bAuth = nextMessageWithin(b, 'second guest authentication')
+    const removeB = nextMessageMatching(a, 'second temporary identity removal', message => message.type === 'leave' && message.id === oldB)
+    const moveB = nextMessageMatching(a, 'second authenticated identity', message => message.type === 'move' && message.player?.id === guests[1].id)
+    b.send(JSON.stringify({ type: 'auth', token: guests[1].token }))
+    assert.equal((await bAuth).id, guests[1].id)
+    assert.deepEqual(await removeB, { type: 'leave', id: oldB })
+    assert.equal((await moveB).player.id, guests[1].id)
+  } finally { a.terminate(); b?.terminate(); hub.close(); server.close(); store.close() }
 })
 
 test('reconnecting client gets fresh welcome without stale avatars', async () => {

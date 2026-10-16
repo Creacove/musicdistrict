@@ -500,6 +500,12 @@ Added an integration test that connects 20 real WebSocket test clients to an iso
 1. Connect approved party travel to public room capacity with a group-compatible destination result; keep ticketed admission blocked until the authoritative Chapter 06 EventService validates each attendee and global capacity.
 2. Validate FPS, thermals, touch comfort, and network recovery on physical Android/iPhone devices.
 3. Keep public chat and reports gated until age policy, moderation staffing, emergency escalation, and appeals have real owners.
+
+## Shared-room identity handoff — 16 October 2026
+
+- Fixed the unauthenticated-to-guest identity transition in the live presence service. When a device receives its durable guest identity, peers now remove its temporary connection ID before accepting the authenticated player update.
+- The two-device Chrome check previously showed two roster entries for one remote person. After the fix, two separate guest sessions see exactly one other player each in Music Square. Live capture: `docs/evidence/local-shared-music-square-mobile.png`; repeatable check: `app/multiplayer-browser-check.mjs`.
+- The fixed self-hosted runtime listens on `0.0.0.0:4173` for same-network phone play. The public Netlify preview remains solo/static; its core 3D page still loads without browser errors.
 ## Music Square demo camera and stage pass — 16 October 2026
 
 - Brought the default third-person camera closer to the avatar and stage, tightened its follow response, and added constrained vertical drag and wheel zoom while preserving tap-to-walk and joystick movement.
