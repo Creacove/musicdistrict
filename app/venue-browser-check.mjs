@@ -27,5 +27,9 @@ try {
   await page.screenshot({ path: '../docs/evidence/netlify-palm-room-stage-plan-mobile.png', fullPage: true })
   await page.locator('#action-close').click()
   await page.screenshot({ path: '../docs/evidence/netlify-palm-room-stage-placed-mobile.png', fullPage: true })
+  await page.locator('#desk-trigger').click()
+  await page.locator('.desk-tabs [data-tab="plans"]').click()
+  assert.match(await page.locator('#desk-cards').innerText(), /Friday Open Mic/)
+  assert.equal(await page.locator('[data-show-route]').isVisible(), true)
   console.log('Live Palm Room stage setup and show draft passed in Chrome')
 } finally { await browser.close() }
