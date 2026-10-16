@@ -350,6 +350,13 @@ export function makeSquare() {
     for (let i = -2; i <= 2; i++) box(root, .12, .12, 1.82, brass, x + i * .96, 4.07, -9.1)
   }
   // A physical district guide remains useful even when the map sheet is closed.
+  // The studio direction stays readable from the spawn camera without inventing a travel time.
+  box(root, 3.65, .92, .16, mint, .15, 3.75, -5.2)
+  box(root, 3.47, .76, .18, black, .15, 3.75, -5.08)
+  sign(root, ['CITY STUDIO  →'], 3.35, .68, .15, 3.75, -4.96, { bg: '#153b36', ink: '#f1f2e7', size: 86 })
+  for (const x of [-1.2, 1.5]) {
+    cylinder(root, .025, .025, 2.2, charcoal, x, 5.25, -5.2, 6)
+  }
   cylinder(root, .075, .095, 3.2, black, 4, 1.6, 1.4, 8)
   box(root, 2.9, .72, .12, black, 4, 2.75, 1.4)
   sign(root, ['← RELEASE  ·  STUDIO →'], 2.78, .6, 4, 2.75, 1.48, { bg: '#183e39', ink: '#f6e9c9', size: 73 })
