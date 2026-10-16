@@ -83,7 +83,8 @@ kbd{display:inline-grid;place-items:center;min-width:19px;height:19px;background
 .venue-buttons button{min-height:43px;flex:1;border:0;border-radius:10px;background:#f0f1f4;color:#263044;font-size:12px;font-weight:850;padding:8px 10px}
 .venue-buttons .green-button,.green-button{background:#0da873;color:#fff;border:0;border-radius:10px;font-weight:850}
 .icon-close{border:0;background:#f1f2f6;color:#1d2531;position:absolute;right:14px;top:13px;border-radius:50%;width:33px;height:33px;font-size:22px;line-height:1}
-.action-sheet{position:absolute;z-index:12;left:50%;bottom:73px;transform:translateX(-50%);width:min(430px,calc(100vw - 28px));padding:25px 23px 21px;background:#fffffff9;color:#1d2633;border-radius:18px;box-shadow:0 20px 60px #0b0c17a8}
+.action-sheet{position:absolute;z-index:12;left:50%;bottom:73px;transform:translateX(-50%);width:min(430px,calc(100vw - 28px));max-height:calc(100dvh - 91px);overflow-y:auto;padding:25px 23px 21px;background:#fffffff9;color:#1d2633;border-radius:18px;box-shadow:0 20px 60px #0b0c17a8}
+.action-sheet #action-close{position:sticky;top:0;float:right;margin:-12px -10px 0 0;z-index:2}
 .eyebrow{font-size:10px;letter-spacing:.2em;font-weight:900;color:#0a9a72}
 .action-sheet h2{font-size:25px;letter-spacing:-.035em;margin:9px 36px 8px 0}
 .action-sheet p{font-size:13px;line-height:1.5;color:#626b77;margin:0 0 18px}
