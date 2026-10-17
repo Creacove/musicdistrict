@@ -13,7 +13,7 @@ import { peopleInLocation } from './people.ts'
 import { emotePose, idlePose, walkingPose } from './avatarMotion.ts'
 import { facingAngleForMovement } from './avatarFacing.ts'
 import { disposeSpriteResources } from './avatarLifecycle.ts'
-import { acceptGuestFriendRequest, acceptGuestPartyInvitation, blockGuest, cancelGuestFriendRequest, createGuestParty, declineGuestFriendRequest, declineGuestPartyInvitation, fetchCatalogue, fetchGuestBlocks, fetchGuestEventPlanning, fetchGuestFriends, fetchGuestMessages, fetchGuestParty, fetchGuestPartyMessages, inviteGuestEventPerformer, inviteGuestToParty, leaveGuestParty, openGuest, proposeGuestPartyTravel, removeGuestSave, requestGuestFriend, respondGuestEventInvitation, saveGuestEventDraft, saveGuestPreview, sendGuestMessage, sendGuestPartyMessage, setGuestMessagePreference, submitGuestReport, unfriendGuest, unblockGuest, voteGuestPartyTravel, type CatalogueTrack, type GuestDirectMessage, type GuestEventInvitation, type GuestEventPerformer, type GuestFriendState, type GuestPartyMessage, type GuestPartyState, type GuestReportReason } from './guest.ts'
+import { acceptGuestFriendRequest, acceptGuestPartyInvitation, addGuestPlaylistTrack, blockGuest, cancelGuestFriendRequest, createGuestParty, createGuestPlaylist, declineGuestFriendRequest, declineGuestPartyInvitation, deleteGuestPlaylist, fetchCatalogue, fetchGuestBlocks, fetchGuestEventPlanning, fetchGuestFriends, fetchGuestMessages, fetchGuestParty, fetchGuestPartyMessages, fetchGuestPlaylists, inviteGuestEventPerformer, inviteGuestToParty, leaveGuestParty, openGuest, proposeGuestPartyTravel, removeGuestPlaylistTrack, removeGuestSave, reorderGuestPlaylistTracks, reorderGuestPlaylists, requestGuestFriend, renameGuestPlaylist, respondGuestEventInvitation, saveGuestEventDraft, saveGuestPreview, sendGuestMessage, sendGuestPartyMessage, setGuestMessagePreference, submitGuestReport, unfriendGuest, unblockGuest, voteGuestPartyTravel, type CatalogueTrack, type GuestDirectMessage, type GuestEventInvitation, type GuestEventPerformer, type GuestFriendState, type GuestPartyMessage, type GuestPartyState, type GuestPlaylist, type GuestReportReason } from './guest.ts'
 import { LIGHTING_PRESETS, getNextLightingMode, type LightingMode } from './lighting.ts'
 import { parseStageTemplate, serializeStageTemplate, type StageLook } from './stageTemplate.ts'
 import { RELEASE_JOURNEY, nextReleaseStation, previousReleaseStation, releaseStation, type ReleaseStationId } from './releaseJourney.ts'
@@ -129,6 +129,16 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
     <div class="quality-choices" id="lighting-choices" style="margin-top:12px"><button data-lighting="day">Daylight ☀</button><button data-lighting="golden">Golden Hour 🌅</button><button data-lighting="night">Night Neon 🌙</button></div>
     <dl class="runtime-metrics"><div><dt>Frame time</dt><dd id="frame-metric">Measuring…</dd></div><div><dt>Rendered scene</dt><dd id="scene-metric">Measuring…</dd></div><div><dt>Reported transfer</dt><dd id="transfer-metric">Measuring…</dd></div><div><dt>Avatar ready</dt><dd id="ready-metric">Measuring…</dd></div><div><dt>Audio before Play</dt><dd>0 B · generated preview</dd></div></dl>
     <p class="metric-note">The local preview is not CDN-compressed. Real-phone FPS, thermals, and network recovery still need device testing.</p>
+  </section>
+  <section id="music-sheet" class="music-sheet" hidden aria-labelledby="music-title">
+    <div class="sheet-grip"></div><button id="music-close" class="icon-close" aria-label="Close My Music">×</button>
+    <small class="eyebrow">PERSONAL COLLECTION · PRIVATE</small><h2 id="music-title">My Music</h2>
+    <p>Keep released songs and your own playlists together. Playlist entries do not grant downloads or extra playback rights.</p>
+    <section class="music-saved-block" aria-labelledby="music-saved-title"><div class="music-section-title"><b id="music-saved-title">Saved songs</b><small id="music-saved-count">0 songs</small></div><div id="music-saved-list"></div></section>
+    <form id="playlist-create-form" class="playlist-create-form"><label for="playlist-name">Make a playlist</label><div><input id="playlist-name" name="name" maxlength="40" required placeholder="e.g. After Hours" autocomplete="off" /><button type="submit" class="green-button">Create</button></div><small>Private to you · up to 20 playlists</small></form>
+    <div class="music-section-title"><b>Your playlists</b><small>0–100 released songs each</small></div>
+    <div id="music-playlist-list" class="music-playlist-list" aria-live="polite"></div>
+    <div class="music-sheet-footer"><small id="music-status" role="status" aria-live="polite">Your music follows your player identity.</small><button id="music-device-settings" type="button">Display & data settings</button></div>
   </section>
   <section id="beat-sheet" class="beat-sheet" hidden aria-label="City Studio beat desk">
     <button id="beat-close" class="icon-close" aria-label="Close beat desk">×</button>
@@ -1620,6 +1630,8 @@ let catalogue: CatalogueTrack[] = [
 ]
 let currentTrackIndex = 0
 const savedTrackIds = new Set<string>()
+let musicPlaylists: GuestPlaylist[] = []
+let editingPlaylistId: string | null = null
 try { const saved = JSON.parse(localStorage.getItem('scene-saved-tracks') || '[]'); if (Array.isArray(saved)) saved.forEach(id => savedTrackIds.add(id)) } catch { /* ignore */ }
 if (localStorage.getItem('scene-saved-square-sketch') === '1') savedTrackIds.add('square-sketch')
 
@@ -1642,7 +1654,7 @@ function applyAppearance() {
   document.querySelectorAll<HTMLButtonElement>('.swatch-row[data-option="trousers"] button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.value === trousersColour)))
 }
 
-void openGuest().then(async guest => {
+const guestSessionTask = openGuest().then(async guest => {
   guest.saves.forEach(id => savedTrackIds.add(id))
   for (const id of savedTrackIds) {
     if (!guest.saves.includes(id)) await saveGuestPreview(id).catch(() => {})
@@ -1657,12 +1669,14 @@ void openGuest().then(async guest => {
   partyState = await fetchGuestParty().catch(() => partyState)
   renderPresence(connectedPlayers, presenceConnected, 0)
   renderMiniPlayer()
+  if (!$<HTMLElement>('music-sheet').hidden) renderMusicCollection()
 }).catch(() => { /* offline guests retain the local demo save */ })
 
 void fetchCatalogue().then(tracks => {
   if (tracks.length) {
     catalogue = tracks
     renderMiniPlayer()
+    if (!$<HTMLElement>('music-sheet').hidden) renderMusicCollection()
   }
 }).catch(() => {})
 
@@ -1680,6 +1694,7 @@ function hideSheets(keepMasterAudio: boolean) {
   $<HTMLElement>('desk-sheet').hidden = true
   $<HTMLElement>('action-sheet').hidden = true
   $<HTMLElement>('display-sheet').hidden = true
+  $<HTMLElement>('music-sheet').hidden = true
   $<HTMLElement>('beat-sheet').hidden = true
   $<HTMLElement>('release-sheet').hidden = true
   $<HTMLElement>('map-sheet').hidden = true
@@ -1869,6 +1884,7 @@ async function toggleSaveCurrentTrack() {
     await saveGuestPreview(track.id).catch(() => toast('Saved locally; server sync unavailable'))
   }
   renderMiniPlayer()
+  if (!$<HTMLElement>('music-sheet').hidden) renderMusicCollection()
 }
 
 function renderMiniPlayer() {
@@ -1882,6 +1898,68 @@ function renderMiniPlayer() {
   $<HTMLButtonElement>('mini-save').textContent = isSaved ? '♥' : '♡'
   $<HTMLButtonElement>('mini-save').setAttribute('aria-label', isSaved ? `Remove ${track.title} from saves` : `Save ${track.title}`)
   $<HTMLButtonElement>('mini-save').disabled = false
+}
+
+function setMusicStatus(message: string) {
+  $<HTMLElement>('music-status').textContent = message
+}
+
+function renderMusicCollection() {
+  const saved = catalogue.filter(track => track.released && savedTrackIds.has(track.id))
+  $<HTMLElement>('music-saved-count').textContent = `${saved.length} ${saved.length === 1 ? 'song' : 'songs'}`
+  $<HTMLElement>('music-saved-list').innerHTML = saved.length
+    ? `<div class="music-saved-list">${saved.map(track => `<div class="music-saved-row"><span class="music-record-icon">♫</span><span class="music-track-copy"><b>${escapeHtml(track.title)}</b><small>${escapeHtml(track.artist)}</small></span><button type="button" data-music-action="unsave" data-track-id="${escapeHtml(track.id)}" aria-label="Remove ${escapeHtml(track.title)} from saved songs">×</button></div>`).join('')}</div>`
+    : '<p class="music-empty-saved">Save a released song from its player and it will be waiting here.</p>'
+
+  const sorted = [...musicPlaylists].sort((a, b) => a.position - b.position)
+  musicPlaylists = sorted
+  $<HTMLInputElement>('playlist-name').disabled = sorted.length >= 20
+  $<HTMLButtonElement>('playlist-create-form').querySelector('button')!.disabled = sorted.length >= 20
+  $<HTMLElement>('music-playlist-list').innerHTML = sorted.length
+    ? sorted.map((playlist, playlistIndex) => {
+      const id = escapeHtml(playlist.id)
+      const title = escapeHtml(playlist.name)
+      const tracks = playlist.tracks.map((track, index) => `<div class="playlist-track-row"><span class="playlist-track-index">${String(index + 1).padStart(2, '0')}</span><span class="music-track-copy"><b>${escapeHtml(track.title)}</b><small>${escapeHtml(track.artist)}</small></span><div class="playlist-track-controls"><button type="button" data-music-action="track-up" data-playlist-id="${id}" data-track-index="${index}" aria-label="Move ${escapeHtml(track.title)} up" ${index === 0 ? 'disabled' : ''}>↑</button><button type="button" data-music-action="track-down" data-playlist-id="${id}" data-track-index="${index}" aria-label="Move ${escapeHtml(track.title)} down" ${index === playlist.tracks.length - 1 ? 'disabled' : ''}>↓</button><button type="button" data-music-action="remove-track" data-playlist-id="${id}" data-track-id="${escapeHtml(track.id)}" aria-label="Remove ${escapeHtml(track.title)}">×</button></div></div>`).join('')
+      const choices = catalogue.filter(track => track.released && !playlist.tracks.some(savedTrack => savedTrack.id === track.id))
+      const edit = editingPlaylistId === playlist.id
+        ? `<form class="playlist-rename-form" data-playlist-rename="${id}"><label for="playlist-rename-${id}">Playlist name</label><div><input id="playlist-rename-${id}" name="name" maxlength="40" required value="${title}" /><button type="submit">Save</button><button type="button" data-music-action="edit-playlist" data-playlist-id="${id}">Cancel</button></div></form>`
+        : `<div class="playlist-card-title"><div><h3>${title}</h3><small>${playlist.tracks.length} / 100 songs · Private</small></div><div class="playlist-card-controls"><button type="button" data-music-action="playlist-up" data-playlist-id="${id}" aria-label="Move ${title} up" ${playlistIndex === 0 ? 'disabled' : ''}>↑</button><button type="button" data-music-action="playlist-down" data-playlist-id="${id}" aria-label="Move ${title} down" ${playlistIndex === sorted.length - 1 ? 'disabled' : ''}>↓</button><button type="button" data-music-action="edit-playlist" data-playlist-id="${id}">Rename</button><button type="button" data-music-action="delete-playlist" data-playlist-id="${id}">Delete</button></div></div>`
+      const add = `<form class="playlist-add-form" data-playlist-add="${id}"><select id="playlist-add-${id}" name="trackId" aria-label="Add a released song to ${title}" ${choices.length ? '' : 'disabled'}><option value="">${choices.length ? 'Add a released song…' : 'All available songs added'}</option>${choices.map(track => `<option value="${escapeHtml(track.id)}">${escapeHtml(track.title)} · ${escapeHtml(track.artist)}</option>`).join('')}</select><button type="submit" ${choices.length ? '' : 'disabled'}>Add song</button></form>`
+      return `<article class="music-playlist-card">${edit}<div class="playlist-card-body">${tracks || '<p class="playlist-empty">Your set starts here. Add a released song below.</p>'}${add}</div></article>`
+    }).join('')
+    : '<div class="music-empty-playlists"><span>♫</span><b>Your first set is yours to shape.</b><small>Create a playlist, then add songs released in THE SCENE.</small></div>'
+}
+
+async function openMusicCollection() {
+  closeSheets()
+  $<HTMLElement>('venue-card').hidden = true
+  $<HTMLElement>('music-sheet').hidden = false
+  sheet = 'action'
+  editingPlaylistId = null
+  renderMusicCollection()
+  setMusicStatus('Loading your private collection…')
+  try {
+    if (!SOLO_PREVIEW) await guestSessionTask
+    musicPlaylists = await fetchGuestPlaylists()
+    renderMusicCollection()
+    setMusicStatus(SOLO_PREVIEW ? 'Private to this device · sharing is not enabled.' : 'Private to your player identity · sharing is not enabled.')
+  } catch (error) {
+    setMusicStatus(error instanceof Error ? error.message : 'Your playlists could not load. Try again when connected.')
+  }
+}
+
+async function commitMusicChange(change: Promise<GuestPlaylist[]>, successMessage: string) {
+  setMusicStatus('Saving your collection…')
+  try {
+    musicPlaylists = await change
+    editingPlaylistId = null
+    renderMusicCollection()
+    setMusicStatus(successMessage)
+    return true
+  } catch (error) {
+    setMusicStatus(error instanceof Error ? error.message : 'Could not save that change. Try again.')
+    return false
+  }
 }
 
 function beatVoice(lane: number) {
@@ -2656,7 +2734,79 @@ $<HTMLButtonElement>('interact').onclick = interact
 $<HTMLButtonElement>('map-button').onclick = openMap
 $<HTMLButtonElement>('nav-map').onclick = openMap
 $<HTMLButtonElement>('map-close').onclick = closeSheets
-$<HTMLButtonElement>('nav-phone').onclick = () => { closeSheets(); $<HTMLElement>('venue-card').hidden = true; $<HTMLElement>('display-sheet').hidden = false; sheet = 'action'; updateMetrics() }
+$<HTMLButtonElement>('nav-phone').onclick = () => { void openMusicCollection() }
+$<HTMLButtonElement>('music-close').onclick = closeSheets
+$<HTMLButtonElement>('music-device-settings').onclick = () => { closeSheets(); $<HTMLElement>('display-sheet').hidden = false; sheet = 'action'; updateMetrics() }
+$<HTMLElement>('music-sheet').addEventListener('submit', async event => {
+  const form = event.target
+  if (!(form instanceof HTMLFormElement)) return
+  event.preventDefault()
+  if (form.id === 'playlist-create-form') {
+    const input = form.elements.namedItem('name') as HTMLInputElement
+    if (await commitMusicChange(createGuestPlaylist(input.value), 'Playlist saved privately. You can add released songs below.')) input.value = ''
+    return
+  }
+  const playlistId = form.dataset.playlistRename || form.dataset.playlistAdd
+  if (!playlistId) return
+  if (form.dataset.playlistRename) {
+    const input = form.elements.namedItem('name') as HTMLInputElement
+    await commitMusicChange(renameGuestPlaylist(playlistId, input.value), 'Playlist name saved.')
+    return
+  }
+  const trackId = (form.elements.namedItem('trackId') as HTMLSelectElement).value
+  if (!trackId) { setMusicStatus('Choose a released song first.'); return }
+  await commitMusicChange(addGuestPlaylistTrack(playlistId, trackId), 'Released song added to your private playlist.')
+})
+$<HTMLElement>('music-sheet').addEventListener('click', async event => {
+  const target = event.target
+  if (!(target instanceof HTMLElement)) return
+  const button = target.closest<HTMLButtonElement>('[data-music-action]')
+  if (!button) return
+  const action = button.dataset.musicAction
+  const playlistId = button.dataset.playlistId || ''
+  if (action === 'unsave') {
+    const trackId = button.dataset.trackId || ''
+    const track = catalogue.find(item => item.id === trackId)
+    savedTrackIds.delete(trackId)
+    try { localStorage.setItem('scene-saved-tracks', JSON.stringify([...savedTrackIds])) } catch { /* private local save may be unavailable */ }
+    renderMiniPlayer(); renderMusicCollection()
+    try { await removeGuestSave(trackId); setMusicStatus(track ? `${track.title} removed from saved songs.` : 'Saved song removed.') }
+    catch { setMusicStatus('Removed on this device; server sync is unavailable.') }
+    return
+  }
+  if (action === 'edit-playlist') {
+    editingPlaylistId = editingPlaylistId === playlistId ? null : playlistId
+    renderMusicCollection()
+    return
+  }
+  if (action === 'delete-playlist') {
+    await commitMusicChange(deleteGuestPlaylist(playlistId), 'Playlist deleted.')
+    return
+  }
+  if (action === 'playlist-up' || action === 'playlist-down') {
+    const ordered = [...musicPlaylists].sort((a, b) => a.position - b.position)
+    const index = ordered.findIndex(item => item.id === playlistId)
+    const destination = index + (action === 'playlist-up' ? -1 : 1)
+    if (index < 0 || destination < 0 || destination >= ordered.length) return
+    const [moved] = ordered.splice(index, 1); ordered.splice(destination, 0, moved)
+    await commitMusicChange(reorderGuestPlaylists(ordered.map(item => item.id)), 'Playlist order saved privately.')
+    return
+  }
+  const playlist = musicPlaylists.find(item => item.id === playlistId)
+  if (!playlist) return
+  if (action === 'remove-track') {
+    await commitMusicChange(removeGuestPlaylistTrack(playlistId, button.dataset.trackId || ''), 'Song removed from your private playlist.')
+    return
+  }
+  if (action === 'track-up' || action === 'track-down') {
+    const index = Number(button.dataset.trackIndex)
+    const destination = index + (action === 'track-up' ? -1 : 1)
+    if (!Number.isInteger(index) || destination < 0 || destination >= playlist.tracks.length) return
+    const ids = playlist.tracks.map(track => track.id)
+    ;[ids[index], ids[destination]] = [ids[destination], ids[index]]
+    await commitMusicChange(reorderGuestPlaylistTracks(playlistId, ids), 'Song order saved privately.')
+  }
+})
 $<HTMLButtonElement>('beat-close').onclick = closeSheets
 $<HTMLButtonElement>('beat-play').onclick = toggleBeat
 document.querySelectorAll<HTMLButtonElement>('[data-section]').forEach(button => button.onclick = () => { beatSection = button.dataset.section as 'a' | 'b'; drawBeat() })

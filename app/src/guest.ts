@@ -1,4 +1,5 @@
 export type CatalogueTrack = { id: string; title: string; artist: string; genre: string; duration: number; released: boolean }
+export type GuestPlaylist = { id: string; name: string; visibility: 'private'; position: number; createdAt: string; updatedAt: string; tracks: CatalogueTrack[] }
 type Guest = { id: string; token: string; saves: string[] }
 export type GuestReportReason = 'harassment' | 'spam' | 'inappropriate_name' | 'other'
 export type GuestReportReceipt = { id: string; status: 'received'; createdAt: string }
@@ -45,6 +46,148 @@ const PREVIEW_CATALOGUE: CatalogueTrack[] = [
   { id: 'square-sketch', title: 'Square Sketch', artist: 'THE SCENE Originals', genre: 'Afrobeats / Demo', duration: 30, released: true },
   { id: 'lagos-golden-hour', title: 'Golden Hour Jam', artist: 'Victoria Island Collective', genre: 'Afro-fusion', duration: 30, released: true },
 ]
+const LOCAL_PLAYLIST_KEY = 'scene-private-playlists'
+const PLAYLIST_NAME_LIMIT = 40
+const PLAYLIST_LIMIT = 20
+const PLAYLIST_TRACK_LIMIT = 100
+
+function localPlaylists(): GuestPlaylist[] {
+  try {
+    const saved = JSON.parse(localStorage.getItem(LOCAL_PLAYLIST_KEY) || '[]')
+    if (!Array.isArray(saved)) return []
+    return saved.filter(item => item && typeof item.id === 'string' && typeof item.name === 'string').slice(0, PLAYLIST_LIMIT).map((item, position) => ({
+      id: item.id,
+      name: item.name.trim().slice(0, PLAYLIST_NAME_LIMIT) || 'My playlist',
+      visibility: 'private',
+      position,
+      createdAt: typeof item.createdAt === 'string' ? item.createdAt : new Date().toISOString(),
+      updatedAt: typeof item.updatedAt === 'string' ? item.updatedAt : new Date().toISOString(),
+      tracks: (Array.isArray(item.tracks) ? item.tracks : []).slice(0, PLAYLIST_TRACK_LIMIT).map((track: CatalogueTrack) => PREVIEW_CATALOGUE.find(available => available.id === track?.id && available.released)).filter((track: CatalogueTrack | undefined): track is CatalogueTrack => !!track),
+    }))
+  } catch { return [] }
+}
+
+function saveLocalPlaylists(playlists: GuestPlaylist[]) {
+  try { localStorage.setItem(LOCAL_PLAYLIST_KEY, JSON.stringify(playlists)) } catch { throw new Error('Could not save this private collection on the device') }
+}
+
+function requirePlaylistName(value: string) {
+  const name = value.trim()
+  if (!name || name.length > PLAYLIST_NAME_LIMIT) throw new Error('Playlist name must contain 1–40 characters')
+  return name
+}
+
+function reorderIds<T extends { id: string }>(items: T[], ids: string[]): T[] {
+  if (!Array.isArray(ids) || ids.length !== items.length || new Set(ids).size !== items.length || items.some(item => !ids.includes(item.id))) throw new Error('Order must include every item once')
+  return ids.map(id => items.find(item => item.id === id)!)
+}
+
+async function playlistRequest(path: string, init: RequestInit = {}): Promise<any> {
+  const response = await guestRequest(path, init)
+  const data = await response.json().catch(() => ({})) as { error?: string }
+  if (!response.ok) throw new Error(data.error || 'Playlist action unavailable')
+  return data
+}
+
+export async function fetchGuestPlaylists(): Promise<GuestPlaylist[]> {
+  if (SOLO_PREVIEW) return localPlaylists()
+  const data = await playlistRequest('/api/playlists') as { playlists: GuestPlaylist[] }
+  return data.playlists || []
+}
+
+export async function createGuestPlaylist(value: string): Promise<GuestPlaylist[]> {
+  const name = requirePlaylistName(value)
+  if (SOLO_PREVIEW) {
+    const playlists = localPlaylists()
+    if (playlists.length >= PLAYLIST_LIMIT) throw new Error('You can create up to 20 playlists')
+    const now = new Date().toISOString()
+    playlists.push({ id: crypto.randomUUID(), name, visibility: 'private', position: playlists.length, createdAt: now, updatedAt: now, tracks: [] })
+    saveLocalPlaylists(playlists)
+    return playlists
+  }
+  await playlistRequest('/api/playlists', { method: 'POST', body: JSON.stringify({ name }) })
+  return fetchGuestPlaylists()
+}
+
+export async function renameGuestPlaylist(id: string, value: string): Promise<GuestPlaylist[]> {
+  const name = requirePlaylistName(value)
+  if (SOLO_PREVIEW) {
+    const playlists = localPlaylists()
+    const playlist = playlists.find(item => item.id === id)
+    if (!playlist) throw new Error('Playlist not found')
+    playlist.name = name; playlist.updatedAt = new Date().toISOString(); saveLocalPlaylists(playlists)
+    return playlists
+  }
+  await playlistRequest(`/api/playlists/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ name }) })
+  return fetchGuestPlaylists()
+}
+
+export async function deleteGuestPlaylist(id: string): Promise<GuestPlaylist[]> {
+  if (SOLO_PREVIEW) {
+    const playlists = localPlaylists().filter(item => item.id !== id)
+    saveLocalPlaylists(playlists)
+    return playlists
+  }
+  await playlistRequest(`/api/playlists/${encodeURIComponent(id)}`, { method: 'DELETE' })
+  return fetchGuestPlaylists()
+}
+
+export async function reorderGuestPlaylists(ids: string[]): Promise<GuestPlaylist[]> {
+  if (SOLO_PREVIEW) {
+    const playlists = reorderIds(localPlaylists(), ids).map((item, position) => ({ ...item, position }))
+    saveLocalPlaylists(playlists)
+    return playlists
+  }
+  await playlistRequest('/api/playlists/order', { method: 'PUT', body: JSON.stringify({ playlistIds: ids }) })
+  return fetchGuestPlaylists()
+}
+
+export async function addGuestPlaylistTrack(id: string, trackId: string): Promise<GuestPlaylist[]> {
+  if (SOLO_PREVIEW) {
+    const playlists = localPlaylists()
+    const playlist = playlists.find(item => item.id === id)
+    const track = PREVIEW_CATALOGUE.find(item => item.id === trackId && item.released)
+    if (!playlist) throw new Error('Playlist not found')
+    if (!track) throw new Error('Released song not found')
+    if (!playlist.tracks.some(item => item.id === trackId)) {
+      if (playlist.tracks.length >= PLAYLIST_TRACK_LIMIT) throw new Error('Playlist is full')
+      playlist.tracks.push(track)
+      playlist.updatedAt = new Date().toISOString()
+    }
+    saveLocalPlaylists(playlists)
+    return playlists
+  }
+  await playlistRequest(`/api/playlists/${encodeURIComponent(id)}/tracks`, { method: 'POST', body: JSON.stringify({ trackId }) })
+  return fetchGuestPlaylists()
+}
+
+export async function removeGuestPlaylistTrack(id: string, trackId: string): Promise<GuestPlaylist[]> {
+  if (SOLO_PREVIEW) {
+    const playlists = localPlaylists()
+    const playlist = playlists.find(item => item.id === id)
+    if (!playlist) throw new Error('Playlist not found')
+    playlist.tracks = playlist.tracks.filter(item => item.id !== trackId)
+    playlist.updatedAt = new Date().toISOString()
+    saveLocalPlaylists(playlists)
+    return playlists
+  }
+  await playlistRequest(`/api/playlists/${encodeURIComponent(id)}/tracks/${encodeURIComponent(trackId)}`, { method: 'DELETE' })
+  return fetchGuestPlaylists()
+}
+
+export async function reorderGuestPlaylistTracks(id: string, trackIds: string[]): Promise<GuestPlaylist[]> {
+  if (SOLO_PREVIEW) {
+    const playlists = localPlaylists()
+    const playlist = playlists.find(item => item.id === id)
+    if (!playlist) throw new Error('Playlist not found')
+    playlist.tracks = reorderIds(playlist.tracks, trackIds)
+    playlist.updatedAt = new Date().toISOString()
+    saveLocalPlaylists(playlists)
+    return playlists
+  }
+  await playlistRequest(`/api/playlists/${encodeURIComponent(id)}/tracks/order`, { method: 'PUT', body: JSON.stringify({ trackIds }) })
+  return fetchGuestPlaylists()
+}
 
 function localSaves() {
   try {

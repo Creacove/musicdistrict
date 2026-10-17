@@ -120,6 +120,84 @@ test('guest save is authenticated, idempotent and resumes from SQLite', async ()
   } finally { server.close(); store.close() }
 })
 
+test('private playlists are guest-owned, bounded, reorderable, and accept released songs only', async () => {
+  const store = createGuestStore(':memory:')
+  const api = guestApi(store)
+  const server = createServer((req, res) => api(req, res, () => { res.statusCode = 404; res.end() }))
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  const base = `http://127.0.0.1:${server.address().port}`
+  try {
+    assert.equal((await fetch(`${base}/api/playlists`)).status, 401)
+    const owner = await (await fetch(`${base}/api/guest`, { method: 'POST' })).json()
+    const other = await (await fetch(`${base}/api/guest`, { method: 'POST' })).json()
+    const auth = { Authorization: `Bearer ${owner.token}`, 'Content-Type': 'application/json' }
+    const otherAuth = { Authorization: `Bearer ${other.token}`, 'Content-Type': 'application/json' }
+
+    assert.equal((await fetch(`${base}/api/playlists`, { method: 'POST', headers: auth, body: JSON.stringify({ name: '   ' }) })).status, 400)
+    assert.equal((await fetch(`${base}/api/playlists`, { method: 'POST', headers: auth, body: JSON.stringify({ name: 'x'.repeat(41) }) })).status, 400)
+    const create = await fetch(`${base}/api/playlists`, { method: 'POST', headers: auth, body: JSON.stringify({ name: '   Night Drive   ', visibility: 'public' }) })
+    assert.equal(create.status, 201)
+    const { playlist } = await create.json()
+    assert.equal(playlist.name, 'Night Drive')
+    assert.equal(playlist.visibility, 'private', 'unsupported visibility input must not expose a list')
+    assert.deepEqual(playlist.tracks, [])
+    assert.deepEqual((await (await fetch(`${base}/api/playlists`, { headers: otherAuth })).json()).playlists, [])
+    assert.equal((await fetch(`${base}/api/playlists/${playlist.id}`, { method: 'PATCH', headers: otherAuth, body: JSON.stringify({ name: 'Stolen' }) })).status, 404)
+
+    const second = await (await fetch(`${base}/api/playlists`, { method: 'POST', headers: auth, body: JSON.stringify({ name: 'Warm Up' }) })).json()
+    const order = await fetch(`${base}/api/playlists/order`, { method: 'PUT', headers: auth, body: JSON.stringify({ playlistIds: [second.playlist.id, playlist.id] }) })
+    assert.equal(order.status, 200)
+    assert.deepEqual((await order.json()).playlists.map(item => item.id), [second.playlist.id, playlist.id])
+    assert.equal((await fetch(`${base}/api/playlists/order`, { method: 'PUT', headers: auth, body: JSON.stringify({ playlistIds: [playlist.id] }) })).status, 400)
+
+    const songs = `${base}/api/playlists/${playlist.id}/tracks`
+    assert.equal((await fetch(songs, { method: 'POST', headers: auth, body: JSON.stringify({ trackId: 'unreleased-demo' }) })).status, 404)
+    assert.equal((await fetch(songs, { method: 'POST', headers: auth, body: JSON.stringify({ trackId: 'square-sketch' }) })).status, 201)
+    assert.equal((await fetch(songs, { method: 'POST', headers: auth, body: JSON.stringify({ trackId: 'square-sketch' }) })).status, 200, 'adding the same song twice is idempotent')
+    assert.equal((await fetch(songs, { method: 'POST', headers: auth, body: JSON.stringify({ trackId: 'lagos-golden-hour' }) })).status, 201)
+    assert.equal((await fetch(`${songs}/order`, { method: 'PUT', headers: auth, body: JSON.stringify({ trackIds: ['lagos-golden-hour', 'square-sketch'] }) })).status, 200)
+    assert.deepEqual((await (await fetch(`${base}/api/playlists`, { headers: auth })).json()).playlists[1].tracks.map(track => track.id), ['lagos-golden-hour', 'square-sketch'])
+    assert.equal((await fetch(`${songs}/order`, { method: 'PUT', headers: auth, body: JSON.stringify({ trackIds: ['square-sketch'] }) })).status, 400)
+
+    const rename = await fetch(`${base}/api/playlists/${playlist.id}`, { method: 'PATCH', headers: auth, body: JSON.stringify({ name: 'Evening Set' }) })
+    assert.equal(rename.status, 200)
+    assert.equal((await rename.json()).playlist.name, 'Evening Set')
+    assert.equal((await fetch(`${songs}/square-sketch`, { method: 'DELETE', headers: auth })).status, 200)
+    assert.deepEqual((await (await fetch(`${base}/api/playlists`, { headers: auth })).json()).playlists[1].tracks.map(track => track.id), ['lagos-golden-hour'])
+    assert.equal((await fetch(`${base}/api/playlists/${second.playlist.id}`, { method: 'DELETE', headers: auth })).status, 200)
+    const late = await (await fetch(`${base}/api/playlists`, { method: 'POST', headers: auth, body: JSON.stringify({ name: 'Late set' }) })).json()
+    const afterDelete = (await (await fetch(`${base}/api/playlists`, { headers: auth })).json()).playlists
+    assert.deepEqual(afterDelete.map(item => item.id), [playlist.id, late.playlist.id])
+    assert.deepEqual(afterDelete.map(item => item.position), [0, 1])
+
+    for (let index = 0; index < 18; index++) {
+      const response = await fetch(`${base}/api/playlists`, { method: 'POST', headers: auth, body: JSON.stringify({ name: `Set ${index}` }) })
+      assert.equal(response.status, 201)
+    }
+    assert.equal((await fetch(`${base}/api/playlists`, { method: 'POST', headers: auth, body: JSON.stringify({ name: 'Twenty one' }) })).status, 409)
+    assert.equal((await fetch(`${base}/api/playlists`, { headers: otherAuth })).status, 200)
+  } finally { server.close(); store.close() }
+})
+
+test('private playlists follow the same player across a SQLite restart', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'scene-playlist-'))
+  const path = join(dir, 'scene.sqlite')
+  try {
+    const first = createGuestStore(path)
+    const guest = first.create()
+    const { playlist } = first.createPlaylist(guest.id, { name: 'Lagos Night Set' })
+    assert.ok(playlist)
+    assert.equal(first.addPlaylistTrack(guest.id, playlist.id, 'square-sketch').playlist.tracks.length, 1)
+    first.close()
+    const reopened = createGuestStore(path)
+    assert.equal(reopened.resume(guest.token), guest.id)
+    assert.deepEqual(reopened.playlists(guest.id).map(item => ({ name: item.name, visibility: item.visibility, tracks: item.tracks.map(track => track.id) })), [
+      { name: 'Lagos Night Set', visibility: 'private', tracks: ['square-sketch'] },
+    ])
+    reopened.close()
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
 test('reports require a guest, stay private, and are rate limited', async () => {
   const store = createGuestStore(':memory:')
   const api = guestApi(store)

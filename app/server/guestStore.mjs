@@ -21,6 +21,15 @@ const EVENT_DRAFT_FORMATS = new Set(['OPEN_MIC', 'LISTENING_SESSION'])
 const EVENT_DRAFT_MAX_INVITES = 5
 const PARTY_INVITATION_TTL_MS = 10 * 60 * 1000
 const PARTY_IDLE_TTL_MS = 30 * 60 * 1000
+const PLAYLIST_MAX_COUNT = 20
+const PLAYLIST_MAX_TRACKS = 100
+const PLAYLIST_NAME_MAX_LENGTH = 40
+
+function normalizedPlaylistName(value) {
+  if (typeof value !== 'string') return null
+  const name = value.trim()
+  return name.length > 0 && name.length <= PLAYLIST_NAME_MAX_LENGTH ? name : null
+}
 
 export function createGuestStore(path) {
   if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true })
@@ -28,6 +37,23 @@ export function createGuestStore(path) {
   db.exec(`PRAGMA foreign_keys = ON;
     CREATE TABLE IF NOT EXISTS guests (id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS saved_items (guest_id TEXT NOT NULL REFERENCES guests(id), item_id TEXT NOT NULL, saved_at TEXT NOT NULL, PRIMARY KEY (guest_id, item_id));
+    CREATE TABLE IF NOT EXISTS personal_playlists (
+      id TEXT PRIMARY KEY,
+      guest_id TEXT NOT NULL REFERENCES guests(id) ON DELETE CASCADE,
+      name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 40),
+      visibility TEXT NOT NULL DEFAULT 'private' CHECK (visibility = 'private'),
+      position INTEGER NOT NULL CHECK (position >= 0),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS personal_playlists_owner_order ON personal_playlists (guest_id, position, created_at);
+    CREATE TABLE IF NOT EXISTS personal_playlist_tracks (
+      playlist_id TEXT NOT NULL REFERENCES personal_playlists(id) ON DELETE CASCADE,
+      track_id TEXT NOT NULL,
+      position INTEGER NOT NULL CHECK (position >= 0),
+      added_at TEXT NOT NULL,
+      PRIMARY KEY (playlist_id, track_id)
+    );
     CREATE TABLE IF NOT EXISTS event_drafts (
       guest_id TEXT NOT NULL REFERENCES guests(id),
       venue_id TEXT NOT NULL CHECK (venue_id = 'palm-room'),
@@ -168,6 +194,19 @@ export function createGuestStore(path) {
   const save = db.prepare('INSERT OR IGNORE INTO saved_items (guest_id, item_id, saved_at) VALUES (?, ?, ?)')
   const list = db.prepare('SELECT item_id FROM saved_items WHERE guest_id = ? ORDER BY saved_at')
   const remove = db.prepare('DELETE FROM saved_items WHERE guest_id = ? AND item_id = ?')
+  const playlistList = db.prepare('SELECT id, guest_id, name, visibility, position, created_at, updated_at FROM personal_playlists WHERE guest_id = ? ORDER BY position, created_at, id')
+  const playlistById = db.prepare('SELECT id, guest_id, name, visibility, position, created_at, updated_at FROM personal_playlists WHERE guest_id = ? AND id = ?')
+  const playlistCount = db.prepare('SELECT count(*) AS count FROM personal_playlists WHERE guest_id = ?')
+  const playlistInsert = db.prepare("INSERT INTO personal_playlists (id, guest_id, name, visibility, position, created_at, updated_at) VALUES (?, ?, ?, 'private', ?, ?, ?)")
+  const playlistRename = db.prepare('UPDATE personal_playlists SET name = ?, updated_at = ? WHERE guest_id = ? AND id = ?')
+  const playlistDelete = db.prepare('DELETE FROM personal_playlists WHERE guest_id = ? AND id = ?')
+  const playlistPosition = db.prepare('UPDATE personal_playlists SET position = ?, updated_at = ? WHERE guest_id = ? AND id = ?')
+  const playlistTrackList = db.prepare('SELECT track_id, position FROM personal_playlist_tracks WHERE playlist_id = ? ORDER BY position, added_at, track_id')
+  const playlistTrackById = db.prepare('SELECT track_id FROM personal_playlist_tracks WHERE playlist_id = ? AND track_id = ?')
+  const playlistTrackCount = db.prepare('SELECT count(*) AS count FROM personal_playlist_tracks WHERE playlist_id = ?')
+  const playlistTrackInsert = db.prepare('INSERT OR IGNORE INTO personal_playlist_tracks (playlist_id, track_id, position, added_at) VALUES (?, ?, ?, ?)')
+  const playlistTrackDelete = db.prepare('DELETE FROM personal_playlist_tracks WHERE playlist_id = ? AND track_id = ?')
+  const playlistTrackPosition = db.prepare('UPDATE personal_playlist_tracks SET position = ? WHERE playlist_id = ? AND track_id = ?')
   const eventDraftByGuest = db.prepare('SELECT venue_id, title, format, planned_start, status, updated_at FROM event_drafts WHERE guest_id = ? AND venue_id = ?')
   const upsertEventDraft = db.prepare(`INSERT INTO event_drafts (guest_id, venue_id, title, format, planned_start, status, updated_at)
     VALUES (?, 'palm-room', ?, ?, ?, 'DRAFT', ?)
@@ -417,6 +456,20 @@ export function createGuestStore(path) {
   }
   const notifyFriendEvent = event => { for (const listener of friendEventListeners) { try { listener(event) } catch { /* notification failures do not undo a stored relationship */ } } }
   const notifyMessageEvent = event => { for (const listener of messageEventListeners) { try { listener(event) } catch { /* notification failures do not undo a stored message */ } } }
+  const playlistDto = row => ({
+    id: row.id,
+    name: row.name,
+    visibility: 'private',
+    position: row.position,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    tracks: playlistTrackList.all(row.id).map(item => CATALOGUE.find(track => track.id === item.track_id)).filter(Boolean),
+  })
+  const playlistsFor = guestId => playlistList.all(guestId).map(playlistDto)
+  const playlistFor = (guestId, playlistId) => {
+    const row = playlistById.get(guestId, playlistId)
+    return row ? playlistDto(row) : null
+  }
   return {
     resume(token) { return typeof token === 'string' && /^[a-f0-9]{64}$/.test(token) ? find.get(hash(token))?.id ?? null : null },
     create() { const id = randomUUID(), token = randomBytes(32).toString('hex'); create.run(id, hash(token), new Date().toISOString()); return { id, token } },
@@ -429,6 +482,60 @@ export function createGuestStore(path) {
     removeSave(id, item) {
       remove.run(id, item)
       return true
+    },
+    playlists(id) { return playlistsFor(id) },
+    createPlaylist(id, input) {
+      const name = normalizedPlaylistName(input?.name)
+      if (!name) return { error: 'invalid' }
+      if (playlistCount.get(id).count >= PLAYLIST_MAX_COUNT) return { error: 'limit' }
+      const now = new Date().toISOString()
+      const playlistId = randomUUID()
+      playlistInsert.run(playlistId, id, name, playlistCount.get(id).count, now, now)
+      return { playlist: playlistFor(id, playlistId) }
+    },
+    renamePlaylist(id, playlistId, input) {
+      const name = normalizedPlaylistName(input?.name)
+      if (!name) return { error: 'invalid' }
+      if (!playlistById.get(id, playlistId)) return { error: 'not_found' }
+      playlistRename.run(name, new Date().toISOString(), id, playlistId)
+      return { playlist: playlistFor(id, playlistId) }
+    },
+    deletePlaylist(id, playlistId) {
+      const result = playlistDelete.run(id, playlistId)
+      if (!result.changes) return { error: 'not_found' }
+      const now = new Date().toISOString()
+      playlistList.all(id).forEach((playlist, position) => playlistPosition.run(position, now, id, playlist.id))
+      return { ok: true }
+    },
+    reorderPlaylists(id, playlistIds) {
+      const current = playlistList.all(id).map(row => row.id)
+      if (!Array.isArray(playlistIds) || playlistIds.length !== current.length || new Set(playlistIds).size !== playlistIds.length || playlistIds.some(value => typeof value !== 'string') || current.some(value => !playlistIds.includes(value))) return { error: 'invalid' }
+      const now = new Date().toISOString()
+      playlistIds.forEach((playlistId, position) => playlistPosition.run(position, now, id, playlistId))
+      return { playlists: playlistsFor(id) }
+    },
+    addPlaylistTrack(id, playlistId, trackId) {
+      const playlist = playlistById.get(id, playlistId)
+      if (!playlist) return { error: 'not_found' }
+      if (typeof trackId !== 'string' || !CATALOGUE.some(track => track.id === trackId && track.released)) return { error: 'track_not_found' }
+      if (playlistTrackById.get(playlistId, trackId)) return { playlist: playlistFor(id, playlistId), duplicate: true }
+      if (playlistTrackCount.get(playlistId).count >= PLAYLIST_MAX_TRACKS) return { error: 'full' }
+      playlistTrackInsert.run(playlistId, trackId, playlistTrackCount.get(playlistId).count, new Date().toISOString())
+      return { playlist: playlistFor(id, playlistId), duplicate: false }
+    },
+    removePlaylistTrack(id, playlistId, trackId) {
+      if (!playlistById.get(id, playlistId)) return { error: 'not_found' }
+      playlistTrackDelete.run(playlistId, trackId)
+      const remaining = playlistTrackList.all(playlistId)
+      remaining.forEach((item, position) => playlistTrackPosition.run(position, playlistId, item.track_id))
+      return { playlist: playlistFor(id, playlistId) }
+    },
+    reorderPlaylistTracks(id, playlistId, trackIds) {
+      if (!playlistById.get(id, playlistId)) return { error: 'not_found' }
+      const current = playlistTrackList.all(playlistId).map(row => row.track_id)
+      if (!Array.isArray(trackIds) || trackIds.length !== current.length || new Set(trackIds).size !== trackIds.length || trackIds.some(value => typeof value !== 'string') || current.some(value => !trackIds.includes(value))) return { error: 'invalid' }
+      trackIds.forEach((trackId, position) => playlistTrackPosition.run(position, playlistId, trackId))
+      return { playlist: playlistFor(id, playlistId) }
     },
     eventDraft(id) {
       const row = eventDraftByGuest.get(id, 'palm-room')
@@ -828,7 +935,7 @@ export function guestApi(store, { isGuestConnectedAtLocation = () => false, getP
       res.setHeader('Cache-Control', 'no-store')
       return res.end(JSON.stringify({ tracks: CATALOGUE }))
     }
-    if (!['/api/guest', '/api/saves', '/api/event-draft', '/api/event-planning', '/api/reports', '/api/blocks', '/api/friends', '/api/friend-requests', '/api/messages', '/api/parties', '/api/party-invitations'].some(route => pathname === route || pathname.startsWith(`${route}/`))) return next()
+    if (!['/api/guest', '/api/saves', '/api/playlists', '/api/event-draft', '/api/event-planning', '/api/reports', '/api/blocks', '/api/friends', '/api/friend-requests', '/api/messages', '/api/parties', '/api/party-invitations'].some(route => pathname === route || pathname.startsWith(`${route}/`))) return next()
     res.setHeader('Content-Type', 'application/json; charset=utf-8')
     res.setHeader('Cache-Control', 'no-store')
     const reply = (status, body) => { res.statusCode = status; res.end(JSON.stringify(body)) }
@@ -840,6 +947,55 @@ export function guestApi(store, { isGuestConnectedAtLocation = () => false, getP
     }
     const id = token && store.resume(token)
     if (!id) return reply(401, { error: 'Guest session required' })
+    if (pathname === '/api/playlists' && req.method === 'GET') return reply(200, { playlists: store.playlists(id) })
+    if (pathname === '/api/playlists' && req.method === 'POST') {
+      const parsed = await readJsonBody(req)
+      if (parsed.error) return reply(400, { error: 'Invalid playlist' })
+      const result = store.createPlaylist(id, parsed.value)
+      if (result.error === 'invalid') return reply(400, { error: 'Playlist name must contain 1–40 characters' })
+      if (result.error === 'limit') return reply(409, { error: 'Playlist limit reached' })
+      return reply(201, result)
+    }
+    if (pathname === '/api/playlists/order' && req.method === 'PUT') {
+      const parsed = await readJsonBody(req)
+      if (parsed.error) return reply(400, { error: 'Invalid playlist order' })
+      const result = store.reorderPlaylists(id, parsed.value?.playlistIds)
+      return result.error ? reply(400, { error: 'Playlist order must include each owned playlist once' }) : reply(200, result)
+    }
+    const playlistTrackOrder = pathname.match(/^\/api\/playlists\/([0-9a-f-]{36})\/tracks\/order$/i)
+    if (playlistTrackOrder && req.method === 'PUT') {
+      const parsed = await readJsonBody(req)
+      if (parsed.error) return reply(400, { error: 'Invalid track order' })
+      const result = store.reorderPlaylistTracks(id, playlistTrackOrder[1], parsed.value?.trackIds)
+      if (result.error === 'not_found') return reply(404, { error: 'Playlist not found' })
+      return result.error ? reply(400, { error: 'Track order must include each playlist song once' }) : reply(200, result)
+    }
+    const playlistTrack = pathname.match(/^\/api\/playlists\/([0-9a-f-]{36})\/tracks(?:\/([a-z0-9-]+))?$/i)
+    if (playlistTrack && req.method === 'POST' && !playlistTrack[2]) {
+      const parsed = await readJsonBody(req)
+      if (parsed.error) return reply(400, { error: 'Invalid playlist song' })
+      const result = store.addPlaylistTrack(id, playlistTrack[1], parsed.value?.trackId)
+      if (result.error === 'not_found') return reply(404, { error: 'Playlist not found' })
+      if (result.error === 'track_not_found') return reply(404, { error: 'Released song not found' })
+      if (result.error === 'full') return reply(409, { error: 'Playlist is full' })
+      return reply(result.duplicate ? 200 : 201, result)
+    }
+    if (playlistTrack && req.method === 'DELETE' && playlistTrack[2]) {
+      const result = store.removePlaylistTrack(id, playlistTrack[1], playlistTrack[2])
+      return result.error ? reply(404, { error: 'Playlist not found' }) : reply(200, result)
+    }
+    const playlist = pathname.match(/^\/api\/playlists\/([0-9a-f-]{36})$/i)
+    if (playlist && req.method === 'PATCH') {
+      const parsed = await readJsonBody(req)
+      if (parsed.error) return reply(400, { error: 'Invalid playlist name' })
+      const result = store.renamePlaylist(id, playlist[1], parsed.value)
+      if (result.error === 'not_found') return reply(404, { error: 'Playlist not found' })
+      return result.error ? reply(400, { error: 'Playlist name must contain 1–40 characters' }) : reply(200, result)
+    }
+    if (playlist && req.method === 'DELETE') {
+      const result = store.deletePlaylist(id, playlist[1])
+      return result.error ? reply(404, { error: 'Playlist not found' }) : reply(200, result)
+    }
     if (pathname === '/api/event-planning' && req.method === 'GET') return reply(200, { planning: store.eventPlanning(id) })
     if (pathname === '/api/event-draft/invitations' && req.method === 'POST') {
       const parsed = await readJsonBody(req)

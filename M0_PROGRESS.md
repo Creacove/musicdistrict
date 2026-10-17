@@ -497,10 +497,9 @@ Added an integration test that connects 20 real WebSocket test clients to an iso
 
 ## Current next slices — updated 17 October 2026
 
-1. Build a private My Music playlist loop using only the released catalogue: create, rename, reorder, and remove tracks; keep lists private until permissioned sharing is implemented.
-2. Build the first safe free-show runtime only after its venue, performer, audio-rights, timeline, and attendance authority is concrete; accepted draft invitations alone do not confirm performers.
-3. Validate FPS, thermals, touch comfort, and network recovery on physical Android/iPhone devices.
-4. Keep public chat and reports gated until age policy, moderation staffing, emergency escalation, and appeals have real owners.
+1. Build the first safe free-show runtime only after its venue, performer, audio-rights, timeline, and attendance authority is concrete; accepted draft invitations alone do not confirm performers.
+2. Validate FPS, thermals, touch comfort, and network recovery on physical Android/iPhone devices.
+3. Keep public chat and reports gated until age policy, moderation staffing, emergency escalation, and appeals have real owners.
 
 ## Shared-room identity handoff — 16 October 2026
 
@@ -553,3 +552,11 @@ Added an integration test that connects 20 real WebSocket test clients to an iso
 - **Verification:** Full suite passes 108/108; `npm run build` passes. Headed Chrome at 390 × 844 completed the physical map walk from Music Square to Palm Room in two independent guest contexts, drafted an open mic, invited the other connected guest, accepted on the second device, and observed `Accepted · draft lineup` on the organiser. Browser page errors: 0. Repeatable check: `app/event-invitation-browser-check.mjs`. Captures: `docs/evidence/local-palm-room-performer-invite-mobile.png` and `docs/evidence/local-open-mic-performer-plan-mobile.png`.
 - **Phone preview:** the multiplayer client is served by the self-hosted Node/WebSocket process at `http://10.122.72.26:4173/` for devices on the same Wi-Fi. Netlify remains the solo/static preview and cannot sync invitations between phones until a persistent multiplayer host is deployed.
 - **Delivery:** GitHub `main` contains `82e5bb8` (performer invites) and `d1b1b06` (Netlify path fix). Netlify production deploy `6ad2aaee7740a52945bcf1fb` is live at `https://musicdistrict.netlify.app/`; headed Chrome confirmed the 3D canvas, Desk, and zero page errors. The two-player invite check runs on the local Node server, not the solo Netlify site.
+
+## Private My Music playlists — 17 October 2026
+
+- Added a personal collection inside the Phone tab: saved released songs plus private playlists. Players can create up to 20 lists, rename and reorder them, add/reorder/remove released catalogue tracks, and delete a list. Each list is capped at 100 songs. Private visibility is enforced by SQLite and the authenticated API; public sharing is not exposed in this slice.
+- Playlist changes follow the persistent player identity in the Node/SQLite runtime. The static Netlify solo build stores its private playlists on that device. An entry is organization only: it does not grant downloads or additional playback rights.
+- **GDD trace:** Fan and Social Chapter 05 §9. Saved music stays personal across business changes; playlist entries remain private; only released catalogue tracks are accepted; the documented 20-playlist/100-song limits are enforced. Link sharing and public lists remain unavailable pending their permissioned implementation.
+- **Verification:** Full suite passes 114/114; production TypeScript/Vite build passes with the existing nonfatal Three.js chunk-size warning. Headed Chrome at 390 × 844 created a playlist, added and reordered two released tracks, renamed it, reloaded, and confirmed the saved song/list order persisted under the same guest. The display-settings route still opens from Phone; page errors: 0. Capture: `docs/evidence/local-my-music-playlist-mobile.png`; repeatable browser flow: `app/music-collection-browser-check.mjs`.
+- **Next:** The show is still only a private draft and performer-consent flow. Chapter 06's confirmed event, authorized master, venue/time commitment, attendee and attendance accounting require the concrete event authority described above; do not silently promote drafts into public shows.
