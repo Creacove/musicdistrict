@@ -562,3 +562,11 @@ Added an integration test that connects 20 real WebSocket test clients to an iso
 - **Phone previews:** Netlify production deploy `6ad2bcb70d77b1eeb5523470` is live at `https://musicdistrict.netlify.app/`. Headed Chrome verified playlist create/add/reorder/rename/reload against that URL; the static preview keeps playlists on that browser device only. For synchronized players, the local Node/SQLite/WebSocket game is at `http://172.20.10.2:4173/` while this PC is running on the same Wi-Fi.
 - **Netlify browser evidence:** `docs/evidence/netlify-my-music-playlist-mobile.png`; repeatable production flow: `app/netlify-playlist-browser-check.mjs`.
 - **Next:** The show is still only a private draft and performer-consent flow. Chapter 06's confirmed event, authorized master, venue/time commitment, attendee and attendance accounting require the concrete event authority described above; do not silently promote drafts into public shows.
+
+## M1 Palm Room entrance and avatar visual pass — 18 October 2026
+
+- Replaced the flat Palm Room frontage with a framed double-door entrance, warm glazed side bays, bronze trim, a deeper canopy, a timber screen, facade lights and planters. The venue remains a walkable preview; the change does not imply ownership, booking, or a public event.
+- Added fine textile surface response and tailored trouser pockets, seams and sneaker panels to the original player avatar. No external character art or runtime image was used.
+- **Visual check:** Headed Chromium on the self-hosted game at 390 x 844 followed the real district-map route to Palm Room. The entrance and clothing details render in the 3D scene; browser console reported 0 errors and 0 warnings. Captures: `output/playwright/music-square-avatar-pass-390x844.png` and `output/playwright/palm-room-facade-pass-390x844.png`.
+- **Build:** `npm run build` succeeds. The existing Three.js vendor chunk size warning remains; this slice adds only scene geometry/material detail and no downloaded runtime asset.
+- **Next:** Keep the free public-show runtime gated until venue, performer, audio-rights, timeline, and attendance authority is concrete. Continue with another documented, playable gap rather than inventing show activity or financial rights.

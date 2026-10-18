@@ -439,7 +439,8 @@ for (let row = 0; row < 8; row++) for (let col = 0; col < 8; col++) {
 }
 const clothTexture = new THREE.CanvasTexture(cloth)
 clothTexture.colorSpace = THREE.SRGBColorSpace
-const shirt = new THREE.MeshStandardMaterial({ map: clothTexture, roughness: .95 })
+clothTexture.anisotropy = 4
+const shirt = new THREE.MeshStandardMaterial({ map: clothTexture, bumpMap: clothTexture, bumpScale: .012, roughness: .97 })
 const trouserCanvas = document.createElement('canvas')
 trouserCanvas.width = trouserCanvas.height = 128
 const trouserContext = trouserCanvas.getContext('2d')!
@@ -453,12 +454,16 @@ for (let x = 0; x <= 128; x += 4) {
 trouserContext.globalAlpha = 1
 const trouserTexture = new THREE.CanvasTexture(trouserCanvas)
 trouserTexture.colorSpace = THREE.SRGBColorSpace
-const trousers = new THREE.MeshStandardMaterial({ map: trouserTexture, roughness: .94 })
+trouserTexture.anisotropy = 4
+const trousers = new THREE.MeshStandardMaterial({ map: trouserTexture, bumpMap: trouserTexture, bumpScale: .008, roughness: .96 })
 const hair = new THREE.MeshStandardMaterial({ color: '#18131a', roughness: 1 })
 const shoes = new THREE.MeshStandardMaterial({ color: '#211d22', roughness: .8 })
+const shoeAccent = new THREE.MeshStandardMaterial({ color: '#d9c49c', roughness: .88 })
 const shirtTrim = new THREE.MeshStandardMaterial({ color: '#a86935', roughness: .95 })
 const shoeSole = new THREE.MeshStandardMaterial({ color: '#d4c5ac', roughness: .9 })
 const trouserTrim = new THREE.MeshStandardMaterial({ color: '#604589', roughness: .95 })
+const pocketTrim = new THREE.MeshStandardMaterial({ color: '#bd9960', roughness: 1 })
+const pocketShade = new THREE.MeshStandardMaterial({ color: '#65498d', roughness: .97 })
 const faceDetail = new THREE.MeshStandardMaterial({ color: '#211611', roughness: .85 })
 const eyeWhite = new THREE.MeshStandardMaterial({ color: '#f1e4cf', roughness: .6 })
 const eyeBrown = new THREE.MeshStandardMaterial({ color: '#4b2b1b', roughness: .55 })
@@ -521,6 +526,11 @@ const backYoke = new THREE.CatmullRomCurve3([
   new THREE.Vector3(.22, 1.73, -.25),
 ])
 avatarPart(new THREE.TubeGeometry(backYoke, 18, .007, 5, false), garmentSeam, 0, 0, 0)
+const shirtBackSeam = new THREE.CatmullRomCurve3([
+  new THREE.Vector3(0, 1.66, -.345), new THREE.Vector3(0, 1.48, -.37),
+  new THREE.Vector3(0, 1.24, -.37), new THREE.Vector3(0, 1.04, -.345),
+])
+avatarPart(new THREE.TubeGeometry(shirtBackSeam, 12, .005, 4, false), garmentSeam, 0, 0, 0)
 
 function createAvatarArm(x: number, side: -1 | 1, name: 'left' | 'right') {
   const shoulder = new THREE.Group()
@@ -564,6 +574,12 @@ function addShoe(foot: THREE.Group) {
   upper.rotation.x = Math.PI / 2; upper.position.set(0, .16, .11); upper.castShadow = true; foot.add(upper)
   const lace = new THREE.Mesh(new THREE.BoxGeometry(.1, .014, .05), shoeSole)
   lace.position.set(0, .29, .25); foot.add(lace)
+  const heel = new THREE.Mesh(new THREE.BoxGeometry(.18, .085, .018), shoeAccent)
+  heel.position.set(0, .17, -.126); foot.add(heel)
+  for (const side of [-1, 1]) {
+    const stripe = new THREE.Mesh(new THREE.BoxGeometry(.018, .035, .14), pocketTrim)
+    stripe.position.set(side * .127, .17, .1); foot.add(stripe)
+  }
 }
 function createAvatarLeg(x: number, name: 'left' | 'right') {
   const hip = new THREE.Group()
@@ -571,6 +587,14 @@ function createAvatarLeg(x: number, name: 'left' | 'right') {
   hip.name = `avatar-${name}-leg`
   const thigh = new THREE.Mesh(new THREE.CapsuleGeometry(.14, .29, 4, 9), trousers)
   thigh.position.y = -.265; thigh.castShadow = true; hip.add(thigh)
+  // Tailored rear utility pockets and a soft contrast welt give the loose trousers
+  // readable construction from the player's normal over-the-shoulder camera.
+  const pocket = new THREE.Mesh(new THREE.BoxGeometry(.145, .135, .022), pocketShade)
+  pocket.position.set(0, .06, -.132); pocket.castShadow = true; thigh.add(pocket)
+  const pocketWelt = new THREE.Mesh(new THREE.BoxGeometry(.15, .018, .027), pocketTrim)
+  pocketWelt.position.set(0, .124, -.134); thigh.add(pocketWelt)
+  const pocketButton = new THREE.Mesh(new THREE.SphereGeometry(.014, 6, 5), shoeSole)
+  pocketButton.position.set(0, .112, -.151); thigh.add(pocketButton)
   const knee = new THREE.Group()
   knee.position.y = -.55
   knee.name = `avatar-${name}-knee`

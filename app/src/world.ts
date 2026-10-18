@@ -325,8 +325,50 @@ export function makeSquare() {
   box(root, 9.5, 6, 4, mat('#4a3b39'), 11, 3, -1.8)
   box(root, 3.3, 4.2, .12, black, 10, 2.1, .27)
   box(root, 3.05, 3.93, .08, mat('#8b633f', .25), 10, 2.03, .36)
-  sign(root, ['PALM ROOM'], 7, 1.13, 11, 4.8, .34, { bg: '#19181c', ink: '#e8c58d', size: 98 })
-  box(root, 9, .3, 2, black, 11, 4.12, .4)
+  // Palm Room's front reads as a real small music venue: a framed entry,
+  // warm side windows, a deep canopy and a lit, layered sign.
+  const venueBronze = mat('#b48a54', .3)
+  const venueGlass = new THREE.MeshStandardMaterial({ color: '#9b6943', roughness: .28, metalness: .08, emissive: '#a75a2d', emissiveIntensity: .42 })
+  const venueTrim = mat('#282326')
+  for (const x of [8.28, 11.72]) box(root, .18, 3.55, .24, venueBronze, x, 2.0, .47)
+  box(root, 3.62, .18, .24, venueBronze, 10, 3.76, .47)
+  for (const x of [7.45, 13.15]) {
+    box(root, 1.18, 2.65, .16, venueTrim, x, 1.72, .34)
+    box(root, 1.02, 2.48, .08, venueGlass, x, 1.72, .44)
+    box(root, .055, 2.46, .1, venueBronze, x, 1.72, .5)
+    box(root, 1.2, .09, .24, venueBronze, x, .36, .4)
+  }
+  for (const x of [9.23, 10.77]) {
+    box(root, 1.46, 2.75, .055, venueGlass, x, 1.72, .47)
+    box(root, .035, 2.72, .065, venueBronze, x, 1.72, .51)
+    cylinder(root, .025, .025, .34, venueBronze, x + (x < 10 ? .45 : -.45), 1.62, .57, 8)
+  }
+  box(root, 9.8, .34, 1.42, venueTrim, 11, 3.98, .66)
+  box(root, 9.6, .08, 1.35, venueBronze, 11, 3.78, .69)
+  // One shared slat mesh adds a crafted timber screen without multiplying draw calls.
+  const screen = new THREE.InstancedMesh(new THREE.BoxGeometry(.1, 2.85, .18), mat('#76553a'), 8)
+  const screenPose = new THREE.Object3D()
+  for (let i = 0; i < 8; i++) {
+    screenPose.position.set(13.95 + i * .19, 2.08, .34)
+    screenPose.updateMatrix()
+    screen.setMatrixAt(i, screenPose.matrix)
+  }
+  screen.instanceMatrix.needsUpdate = true
+  screen.castShadow = true
+  root.add(screen)
+  box(root, 6.45, 1.28, .22, venueBronze, 11, 4.88, .33)
+  box(root, 6.2, 1.09, .12, venueTrim, 11, 4.88, .47)
+  sign(root, ['PALM ROOM'], 6, 1.1, 11, 4.8, .54, { bg: '#19181c', ink: '#e8c58d', size: 78 })
+  for (const x of [7.45, 8.9, 10.35, 11.8, 13.25, 14.7]) {
+    const bulb = new THREE.Mesh(new THREE.SphereGeometry(.045, 6, 5), new THREE.MeshBasicMaterial({ color: '#ffd69a' }))
+    bulb.position.set(x, 3.82, 1.38)
+    root.add(bulb)
+  }
+  for (const x of [6.9, 15.1]) {
+    box(root, .32, .42, .22, venueTrim, x, 3.15, .36)
+    box(root, .18, .23, .13, mat('#ffd79a', .02, '#d4843e'), x, 3.15, .49)
+  }
+  for (const x of [7.15, 14.85]) planter(root, x, 1.35, 1.85)
   box(root, 9, 5.5, 4, charcoal, 14, 2.75, -12)
   box(root, 3, 3.8, .09, violet, 13, 1.9, -9.9)
   sign(root, ['CITY STUDIO'], 7.5, 1.1, 14, 4.75, -9.86, { bg: '#22202d', ink: '#e6d6fa', size: 102 })
