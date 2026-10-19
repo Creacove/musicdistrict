@@ -570,3 +570,10 @@ Added an integration test that connects 20 real WebSocket test clients to an iso
 - **Visual check:** Headed Chromium on the self-hosted game at 390 x 844 followed the real district-map route to Palm Room. The entrance and clothing details render in the 3D scene; browser console reported 0 errors and 0 warnings. Captures: `output/playwright/music-square-avatar-pass-390x844.png` and `output/playwright/palm-room-facade-pass-390x844.png`.
 - **Build:** `npm run build` succeeds. The existing Three.js vendor chunk size warning remains; this slice adds only scene geometry/material detail and no downloaded runtime asset.
 - **Next:** Keep the free public-show runtime gated until venue, performer, audio-rights, timeline, and attendance authority is concrete. Continue with another documented, playable gap rather than inventing show activity or financial rights.
+
+## M1 production visual verification — 19 October 2026
+
+- **GitHub:** Commit `5e95810` is on `main`.
+- **Netlify:** Production deploy `6ad5c0eeb0ba2234d33f71cd` is live at `https://musicdistrict.netlify.app/`.
+- **Live check:** Headed Chromium loaded the production URL at 390 x 844. The 3D Music Square and updated avatar rendered; console reported 0 errors and 0 warnings. Capture: `output/playwright/netlify-art-pass-390x844.png`.
+- **Hosting boundary:** Netlify remains a static solo preview. Shared presence and other multiplayer services still run only through the local Node server.
