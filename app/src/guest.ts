@@ -1,5 +1,8 @@
 export type CatalogueTrack = { id: string; title: string; artist: string; genre: string; duration: number; released: boolean }
 export type GuestPlaylist = { id: string; name: string; visibility: 'private'; position: number; createdAt: string; updatedAt: string; tracks: CatalogueTrack[] }
+export type CityJobStepId = 'light' | 'monitors' | 'backdrop'
+export type GuestCityJob = { id: string; jobType: 'venue-assistant'; status: 'active'; startedAt: string; minimumCompleteAt: string; expiresAt: string; remainingSeconds: number; completedSteps: CityJobStepId[]; requiredSteps: CityJobStepId[] }
+export type GuestCityJobState = { balanceMinor: number; currencyLabel: string; dailyJobsCompleted: number; dailyEarnedMinor: number; dailyJobsRemaining: number; dailyIssuanceRemainingMinor: number; activeJob: GuestCityJob | null; localPreview?: boolean }
 type Guest = { id: string; token: string; saves: string[] }
 export type GuestReportReason = 'harassment' | 'spam' | 'inappropriate_name' | 'other'
 export type GuestReportReceipt = { id: string; status: 'received'; createdAt: string }
@@ -50,6 +53,109 @@ const LOCAL_PLAYLIST_KEY = 'scene-private-playlists'
 const PLAYLIST_NAME_LIMIT = 40
 const PLAYLIST_LIMIT = 20
 const PLAYLIST_TRACK_LIMIT = 100
+const CITY_JOB_LOCAL_KEY = 'scene-city-job-preview'
+const CITY_JOB_PAYOUT_MINOR = 100_000
+const CITY_JOB_DURATION_MS = 3 * 60 * 1000
+const CITY_JOB_EXPIRY_MS = 15 * 60 * 1000
+const CITY_JOB_REQUIRED_STEPS: CityJobStepId[] = ['light', 'monitors', 'backdrop']
+
+type LocalCityJobEntry = { id: string; amountMinor: number; createdAt: string }
+type LocalCityJobData = { entries: LocalCityJobEntry[]; activeJob: GuestCityJob | null }
+
+function localCityJobData(): LocalCityJobData {
+  try {
+    const saved = JSON.parse(localStorage.getItem(CITY_JOB_LOCAL_KEY) || 'null')
+    return {
+      entries: Array.isArray(saved?.entries) ? saved.entries.filter((entry: LocalCityJobEntry) => entry && typeof entry.id === 'string' && Number.isSafeInteger(entry.amountMinor) && typeof entry.createdAt === 'string') : [],
+      activeJob: saved?.activeJob && typeof saved.activeJob.id === 'string' && saved.activeJob.jobType === 'venue-assistant' ? saved.activeJob : null,
+    }
+  } catch { return { entries: [], activeJob: null } }
+}
+
+function saveLocalCityJobData(data: LocalCityJobData) {
+  try { localStorage.setItem(CITY_JOB_LOCAL_KEY, JSON.stringify(data)) } catch { throw new Error('Device storage unavailable') }
+}
+
+function localCityJobState(): GuestCityJobState {
+  const data = localCityJobData()
+  const now = Date.now()
+  const cutoff = now - 24 * 60 * 60 * 1000
+  const recent = data.entries.filter(entry => Date.parse(entry.createdAt) > cutoff)
+  const activeJob = data.activeJob && Date.parse(data.activeJob.expiresAt) > now ? {
+    ...data.activeJob,
+    remainingSeconds: Math.max(0, Math.ceil((Date.parse(data.activeJob.minimumCompleteAt) - now) / 1000)),
+  } : null
+  if (data.activeJob && !activeJob) saveLocalCityJobData({ ...data, activeJob: null })
+  return {
+    balanceMinor: data.entries.reduce((total, entry) => total + entry.amountMinor, 0),
+    currencyLabel: 'THE SCENE money (simulation)',
+    dailyJobsCompleted: recent.length,
+    dailyEarnedMinor: recent.reduce((total, entry) => total + entry.amountMinor, 0),
+    dailyJobsRemaining: Math.max(0, 3 - recent.length),
+    dailyIssuanceRemainingMinor: Math.max(0, 450_000 - recent.reduce((total, entry) => total + entry.amountMinor, 0)),
+    activeJob,
+    localPreview: true,
+  }
+}
+
+async function cityJobRequest(path: string, init: RequestInit = {}) {
+  const response = await guestRequest(path, init)
+  const data = await response.json().catch(() => ({})) as { error?: string }
+  if (!response.ok) throw new Error(data.error || 'City job unavailable')
+  return data
+}
+
+export async function fetchGuestCityJobs(): Promise<GuestCityJobState> {
+  if (SOLO_PREVIEW) return localCityJobState()
+  const data = await cityJobRequest('/api/city-jobs') as GuestCityJobState
+  return data
+}
+
+export async function startGuestCityJob(): Promise<GuestCityJob> {
+  if (SOLO_PREVIEW) {
+    const data = localCityJobData()
+    const state = localCityJobState()
+    if (data.activeJob && Date.parse(data.activeJob.expiresAt) > Date.now()) throw new Error('active_job')
+    if (state.dailyJobsRemaining <= 0 || state.dailyIssuanceRemainingMinor < CITY_JOB_PAYOUT_MINOR) throw new Error('daily_limit')
+    const now = Date.now()
+    const job: GuestCityJob = { id: crypto.randomUUID(), jobType: 'venue-assistant', status: 'active', startedAt: new Date(now).toISOString(), minimumCompleteAt: new Date(now + CITY_JOB_DURATION_MS).toISOString(), expiresAt: new Date(now + CITY_JOB_EXPIRY_MS).toISOString(), remainingSeconds: 180, completedSteps: [], requiredSteps: [...CITY_JOB_REQUIRED_STEPS] }
+    saveLocalCityJobData({ ...data, activeJob: job })
+    return job
+  }
+  const data = await cityJobRequest('/api/city-jobs/start', { method: 'POST', body: JSON.stringify({ jobType: 'venue-assistant' }) }) as { job: GuestCityJob }
+  return data.job
+}
+
+export async function completeGuestCityJobStep(jobId: string, stepId: CityJobStepId): Promise<GuestCityJob> {
+  if (SOLO_PREVIEW) {
+    const data = localCityJobData()
+    if (!data.activeJob || data.activeJob.id !== jobId || Date.parse(data.activeJob.expiresAt) <= Date.now()) throw new Error('job_unavailable')
+    const completedSteps = [...new Set([...data.activeJob.completedSteps, stepId])]
+    const job = { ...data.activeJob, completedSteps, remainingSeconds: Math.max(0, Math.ceil((Date.parse(data.activeJob.minimumCompleteAt) - Date.now()) / 1000)) }
+    saveLocalCityJobData({ ...data, activeJob: job })
+    return job
+  }
+  const data = await cityJobRequest(`/api/city-jobs/${encodeURIComponent(jobId)}/steps`, { method: 'POST', body: JSON.stringify({ stepId }) }) as { job: GuestCityJob }
+  return data.job
+}
+
+export async function finishGuestCityJob(jobId: string): Promise<{ payoutMinor: number; balanceMinor: number; duplicate: boolean }> {
+  if (SOLO_PREVIEW) {
+    const data = localCityJobData()
+    const existing = data.entries.find(entry => entry.id === jobId)
+    if (existing) return { payoutMinor: existing.amountMinor, balanceMinor: data.entries.reduce((total, entry) => total + entry.amountMinor, 0), duplicate: true }
+    const job = data.activeJob
+    if (!job || job.id !== jobId) throw new Error('job_unavailable')
+    if (Date.parse(job.expiresAt) <= Date.now()) { saveLocalCityJobData({ ...data, activeJob: null }); throw new Error('expired') }
+    if (CITY_JOB_REQUIRED_STEPS.some(step => !job.completedSteps.includes(step))) throw new Error('steps_missing')
+    if (Date.now() < Date.parse(job.minimumCompleteAt)) throw new Error('too_early')
+    const entry = { id: jobId, amountMinor: CITY_JOB_PAYOUT_MINOR, createdAt: new Date().toISOString() }
+    const entries = [...data.entries, entry]
+    saveLocalCityJobData({ entries, activeJob: null })
+    return { payoutMinor: CITY_JOB_PAYOUT_MINOR, balanceMinor: entries.reduce((total, item) => total + item.amountMinor, 0), duplicate: false }
+  }
+  return await cityJobRequest(`/api/city-jobs/${encodeURIComponent(jobId)}/complete`, { method: 'POST' }) as { payoutMinor: number; balanceMinor: number; duplicate: boolean }
+}
 
 function localPlaylists(): GuestPlaylist[] {
   try {

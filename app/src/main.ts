@@ -19,6 +19,7 @@ import { parseStageTemplate, serializeStageTemplate, type StageLook } from './st
 import { RELEASE_JOURNEY, nextReleaseStation, previousReleaseStation, releaseStation, type ReleaseStationId } from './releaseJourney.ts'
 import { nextMusicJourneyStep } from './musicJourney.ts'
 import { resolveDeskQuestion } from './deskQuery.ts'
+import { completeGuestCityJobStep, fetchGuestCityJobs, finishGuestCityJob, startGuestCityJob, type CityJobStepId, type GuestCityJobState } from './guest.ts'
 import './style.css'
 
 const SOLO_PREVIEW = import.meta.env?.VITE_SCENE_DEMO_MODE === 'true'
@@ -39,6 +40,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
     <div class="clock" id="time-toggle" role="button" tabindex="0" title="Switch atmosphere (Daylight / Golden Hour / Night)"><span>🌅</span><div><b id="time-label">GOLDEN HOUR</b><small id="place-name">Music Square · Lagos</small></div></div>
     <div class="top-divider mood-divider"></div>
     <div class="mood"><i></i> EXPLORING</div>
+    <div id="wallet-chip" class="wallet-chip" aria-label="THE SCENE money (simulation): ₦0"><small>SIM WALLET</small><b id="wallet-balance">₦0</b></div>
     <button id="audio" aria-label="Audio off">♫ <span>OFF</span></button>
   </header>
 
@@ -1589,6 +1591,9 @@ let showDraftSynced = false
 let showPerformers: GuestEventPerformer[] = []
 let showInvitations: GuestEventInvitation[] = []
 let showDraftSyncBusy = false
+let cityJobState: GuestCityJobState | null = null
+let cityJobNotice = ''
+let cityJobBusy = false
 try {
   const saved = JSON.parse(localStorage.getItem('scene-show-draft') || 'null')
   if (saved && typeof saved.title === 'string' && (saved.format === 'OPEN_MIC' || saved.format === 'LISTENING_SESSION') && typeof saved.start === 'string') {
@@ -1684,6 +1689,8 @@ const guestSessionTask = openGuest().then(async guest => {
     if (!guest.saves.includes(id)) await saveGuestPreview(id).catch(() => {})
   }
   guestSessionReady = !SOLO_PREVIEW
+  cityJobState = await fetchGuestCityJobs().catch(() => null)
+  updateWalletHud()
   await syncShowDraft().catch(() => { /* device draft remains available offline */ })
   presence.auth(guest.token)
   const savedBlocks = await fetchGuestBlocks().catch(() => [])
@@ -2356,6 +2363,126 @@ function saveStageTemplate() {
   }
 }
 
+function formatSimulationMoney(minor: number) {
+  return `₦${new Intl.NumberFormat('en-NG', { maximumFractionDigits: 2 }).format(minor / 100)}`
+}
+
+function updateWalletHud() {
+  const balance = document.getElementById('wallet-balance')
+  const chip = document.getElementById('wallet-chip')
+  if (balance) balance.textContent = cityJobState ? formatSimulationMoney(cityJobState.balanceMinor) : '…'
+  if (chip) chip.setAttribute('aria-label', `${cityJobState?.currencyLabel || 'THE SCENE money (simulation)'}: ${cityJobState ? formatSimulationMoney(cityJobState.balanceMinor) : 'connecting'}`)
+}
+
+function cityJobErrorMessage(error: unknown) {
+  const code = error instanceof Error ? error.message : ''
+  const messages: Record<string, string> = {
+    active_job: 'Finish your current shift before starting another.',
+    daily_limit: 'You have used today’s three city job slots.',
+    must_be_at_palm_room: 'Stay in Palm Room and try again.',
+    steps_missing: 'Complete the three stage setup actions first.',
+    too_early: 'The shift needs three minutes of active setup time.',
+    expired: 'That shift expired. Start a new one when ready.',
+    job_unavailable: 'That shift is no longer active.',
+  }
+  return messages[code] || 'The city job service is unavailable. Try again when connected.'
+}
+
+function updateCityJobCard() {
+  updateWalletHud()
+  const status = document.getElementById('city-job-status')
+  if (!status) return
+  const balance = document.getElementById('city-job-balance')
+  const start = document.getElementById('city-job-start') as HTMLButtonElement | null
+  const collect = document.getElementById('city-job-collect') as HTMLButtonElement | null
+  const state = cityJobState
+  if (balance) balance.textContent = state
+    ? `${state.localPreview ? 'DEVICE-ONLY PREVIEW' : state.currencyLabel} · ${formatSimulationMoney(state.balanceMinor)}`
+    : 'THE SCENE money (simulation) · connecting…'
+  const job = state?.activeJob
+  if (job) {
+    const remaining = Math.max(0, Math.ceil((Date.parse(job.minimumCompleteAt) - Date.now()) / 1000))
+    const minutes = Math.floor(remaining / 60), seconds = remaining % 60
+    const stepsDone = job.completedSteps.length
+    const progress = `${stepsDone}/3 setup actions checked · ${minutes}:${String(seconds).padStart(2, '0')} minimum shift time left`
+    const recentProgressNotice = cityJobNotice.startsWith('Shift started') || cityJobNotice.startsWith('Setup checked')
+    status.textContent = stepsDone === 3 && remaining === 0
+      ? 'Setup complete · shift ready to collect.'
+      : recentProgressNotice ? progress : cityJobNotice || progress
+    if (start) start.hidden = true
+    if (collect) {
+      collect.hidden = stepsDone < 3 || remaining > 0
+      collect.disabled = cityJobBusy
+      collect.textContent = `Collect ${formatSimulationMoney(100_000)}`
+    }
+  } else {
+    const today = state ? `${state.dailyJobsCompleted}/3 shifts today · ${formatSimulationMoney(state.dailyEarnedMinor)} earned` : cityJobNotice || 'Connecting to the city job board…'
+    status.textContent = cityJobNotice || today
+    if (start) {
+      start.hidden = false
+      start.disabled = cityJobBusy || !state || (!state.localPreview && !presenceConnected) || state.dailyJobsRemaining === 0
+      start.textContent = state?.dailyJobsRemaining === 0 ? 'No more shifts today' : 'Start venue assistant shift'
+    }
+    if (collect) collect.hidden = true
+  }
+}
+
+async function refreshCityJobState() {
+  try {
+    cityJobState = await fetchGuestCityJobs()
+    if (!cityJobState.activeJob) cityJobNotice = ''
+    else {
+      if (cityJobState.activeJob.completedSteps.includes('light')) { equipmentPreviewVisible = true; palmRoom?.setEquipmentPreview(true) }
+      if (cityJobState.activeJob.completedSteps.includes('monitors')) { rehearsalMonitors = true; palmRoom?.setRehearsalMonitors(true) }
+      if (cityJobState.activeJob.completedSteps.includes('backdrop')) { rehearsalBackdrop = true; palmRoom?.setRehearsalBackdrop(true) }
+    }
+  } catch {
+    cityJobState = null
+    cityJobNotice = 'City jobs need a connected game session.'
+  }
+  updateCityJobCard()
+}
+
+async function beginVenueAssistantShift() {
+  if (cityJobBusy) return
+  cityJobBusy = true; cityJobNotice = ''; updateCityJobCard()
+  try {
+    await startGuestCityJob()
+    cityJobState = await fetchGuestCityJobs()
+    cityJobNotice = cityJobState.localPreview ? 'Shift started · this solo preview saves only on this device.' : 'Shift started · set up all three pieces, then stay in Palm Room for three minutes.'
+  } catch (error) { cityJobNotice = cityJobErrorMessage(error) }
+  finally { cityJobBusy = false; renderStageEventMetrics() }
+}
+
+async function checkVenueAssistantStep(stepId: CityJobStepId) {
+  const job = cityJobState?.activeJob
+  if (!job || job.completedSteps.includes(stepId) || cityJobBusy) return
+  cityJobBusy = true; cityJobNotice = ''; updateCityJobCard()
+  try {
+    const updated = await completeGuestCityJobStep(job.id, stepId)
+    cityJobState = cityJobState ? { ...cityJobState, activeJob: updated } : cityJobState
+    cityJobNotice = `Setup checked · ${updated.completedSteps.length}/3 pieces placed.`
+  } catch (error) { cityJobNotice = cityJobErrorMessage(error) }
+  finally { cityJobBusy = false; renderStageEventMetrics() }
+}
+
+async function collectVenueAssistantPay() {
+  const job = cityJobState?.activeJob
+  if (!job || cityJobBusy) return
+  cityJobBusy = true; cityJobNotice = ''; updateCityJobCard()
+  try {
+    const receipt = await finishGuestCityJob(job.id)
+    cityJobState = await fetchGuestCityJobs()
+    cityJobNotice = receipt.duplicate
+      ? `Shift already paid · balance ${formatSimulationMoney(receipt.balanceMinor)}.`
+      : `Shift complete · +${formatSimulationMoney(receipt.payoutMinor)} · balance ${formatSimulationMoney(receipt.balanceMinor)}.`
+    toast(cityJobNotice)
+  } catch (error) { cityJobNotice = cityJobErrorMessage(error) }
+  finally { cityJobBusy = false; renderStageEventMetrics() }
+}
+
+window.setInterval(() => { if (cityJobState?.activeJob) updateCityJobCard() }, 1000)
+
 function renderStageEventMetrics() {
   if (!showDraft) return
   const copy = document.getElementById('action-copy')
@@ -2366,16 +2493,23 @@ function renderStageEventMetrics() {
     ledger.id = 'stage-ledger'
     ledger.className = 'stage-ledger'
     ledger.setAttribute('aria-label', 'Palm Room rehearsal metrics')
-    ledger.innerHTML = '<small>REHEARSAL SETUP · NO EVENT SALES</small><div><b>Other live sessions</b><span id="stage-live-sessions"></span></div><div class="stage-setup-picker"><small id="stage-setup-progress">0/3 pieces placed</small><div class="stage-setup-grid"><button type="button" data-stage-setup="light">Floor light</button><button type="button" data-stage-setup="monitors">Stage monitors</button><button type="button" data-stage-setup="backdrop">Backdrop</button></div><small>Arrange the rehearsal room. These are local trial pieces, not purchased inventory.</small></div><div class="stage-look-picker"><small>LIGHTING TEST · LOCAL PREVIEW</small><div class="stage-look-grid"><button type="button" data-stage-look="warm">Warm wash</button><button type="button" data-stage-look="sunset">Sunset</button><button type="button" data-stage-look="spotlight">Spot</button></div><button type="button" class="stage-save" data-stage-save="true">Save preview on this device</button></div><form id="show-draft-form" class="show-draft-form"><small>PLAN A SHOW · PRIVATE DRAFT</small><label>Show name<input name="title" maxlength="60" required placeholder="Friday at Palm Room" /></label><label>Format<select name="format"><option value="OPEN_MIC">Open mic</option><option value="LISTENING_SESSION">Listening session</option></select></label><label>Planned start<input name="start" type="datetime-local" required /></label><small id="show-draft-master"></small><button type="submit" class="stage-save">Save show draft</button><small id="show-draft-status"></small></form><form id="show-invite-form" class="show-invite-form"><small>INVITE A REAL PERFORMER</small><label>Connected guest<select name="target" required><option value="">Choose a guest in Palm Room</option></select></label><button type="submit" class="stage-save">Invite to draft lineup</button><small id="show-invite-status">Save your show draft first. Performers must accept.</small><div id="show-performer-list" aria-live="polite"></div></form>'
+    ledger.innerHTML = '<small>PALM ROOM · REHEARSAL</small><div><b>Other live sessions</b><span id="stage-live-sessions"></span></div><section class="city-job-card" aria-label="Venue assistant city job"><small>STARTER CITY JOB · PAID SIMULATION</small><b>Venue assistant · ₦1,000</b><p>Set the floor light, stage monitors and backdrop. Complete the 3-minute shift to earn.</p><small id="city-job-balance">THE SCENE money (simulation) · connecting…</small><p id="city-job-status" role="status" aria-live="polite">Connecting to the city job board…</p><div class="city-job-actions"><button id="city-job-start" type="button">Start venue assistant shift</button><button id="city-job-collect" type="button" hidden>Collect ₦1,000</button></div></section><div class="stage-setup-picker"><small id="stage-setup-progress">0/3 setup actions</small><div class="stage-setup-grid"><button type="button" data-stage-setup="light">Floor light</button><button type="button" data-stage-setup="monitors">Stage monitors</button><button type="button" data-stage-setup="backdrop">Backdrop</button></div><small>Use the city trial pieces for the shift; no inventory purchase is needed.</small></div><div class="stage-look-picker"><small>LIGHTING TEST · LOCAL PREVIEW</small><div class="stage-look-grid"><button type="button" data-stage-look="warm">Warm wash</button><button type="button" data-stage-look="sunset">Sunset</button><button type="button" data-stage-look="spotlight">Spot</button></div><button type="button" class="stage-save" data-stage-save="true">Save preview on this device</button></div><form id="show-draft-form" class="show-draft-form"><small>PLAN A SHOW · PRIVATE DRAFT</small><label>Show name<input name="title" maxlength="60" required placeholder="Friday at Palm Room" /></label><label>Format<select name="format"><option value="OPEN_MIC">Open mic</option><option value="LISTENING_SESSION">Listening session</option></select></label><label>Planned start<input name="start" type="datetime-local" required /></label><small id="show-draft-master"></small><button type="submit" class="stage-save">Save show draft</button><small id="show-draft-status"></small></form><form id="show-invite-form" class="show-invite-form"><small>INVITE A REAL PERFORMER</small><label>Connected guest<select name="target" required><option value="">Choose a guest in Palm Room</option></select></label><button type="submit" class="stage-save">Invite to draft lineup</button><small id="show-invite-status">Save your show draft first. Performers must accept.</small><div id="show-performer-list" aria-live="polite"></div></form>'
     ledger.hidden = location !== 'venue' || nearby !== 'stage'
     ledger.addEventListener('click', event => {
       const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-stage-look]')
       const setupButton = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-stage-setup]')
       const saveButton = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-stage-save]')
+      const target = event.target as HTMLElement
+      if (target.closest('#city-job-start')) { void beginVenueAssistantShift(); return }
+      if (target.closest('#city-job-collect')) { void collectVenueAssistantPay(); return }
       if (setupButton) {
-        if (setupButton.dataset.stageSetup === 'light') { equipmentPreviewVisible = !equipmentPreviewVisible; palmRoom?.setEquipmentPreview(equipmentPreviewVisible) }
-        if (setupButton.dataset.stageSetup === 'monitors') { rehearsalMonitors = !rehearsalMonitors; palmRoom?.setRehearsalMonitors(rehearsalMonitors) }
-        if (setupButton.dataset.stageSetup === 'backdrop') { rehearsalBackdrop = !rehearsalBackdrop; palmRoom?.setRehearsalBackdrop(rehearsalBackdrop) }
+        const step = setupButton.dataset.stageSetup as CityJobStepId
+        const shift = cityJobState?.activeJob
+        const complete = !!shift
+        if (step === 'light') { equipmentPreviewVisible = complete ? true : !equipmentPreviewVisible; palmRoom?.setEquipmentPreview(equipmentPreviewVisible) }
+        if (step === 'monitors') { rehearsalMonitors = complete ? true : !rehearsalMonitors; palmRoom?.setRehearsalMonitors(rehearsalMonitors) }
+        if (step === 'backdrop') { rehearsalBackdrop = complete ? true : !rehearsalBackdrop; palmRoom?.setRehearsalBackdrop(rehearsalBackdrop) }
+        if (complete) void checkVenueAssistantStep(step)
         renderStageEventMetrics()
         return
       }
@@ -2427,7 +2561,10 @@ function renderStageEventMetrics() {
   const setupState: Record<string, boolean> = { light: equipmentPreviewVisible, monitors: rehearsalMonitors, backdrop: rehearsalBackdrop }
   ledger.querySelectorAll<HTMLButtonElement>('[data-stage-setup]').forEach(item => item.setAttribute('aria-pressed', String(setupState[item.dataset.stageSetup || ''])))
   const setupProgress = document.getElementById('stage-setup-progress')
-  if (setupProgress) setupProgress.textContent = `${Number(equipmentPreviewVisible) + Number(rehearsalMonitors) + Number(rehearsalBackdrop)}/3 pieces placed`
+  if (setupProgress) setupProgress.textContent = cityJobState?.activeJob
+    ? `${cityJobState.activeJob.completedSteps.length}/3 setup actions checked`
+    : `${Number(equipmentPreviewVisible) + Number(rehearsalMonitors) + Number(rehearsalBackdrop)}/3 preview pieces placed`
+  updateCityJobCard()
   const masterStatus = document.getElementById('show-draft-master')
   if (masterStatus) masterStatus.textContent = masterBlob ? 'Your City Studio master is ready for a local stage audition.' : 'Render a master at City Studio to audition it here.'
   const showStatus = document.getElementById('show-draft-status')
@@ -2467,6 +2604,7 @@ function renderStageEventMetrics() {
 function interact() {
   const stageLedger = document.getElementById('stage-ledger')
   if (stageLedger) stageLedger.hidden = location !== 'venue' || nearby !== 'stage'
+  if (location === 'venue' && nearby === 'stage' && cityJobState === null && (SOLO_PREVIEW || guestSessionReady)) void refreshCityJobState()
   renderStageEventMetrics()
   if (!nearby) return
   if (routeTarget === nearby) {

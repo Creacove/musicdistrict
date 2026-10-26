@@ -24,6 +24,15 @@ const PARTY_IDLE_TTL_MS = 30 * 60 * 1000
 const PLAYLIST_MAX_COUNT = 20
 const PLAYLIST_MAX_TRACKS = 100
 const PLAYLIST_NAME_MAX_LENGTH = 40
+const CITY_JOB_WINDOW_MS = 24 * 60 * 60 * 1000
+const CITY_JOB_MIN_DURATION_MS = 3 * 60 * 1000
+const CITY_JOB_TTL_MS = 15 * 60 * 1000
+const CITY_JOB_MAX_PER_WINDOW = 3
+const CITY_JOB_MAX_ISSUANCE_MINOR = 450_000
+const CITY_JOB_TYPES = new Set(['venue-assistant'])
+const CITY_JOB_STEP_IDS = new Set(['light', 'monitors', 'backdrop'])
+const CITY_JOB_PAYOUT_MINOR = 100_000
+const CITY_JOB_POLICY_VERSION = 'city-jobs-alpha-v1'
 
 function normalizedPlaylistName(value) {
   if (typeof value !== 'string') return null
@@ -186,7 +195,36 @@ export function createGuestStore(path) {
       decision TEXT NOT NULL CHECK (decision IN ('approve', 'decline')),
       decided_at TEXT NOT NULL,
       PRIMARY KEY (proposal_id, guest_id)
-    );`)
+    );
+    CREATE TABLE IF NOT EXISTS city_job_runs (
+      id TEXT PRIMARY KEY,
+      guest_id TEXT NOT NULL REFERENCES guests(id),
+      job_type TEXT NOT NULL CHECK (job_type = 'venue-assistant'),
+      status TEXT NOT NULL CHECK (status IN ('active', 'completed', 'expired')),
+      started_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      completed_at TEXT
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS city_job_one_active_per_guest
+      ON city_job_runs (guest_id) WHERE status = 'active';
+    CREATE TABLE IF NOT EXISTS city_job_steps (
+      job_id TEXT NOT NULL REFERENCES city_job_runs(id) ON DELETE CASCADE,
+      step_id TEXT NOT NULL CHECK (step_id IN ('light', 'monitors', 'backdrop')),
+      completed_at TEXT NOT NULL,
+      PRIMARY KEY (job_id, step_id)
+    );
+    CREATE TABLE IF NOT EXISTS economy_entries (
+      id TEXT PRIMARY KEY,
+      guest_id TEXT NOT NULL REFERENCES guests(id),
+      entry_type TEXT NOT NULL CHECK (entry_type = 'ISSUANCE'),
+      amount_minor INTEGER NOT NULL CHECK (amount_minor > 0),
+      source_type TEXT NOT NULL CHECK (source_type = 'city-job'),
+      source_id TEXT NOT NULL UNIQUE,
+      policy_version TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS economy_entries_guest_time
+      ON economy_entries (guest_id, created_at);`)
   const partyMemberColumns = db.prepare('PRAGMA table_info(party_members)').all().map(column => column.name)
   if (!partyMemberColumns.includes('joined_message_seq')) db.exec('ALTER TABLE party_members ADD COLUMN joined_message_seq INTEGER NOT NULL DEFAULT 0')
   const find = db.prepare('SELECT id FROM guests WHERE token_hash = ?')
@@ -222,6 +260,16 @@ export function createGuestStore(path) {
   const insertEventInvitation = db.prepare("INSERT INTO event_draft_invitations (id, owner_guest_id, invitee_guest_id, status, created_at) VALUES (?, ?, ?, 'invited', ?)")
   const updateEventInvitation = db.prepare("UPDATE event_draft_invitations SET status = ?, responded_at = ? WHERE id = ? AND status = 'invited'")
   const hasGuest = db.prepare('SELECT 1 AS found FROM guests WHERE id = ?')
+  const activeCityJobForGuest = db.prepare("SELECT id, guest_id, job_type, status, started_at, expires_at, completed_at FROM city_job_runs WHERE guest_id = ? AND status = 'active'")
+  const cityJobForGuest = db.prepare('SELECT id, guest_id, job_type, status, started_at, expires_at, completed_at FROM city_job_runs WHERE id = ? AND guest_id = ?')
+  const cityJobStepsFor = db.prepare('SELECT step_id FROM city_job_steps WHERE job_id = ? ORDER BY completed_at, step_id')
+  const insertCityJob = db.prepare("INSERT INTO city_job_runs (id, guest_id, job_type, status, started_at, expires_at) VALUES (?, ?, ?, 'active', ?, ?)")
+  const expireCityJob = db.prepare("UPDATE city_job_runs SET status = 'expired' WHERE id = ? AND status = 'active'")
+  const addCityJobStep = db.prepare('INSERT OR IGNORE INTO city_job_steps (job_id, step_id, completed_at) VALUES (?, ?, ?)')
+  const completeCityJob = db.prepare("UPDATE city_job_runs SET status = 'completed', completed_at = ? WHERE id = ? AND status = 'active'")
+  const insertEconomyEntry = db.prepare("INSERT INTO economy_entries (id, guest_id, entry_type, amount_minor, source_type, source_id, policy_version, created_at) VALUES (?, ?, 'ISSUANCE', ?, 'city-job', ?, ?, ?)")
+  const cityJobStats = db.prepare("SELECT count(*) AS jobs, COALESCE(sum(amount_minor), 0) AS issued_minor FROM economy_entries WHERE guest_id = ? AND source_type = 'city-job' AND created_at > ?")
+  const walletBalance = db.prepare('SELECT COALESCE(sum(amount_minor), 0) AS balance_minor FROM economy_entries WHERE guest_id = ?')
   const listBlocks = db.prepare('SELECT blocked_guest_id FROM blocked_guests WHERE blocker_guest_id = ? ORDER BY created_at, blocked_guest_id')
   const insertBlock = db.prepare('INSERT OR IGNORE INTO blocked_guests (blocker_guest_id, blocked_guest_id, created_at) VALUES (?, ?, ?)')
   const deleteBlock = db.prepare('DELETE FROM blocked_guests WHERE blocker_guest_id = ? AND blocked_guest_id = ?')
@@ -470,10 +518,112 @@ export function createGuestStore(path) {
     const row = playlistById.get(guestId, playlistId)
     return row ? playlistDto(row) : null
   }
+  const cityJobDto = (row, now) => {
+    const startedAt = Date.parse(row.started_at)
+    return {
+      id: row.id,
+      jobType: row.job_type,
+      status: row.status,
+      startedAt: row.started_at,
+      minimumCompleteAt: new Date(startedAt + CITY_JOB_MIN_DURATION_MS).toISOString(),
+      expiresAt: row.expires_at,
+      remainingSeconds: Math.max(0, Math.ceil((startedAt + CITY_JOB_MIN_DURATION_MS - now) / 1000)),
+      completedSteps: cityJobStepsFor.all(row.id).map(item => item.step_id),
+      requiredSteps: [...CITY_JOB_STEP_IDS],
+    }
+  }
+  const cityJobSummary = (guestId, now) => {
+    const cutoff = new Date(now - CITY_JOB_WINDOW_MS).toISOString()
+    const stats = cityJobStats.get(guestId, cutoff)
+    let active = activeCityJobForGuest.get(guestId)
+    if (active && Date.parse(active.expires_at) <= now) {
+      expireCityJob.run(active.id)
+      active = undefined
+    }
+    return {
+      balanceMinor: walletBalance.get(guestId).balance_minor,
+      currencyLabel: 'THE SCENE money (simulation)',
+      dailyJobsCompleted: stats.jobs,
+      dailyEarnedMinor: stats.issued_minor,
+      dailyJobsRemaining: Math.max(0, CITY_JOB_MAX_PER_WINDOW - stats.jobs),
+      dailyIssuanceRemainingMinor: Math.max(0, CITY_JOB_MAX_ISSUANCE_MINOR - stats.issued_minor),
+      activeJob: active ? cityJobDto(active, now) : null,
+    }
+  }
+  const transaction = operation => {
+    db.exec('BEGIN IMMEDIATE')
+    try {
+      const result = operation()
+      db.exec('COMMIT')
+      return result
+    } catch (error) {
+      db.exec('ROLLBACK')
+      throw error
+    }
+  }
   return {
     resume(token) { return typeof token === 'string' && /^[a-f0-9]{64}$/.test(token) ? find.get(hash(token))?.id ?? null : null },
     create() { const id = randomUUID(), token = randomBytes(32).toString('hex'); create.run(id, hash(token), new Date().toISOString()); return { id, token } },
     saves(id) { return list.all(id).map(row => row.item_id) },
+    cityJobState(id, now = Date.now()) {
+      if (!hasGuest.get(id)) return { error: 'guest' }
+      return cityJobSummary(id, now)
+    },
+    startCityJob(id, jobType, now = Date.now()) {
+      if (!hasGuest.get(id)) return { error: 'guest' }
+      if (!CITY_JOB_TYPES.has(jobType)) return { error: 'invalid_job' }
+      return transaction(() => {
+        let active = activeCityJobForGuest.get(id)
+        if (active && Date.parse(active.expires_at) <= now) {
+          expireCityJob.run(active.id)
+          active = undefined
+        }
+        if (active) return { error: 'active_job', job: cityJobDto(active, now) }
+        const cutoff = new Date(now - CITY_JOB_WINDOW_MS).toISOString()
+        const stats = cityJobStats.get(id, cutoff)
+        if (stats.jobs >= CITY_JOB_MAX_PER_WINDOW || stats.issued_minor + CITY_JOB_PAYOUT_MINOR > CITY_JOB_MAX_ISSUANCE_MINOR) return { error: 'daily_limit' }
+        const jobId = randomUUID()
+        const startedAt = new Date(now).toISOString()
+        const expiresAt = new Date(now + CITY_JOB_TTL_MS).toISOString()
+        insertCityJob.run(jobId, id, jobType, startedAt, expiresAt)
+        return { job: cityJobDto(cityJobForGuest.get(jobId, id), now), duplicate: false }
+      })
+    },
+    completeCityJobStep(id, jobId, stepId, now = Date.now()) {
+      if (!CITY_JOB_STEP_IDS.has(stepId)) return { error: 'invalid_step' }
+      const row = cityJobForGuest.get(jobId, id)
+      if (!row) return { error: 'not_found' }
+      if (row.status !== 'active') return { error: row.status === 'expired' ? 'expired' : 'job_unavailable' }
+      if (Date.parse(row.expires_at) <= now) {
+        expireCityJob.run(row.id)
+        return { error: 'expired' }
+      }
+      const result = addCityJobStep.run(jobId, stepId, new Date(now).toISOString())
+      const updated = cityJobForGuest.get(jobId, id)
+      return { job: cityJobDto(updated, now), duplicate: result.changes === 0 }
+    },
+    finishCityJob(id, jobId, now = Date.now()) {
+      return transaction(() => {
+        const row = cityJobForGuest.get(jobId, id)
+        if (!row) return { error: 'not_found' }
+        if (row.status === 'completed') {
+          return { payoutMinor: CITY_JOB_PAYOUT_MINOR, balanceMinor: walletBalance.get(id).balance_minor, completedAt: row.completed_at, duplicate: true }
+        }
+        if (row.status !== 'active') return { error: 'expired' }
+        if (Date.parse(row.expires_at) <= now) {
+          expireCityJob.run(row.id)
+          return { error: 'expired' }
+        }
+        if (cityJobStepsFor.all(jobId).length !== CITY_JOB_STEP_IDS.size) return { error: 'steps_missing' }
+        if (now < Date.parse(row.started_at) + CITY_JOB_MIN_DURATION_MS) return { error: 'too_early' }
+        const stats = cityJobStats.get(id, new Date(now - CITY_JOB_WINDOW_MS).toISOString())
+        if (stats.jobs >= CITY_JOB_MAX_PER_WINDOW || stats.issued_minor + CITY_JOB_PAYOUT_MINOR > CITY_JOB_MAX_ISSUANCE_MINOR) return { error: 'daily_limit' }
+        const completedAt = new Date(now).toISOString()
+        insertEconomyEntry.run(randomUUID(), id, CITY_JOB_PAYOUT_MINOR, jobId, CITY_JOB_POLICY_VERSION, completedAt)
+        completeCityJob.run(completedAt, jobId)
+        return { payoutMinor: CITY_JOB_PAYOUT_MINOR, balanceMinor: walletBalance.get(id).balance_minor, completedAt, duplicate: false }
+      })
+    },
     save(id, item) {
       if (!CATALOGUE.some(c => c.id === item)) return false
       save.run(id, item, new Date().toISOString())
@@ -926,7 +1076,7 @@ const CATALOGUE = [
   { id: 'lagos-golden-hour', title: 'Golden Hour Jam', artist: 'Victoria Island Collective', genre: 'Afro-fusion', duration: 30, released: true },
 ]
 
-export function guestApi(store, { isGuestConnectedAtLocation = () => false, getPartyTravelAssignment = () => null } = {}) {
+export function guestApi(store, { isGuestConnectedAtLocation = () => false, getPartyTravelAssignment = () => null, clock = () => Date.now() } = {}) {
   return async (req, res, next) => {
     let pathname
     try { pathname = new URL(req.url || '/', 'http://localhost').pathname } catch { res.statusCode = 400; return res.end() }
@@ -935,7 +1085,7 @@ export function guestApi(store, { isGuestConnectedAtLocation = () => false, getP
       res.setHeader('Cache-Control', 'no-store')
       return res.end(JSON.stringify({ tracks: CATALOGUE }))
     }
-    if (!['/api/guest', '/api/saves', '/api/playlists', '/api/event-draft', '/api/event-planning', '/api/reports', '/api/blocks', '/api/friends', '/api/friend-requests', '/api/messages', '/api/parties', '/api/party-invitations'].some(route => pathname === route || pathname.startsWith(`${route}/`))) return next()
+    if (!['/api/guest', '/api/saves', '/api/playlists', '/api/event-draft', '/api/event-planning', '/api/reports', '/api/blocks', '/api/friends', '/api/friend-requests', '/api/messages', '/api/parties', '/api/party-invitations', '/api/city-jobs'].some(route => pathname === route || pathname.startsWith(`${route}/`))) return next()
     res.setHeader('Content-Type', 'application/json; charset=utf-8')
     res.setHeader('Cache-Control', 'no-store')
     const reply = (status, body) => { res.statusCode = status; res.end(JSON.stringify(body)) }
@@ -947,6 +1097,38 @@ export function guestApi(store, { isGuestConnectedAtLocation = () => false, getP
     }
     const id = token && store.resume(token)
     if (!id) return reply(401, { error: 'Guest session required' })
+    if (pathname === '/api/city-jobs' && req.method === 'GET') return reply(200, store.cityJobState(id, clock()))
+    if (pathname === '/api/city-jobs/start' && req.method === 'POST') {
+      const parsed = await readJsonBody(req)
+      if (parsed.error || typeof parsed.value?.jobType !== 'string') return reply(400, { error: 'Invalid city job' })
+      if (!isGuestConnectedAtLocation(id, 'venue')) return reply(409, { error: 'must_be_at_palm_room' })
+      const result = store.startCityJob(id, parsed.value.jobType, clock())
+      if (result.error === 'guest') return reply(404, result)
+      if (result.error === 'invalid_job') return reply(400, result)
+      if (result.error === 'active_job' || result.error === 'daily_limit') return reply(409, result)
+      return reply(201, result)
+    }
+    const cityJobStepPath = pathname.match(/^\/api\/city-jobs\/([0-9a-f-]{36})\/steps$/i)
+    if (cityJobStepPath && req.method === 'POST') {
+      const parsed = await readJsonBody(req)
+      if (parsed.error || typeof parsed.value?.stepId !== 'string') return reply(400, { error: 'Invalid setup step' })
+      if (!isGuestConnectedAtLocation(id, 'venue')) return reply(409, { error: 'must_be_at_palm_room' })
+      const result = store.completeCityJobStep(id, cityJobStepPath[1], parsed.value.stepId, clock())
+      if (result.error === 'invalid_step') return reply(400, result)
+      if (result.error === 'not_found') return reply(404, result)
+      if (result.error === 'expired') return reply(410, result)
+      if (result.error) return reply(409, result)
+      return reply(200, result)
+    }
+    const cityJobCompletePath = pathname.match(/^\/api\/city-jobs\/([0-9a-f-]{36})\/complete$/i)
+    if (cityJobCompletePath && req.method === 'POST') {
+      if (!isGuestConnectedAtLocation(id, 'venue')) return reply(409, { error: 'must_be_at_palm_room' })
+      const result = store.finishCityJob(id, cityJobCompletePath[1], clock())
+      if (result.error === 'not_found') return reply(404, result)
+      if (result.error === 'expired') return reply(410, result)
+      if (result.error === 'steps_missing' || result.error === 'too_early' || result.error === 'daily_limit') return reply(409, result)
+      return reply(200, result)
+    }
     if (pathname === '/api/playlists' && req.method === 'GET') return reply(200, { playlists: store.playlists(id) })
     if (pathname === '/api/playlists' && req.method === 'POST') {
       const parsed = await readJsonBody(req)
